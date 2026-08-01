@@ -13,4 +13,10 @@ data class CameraUiState(
     val flashMode: FlashMode = FlashMode.OFF,
     val availableLenses: List<CameraLens> = emptyList(),
     val selectedLens: CameraLens? = null,
+    /** Whether [selectedLens] reports Camera2's `MANUAL_SENSOR` capability — gates manual ISO. */
+    val manualIsoSupported: Boolean = false,
+    /** The standard ISO ladder filtered down to [selectedLens]'s supported sensitivity range. */
+    val isoStops: List<Int> = emptyList(),
+    val manualModeEnabled: Boolean = false,
+    val selectedIsoIndex: Int = 0,
 )

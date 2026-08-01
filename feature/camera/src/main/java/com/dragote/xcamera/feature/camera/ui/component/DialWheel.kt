@@ -88,6 +88,7 @@ fun DialWheel(
     modifier: Modifier = Modifier,
     accent: Color = Color(0xFF625D51),
     stepPx: Float = 42f,
+    onDragActiveChanged: (Boolean) -> Unit = {},
 ) {
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
@@ -138,6 +139,7 @@ fun DialWheel(
                 .pointerInput(maxIndex, stepPx) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
+                        onDragActiveChanged(true)
                         coasting?.cancel(); coasting = null
 
                         val startDrum = drum
@@ -168,6 +170,7 @@ fun DialWheel(
                             change.consume()
                             pointer = change
                         }
+                        onDragActiveChanged(false)
 
                         // coast + settle
                         coasting = scope.launch {

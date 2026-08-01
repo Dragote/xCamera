@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -12,9 +13,6 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -29,14 +27,16 @@ import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
- * Decorative-only: no manual capture mode exists yet, so this lever just flips its own local UI
- * state with the design's animation — it has no effect on the app. Built directly on [LeverBody]
- * (rather than [CameraLever]) since the A/M lettering needs real Compose text laid on top of the
- * knob, not a [LeverGlyph] baked into the shared Canvas draw.
+ * Reflects real manual-ISO state now (see `IsoDial`/`CameraViewModel.onIsoDialDragStarted`) rather
+ * than owning its own decorative one — there's no way to *enter* manual mode from this lever itself
+ * (only the ISO dial does that, the instant you start dragging it), only to leave it: tapping while
+ * [manual] is true calls [onExitManualMode] to fall back to auto; tapping while already auto is a
+ * no-op, since there's nothing for a bare tap here to turn on. Built directly on [LeverBody] (rather
+ * than [CameraLever]) since the A/M lettering needs real Compose text laid on top of the knob, not a
+ * [LeverGlyph] baked into the shared Canvas draw.
  */
 @Composable
-fun ModeLever(modifier: Modifier = Modifier) {
-    var manual by remember { mutableStateOf(false) }
+fun ModeLever(manual: Boolean, onExitManualMode: () -> Unit, modifier: Modifier = Modifier) {
     val haptic = LocalHapticFeedback.current
 
     val t by animateFloatAsState(
@@ -57,8 +57,10 @@ fun ModeLever(modifier: Modifier = Modifier) {
     ) {
         Box(Modifier.size(LeverTrackWidth, LeverTrackHeight)) {
             LeverBody(t = t, on = on, glyph = LeverGlyph.AutoManual, accent = CameraChrome.Accent) {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                manual = !manual
+                if (manual) {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onExitManualMode()
+                }
             }
             Box(
                 modifier = Modifier
@@ -85,6 +87,9 @@ fun ModeLever(modifier: Modifier = Modifier) {
 @Composable
 private fun ModeLeverPreview() {
     XCameraTheme {
-        ModeLever(modifier = Modifier.padding(24.dp))
+        Row(modifier = Modifier.padding(24.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+            ModeLever(manual = false, onExitManualMode = {})
+            ModeLever(manual = true, onExitManualMode = {})
+        }
     }
 }

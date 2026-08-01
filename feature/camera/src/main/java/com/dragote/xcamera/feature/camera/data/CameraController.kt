@@ -3,14 +3,20 @@ package com.dragote.xcamera.feature.camera.data
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.TotalCaptureResult
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -22,6 +28,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
+import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -42,6 +49,31 @@ class CameraController(private val context: Context) {
 
     private var imageCapture: ImageCapture? = null
     private var pendingFlashMode: FlashMode = FlashMode.OFF
+
+    private var camera2CameraControl: Camera2CameraControl? = null
+    private var currentLens: CameraLens? = null
+
+    /** Cached the same way [pendingFlashMode] is, so it survives a rebind (e.g. a lens switch). */
+    private var pendingManualIso: Int? = null
+
+    /**
+     * The most recent auto-AE-converged shutter speed, kept fresh by [sessionCaptureCallback] any
+     * time we're *not* the ones driving [CaptureRequest.CONTROL_AE_MODE_OFF] — this is what gets
+     * pinned as the fixed exposure the instant manual ISO mode turns on, so there's no visible
+     * brightness jump from whatever auto-exposure last settled on.
+     */
+    private var lastAutoExposureTimeNs: Long? = null
+
+    private val sessionCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureCompleted(
+            session: CameraCaptureSession,
+            request: CaptureRequest,
+            result: TotalCaptureResult,
+        ) {
+            if (pendingManualIso != null) return
+            result.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { lastAutoExposureTimeNs = it }
+        }
+    }
 
     /**
      * The activity is locked to portrait (see AndroidManifest) so the skeuomorphic UI never
@@ -89,6 +121,9 @@ class CameraController(private val context: Context) {
 
         val previewBuilder = Preview.Builder()
         val captureBuilder = ImageCapture.Builder()
+        // Session-wide (not per-request) capture callback, needed to keep tracking the
+        // auto-converged shutter speed for manual ISO's exposure pin — see sessionCaptureCallback.
+        Camera2Interop.Extender(previewBuilder).setSessionCaptureCallback(sessionCaptureCallback)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             lens?.physicalCameraId?.let { physicalCameraId ->
                 Camera2Interop.Extender(previewBuilder).setPhysicalCameraId(physicalCameraId)
@@ -102,8 +137,15 @@ class CameraController(private val context: Context) {
         }
 
         cameraProvider.unbindAll()
-        cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, capture)
+        val camera = cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, capture)
         imageCapture = capture
+        currentLens = lens
+        lastAutoExposureTimeNs = null
+        camera2CameraControl = Camera2CameraControl.from(camera.cameraControl)
+        // A fresh bind means a fresh Camera2 capture session with no CaptureRequestOptions of its
+        // own yet — reapply whatever manual ISO was in effect so it survives a lens switch instead
+        // of silently reverting to auto.
+        pendingManualIso?.let { applyManualIso(it) }
         ensureOrientationListener()
     }
 
@@ -125,6 +167,78 @@ class CameraController(private val context: Context) {
     private fun FlashMode.toImageCaptureFlashMode(): Int = when (this) {
         FlashMode.OFF -> ImageCapture.FLASH_MODE_OFF
         FlashMode.ON -> ImageCapture.FLASH_MODE_ON
+    }
+
+    /**
+     * `null` for [lens] queries the plain default back camera, mirroring [bindCamera]'s own
+     * convention. `null` return means "hide/disable manual ISO for this lens" —
+     * [CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR] and
+     * [CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE] are per-*physical*-lens characteristics,
+     * not per-device, so an ultra-wide/tele auxiliary lens can lack them even when the main lens has
+     * them (see [listBackLenses]'s own physical-vs-logical characteristics lookup for the same
+     * reasoning). Pure static [CameraCharacteristics] lookup, independent of whether a camera is
+     * bound yet.
+     */
+    fun manualIsoCapability(lens: CameraLens?): ManualIsoCapability? {
+        val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val characteristics = try {
+            val physicalCameraId = lens?.physicalCameraId
+            if (physicalCameraId != null) {
+                cameraManager.getCameraCharacteristics(physicalCameraId)
+            } else {
+                val logicalCameraId = lens?.logicalCameraId ?: defaultBackCameraId(cameraManager) ?: return null
+                cameraManager.getCameraCharacteristics(logicalCameraId)
+            }
+        } catch (e: IllegalArgumentException) {
+            return null
+        }
+
+        val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: intArrayOf()
+        if (CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR !in capabilities) return null
+
+        val isoRange = characteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE) ?: return null
+        val exposureTimeRange = characteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE) ?: return null
+
+        return ManualIsoCapability(
+            isoRange = isoRange.lower..isoRange.upper,
+            exposureTimeRange = exposureTimeRange.lower..exposureTimeRange.upper,
+        )
+    }
+
+    private fun defaultBackCameraId(cameraManager: CameraManager): String? = cameraManager.cameraIdList
+        .firstOrNull { cameraManager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK }
+
+    /**
+     * `null` [iso] returns to auto (`CONTROL_AE_MODE_ON`) by dropping every custom capture request
+     * option; a non-null [iso] turns `CONTROL_AE_MODE_OFF` on, which per Camera2 also disables auto
+     * *exposure time*, not just auto-ISO — there's no "ISO manual, shutter auto" mode in Camera2. The
+     * fixed shutter speed pinned alongside it is [lastAutoExposureTimeNs] (the last value the auto
+     * pipeline actually converged on before manual mode engaged), clamped to the lens's supported
+     * range, so turning manual ISO on doesn't itself cause a brightness jump.
+     *
+     * Cached in [pendingManualIso] the same way [setFlashMode] caches [pendingFlashMode], so it's
+     * reapplied by [bindCamera] after a rebind (e.g. a lens switch) instead of silently reverting to
+     * auto.
+     */
+    fun setManualIso(iso: Int?) {
+        pendingManualIso = iso
+        if (iso != null) applyManualIso(iso) else camera2CameraControl?.clearCaptureRequestOptions()
+    }
+
+    private fun applyManualIso(iso: Int) {
+        val control = camera2CameraControl ?: return
+        val capability = manualIsoCapability(currentLens) ?: return
+
+        val clampedIso = iso.coerceIn(capability.isoRange.first, capability.isoRange.last)
+        val exposureTimeNs = (lastAutoExposureTimeNs ?: capability.exposureTimeRange.first)
+            .coerceIn(capability.exposureTimeRange.first, capability.exposureTimeRange.last)
+
+        val options = CaptureRequestOptions.Builder()
+            .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+            .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, clampedIso)
+            .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, exposureTimeNs)
+            .build()
+        control.setCaptureRequestOptions(options)
     }
 
     /**
