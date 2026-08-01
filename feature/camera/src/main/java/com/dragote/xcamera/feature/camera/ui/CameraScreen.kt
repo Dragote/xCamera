@@ -145,7 +145,7 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
             scaleType = PreviewView.ScaleType.FILL_CENTER
         }
     }
-    var gridEnabled by remember { mutableStateOf(true) }
+    var gridEnabled by remember { mutableStateOf(false) }
     var latestGalleryUri by remember { mutableStateOf<Uri?>(null) }
 
     DisposableEffect(cameraController) {
