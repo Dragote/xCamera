@@ -1,0 +1,318 @@
+package com.dragote.xcamera.feature.camera.ui
+
+import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.view.PreviewView
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.dragote.xcamera.feature.camera.data.CameraController
+import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
+import com.dragote.xcamera.feature.camera.domain.model.FlashMode
+import com.dragote.xcamera.feature.camera.presentation.CameraUiState
+import com.dragote.xcamera.feature.camera.presentation.CameraViewModel
+import com.dragote.xcamera.feature.camera.ui.component.FlashLever
+import com.dragote.xcamera.feature.camera.ui.component.GridLever
+import com.dragote.xcamera.feature.camera.ui.component.LensDial
+import com.dragote.xcamera.feature.camera.ui.component.ModeLever
+import com.dragote.xcamera.feature.camera.ui.component.ShutterButton
+import com.dragote.xcamera.feature.camera.ui.component.ViewfinderGridOverlay
+import com.dragote.xcamera.feature.camera.ui.component.ViewfinderThumbnailChip
+import com.dragote.xcamera.feature.camera.ui.component.ZoomDial
+import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
+import com.dragote.xcamera.feature.camera.ui.theme.grainTexture
+import com.dragote.xcamera.shared.designsystem.component.ErrorState
+import com.ramcosta.composedestinations.annotation.Destination
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+
+private val requiredPermissions: List<String> = buildList {
+    add(Manifest.permission.CAMERA)
+    // MediaStore inserts on API 29+ don't need this; only pre-Q devices do.
+    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+        add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+    }
+}
+
+/**
+ * Requested independently of [requiredPermissions] — denying it should only mean no gallery
+ * thumbnail preview, not blocking the entire camera screen behind the hard permission gate. Null
+ * pre-Q, where the (already hard-gated) WRITE_EXTERNAL_STORAGE covers reads on the legacy storage
+ * model too.
+ */
+private val galleryReadPermission: String? = when {
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> Manifest.permission.READ_MEDIA_IMAGES
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> Manifest.permission.READ_EXTERNAL_STORAGE
+    else -> null
+}
+
+@Destination
+@Composable
+fun CameraScreen(
+    viewModel: CameraViewModel = hiltViewModel(),
+) {
+    val context = LocalContext.current
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { results -> viewModel.onPermissionResult(results.values.all { it }) }
+
+    LaunchedEffect(Unit) {
+        val alreadyGranted = requiredPermissions.all {
+            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+        }
+        if (alreadyGranted) {
+            viewModel.onPermissionResult(true)
+        } else {
+            permissionLauncher.launch(requiredPermissions.toTypedArray())
+        }
+    }
+
+    when (uiState.permissionStatus) {
+        CameraPermissionStatus.Granted -> CameraContent(viewModel = viewModel, uiState = uiState)
+        CameraPermissionStatus.Denied -> ErrorState(
+            message = "Camera permission is required to use xCamera",
+            onRetry = { permissionLauncher.launch(requiredPermissions.toTypedArray()) },
+        )
+        CameraPermissionStatus.Unknown -> Box(modifier = Modifier.fillMaxSize().background(Color.Black))
+    }
+}
+
+/**
+ * Full-screen skeuomorphic chrome ported from the "Camera App UI v3" design: a graphite body with
+ * FLASH/GRID/MODE levers above the viewfinder and a LENS/shutter/ZOOM deck below it. The
+ * [PreviewView] itself is untouched, just re-framed, with a real [ViewfinderGridOverlay] drawn on
+ * top of it now. Of the seven controls, FLASH, GRID, LENS, the shutter and the viewfinder's
+ * thumbnail chip (the sole gallery entry point — there's no separate header button, matching the
+ * design) carry real behavior; MODE and ZOOM are still purely decorative local UI state with no
+ * effect on the app, since no real manual-mode/zoom control exists yet.
+ *
+ * The thumbnail chip shows [latestGalleryUri] (the actual last photo in the device's gallery,
+ * queried once permission allows it — see [galleryReadPermission]) until a fresh capture replaces
+ * it with [CameraUiState.lastSavedUri]; either way it's just a fallback chain feeding one URI into
+ * [ViewfinderThumbnailChip], which owns the image decoding and orientation-reactive rotation.
+ */
+@Composable
+private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val coroutineScope = rememberCoroutineScope()
+    val cameraController = remember { CameraController(context) }
+    val previewView = remember {
+        PreviewView(context).apply {
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+        }
+    }
+    var gridEnabled by remember { mutableStateOf(true) }
+    var latestGalleryUri by remember { mutableStateOf<Uri?>(null) }
+
+    DisposableEffect(cameraController) {
+        onDispose { cameraController.stopOrientationListener() }
+    }
+
+    val galleryPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            coroutineScope.launch { latestGalleryUri = cameraController.latestGalleryPhotoUri() }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val permission = galleryReadPermission
+        val alreadyGranted = permission == null ||
+            ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        if (alreadyGranted) {
+            latestGalleryUri = cameraController.latestGalleryPhotoUri()
+        } else {
+            galleryPermissionLauncher.launch(permission)
+        }
+    }
+
+    LaunchedEffect(previewView) {
+        viewModel.onLensesLoaded(cameraController.listBackLenses())
+    }
+
+    LaunchedEffect(previewView, uiState.selectedLens) {
+        cameraController.bindCamera(
+            lifecycleOwner = lifecycleOwner,
+            surfaceProvider = previewView.surfaceProvider,
+            lens = uiState.selectedLens,
+        )
+    }
+
+    LaunchedEffect(uiState.flashMode) {
+        cameraController.setFlashMode(uiState.flashMode)
+    }
+
+    LaunchedEffect(uiState.lastSavedUri) {
+        if (uiState.lastSavedUri != null) {
+            Toast.makeText(context, "Photo saved", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    LaunchedEffect(uiState.captureError) {
+        val error = uiState.captureError
+        if (error != null) {
+            Toast.makeText(context, "Couldn't save photo: $error", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun capture() {
+        coroutineScope.launch {
+            viewModel.onCaptureStarted()
+            try {
+                val uri = cameraController.takePhoto()
+                viewModel.onPhotoSaved(uri)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                viewModel.onCaptureError(e.message)
+            }
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(CameraChrome.BodyGradient).grainTexture(alpha = 0.35f)) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)) {
+                Spacer(modifier = Modifier.height(24.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp, start = 26.dp, end = 26.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    FlashLever(
+                        flashOn = uiState.flashMode == FlashMode.ON,
+                        onToggle = viewModel::onFlashModeToggled,
+                    )
+                    GridLever(checked = gridEnabled, onToggle = { gridEnabled = !gridEnabled })
+                    ModeLever()
+                }
+                Seam(modifier = Modifier.padding(top = 16.dp, start = 12.dp, end = 12.dp))
+            }
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp)
+                    .padding(top = 14.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(CameraChrome.ViewfinderBezelGradient)
+                    .padding(9.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(CameraChrome.ViewfinderInsetColor),
+                ) {
+                    AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+                    ViewfinderGridOverlay(visible = gridEnabled, modifier = Modifier.fillMaxSize())
+                    ViewfinderThumbnailChip(
+                        photoUri = uiState.lastSavedUri ?: latestGalleryUri,
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                data = uiState.lastSavedUri ?: MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                            }
+                            try {
+                                context.startActivity(intent)
+                            } catch (e: ActivityNotFoundException) {
+                                Toast.makeText(context, "No gallery app found", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
+                    )
+                }
+            }
+
+            Seam(modifier = Modifier.padding(top = 16.dp, start = 12.dp, end = 12.dp))
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(CameraChrome.DeckGradient)
+                    .windowInsetsPadding(WindowInsets.navigationBars),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 26.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    LensDial(
+                        lenses = uiState.availableLenses,
+                        selectedLens = uiState.selectedLens,
+                        onLensSelected = viewModel::onLensSelected,
+                        modifier = Modifier.weight(1f),
+                    )
+                    ShutterButton(
+                        enabled = !uiState.isCapturing,
+                        onCapture = ::capture,
+                    )
+                    ZoomDial(modifier = Modifier.weight(1f))
+                }
+                Box(
+                    modifier = Modifier
+                        .padding(bottom = 10.dp)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(width = 130.dp, height = 5.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(Color.White.copy(alpha = 0.22f)),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private val SeamBrush = Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.75f), Color.White.copy(alpha = 0.09f)))
+
+@Composable
+private fun Seam(modifier: Modifier = Modifier) {
+    Box(modifier = modifier.fillMaxWidth().height(2.dp).background(SeamBrush))
+}

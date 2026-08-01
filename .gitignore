@@ -1,0 +1,19 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+# Unanchored (not "/build") so this also covers every module's own build/ dir
+# (feature/camera, shared/*, build-logic/convention, ...), not just the root.
+build/
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+.kotlin/
+.claude/settings.local.json

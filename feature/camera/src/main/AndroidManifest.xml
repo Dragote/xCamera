@@ -1,0 +1,21 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Only needed pre-Android 10: MediaStore inserts on API 29+ don't require this. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <!--
+      Lets the viewfinder's thumbnail chip show the actual last photo in the gallery, not just ones
+      this app took itself — scoped storage otherwise only exposes an app's own MediaStore rows.
+      Requested independently/softly from CameraScreen, not part of the hard camera permission gate.
+    -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="true" />
+
+</manifest>

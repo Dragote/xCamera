@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!--
+        Camera2Interop (Camera2CameraInfo, getCameraCharacteristic) is used throughout
+        CameraController for physical-lens enumeration/selection. @OptIn doesn't suppress this
+        check because ExperimentalCamera2Interop uses androidx.annotation.RequiresOptIn rather
+        than kotlin.RequiresOptIn, so Kotlin never attaches the opt-in to the compiled call site.
+        This is AndroidX's own documented workaround for that mismatch.
+    -->
+    <issue id="UnsafeOptInUsageError">
+        <option name="opt-in" value="androidx.camera.camera2.interop.ExperimentalCamera2Interop" />
+    </issue>
+</lint>
