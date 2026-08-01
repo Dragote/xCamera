@@ -187,12 +187,6 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
         cameraController.setFlashMode(uiState.flashMode)
     }
 
-    LaunchedEffect(uiState.lastSavedUri) {
-        if (uiState.lastSavedUri != null) {
-            Toast.makeText(context, "Photo saved", Toast.LENGTH_SHORT).show()
-        }
-    }
-
     LaunchedEffect(uiState.captureError) {
         val error = uiState.captureError
         if (error != null) {
