@@ -56,11 +56,18 @@ class CameraController(private val context: Context) {
     /** Cached the same way [pendingFlashMode] is, so it survives a rebind (e.g. a lens switch). */
     private var pendingManualIso: Int? = null
 
+    /** Cached alongside [pendingManualIso] for the same rebind-survival reason. */
+    private var pendingManualShutterNs: Long? = null
+
     /**
      * The most recent auto-AE-converged shutter speed, kept fresh by [sessionCaptureCallback] any
      * time we're *not* the ones driving [CaptureRequest.CONTROL_AE_MODE_OFF] — this is what gets
-     * pinned as the fixed exposure the instant manual ISO mode turns on, so there's no visible
-     * brightness jump from whatever auto-exposure last settled on.
+     * pinned as the fixed exposure the instant manual mode turns on (whether the user is dragging ISO
+     * or shutter speed — both parameters are always fixed together, see [setManualExposure]), so
+     * there's no visible brightness jump from whatever auto-exposure last settled on. Also exposed via
+     * [currentAutoExposureTimeNs] as a plain nanosecond `Long` so the shutter dial's own first-touch
+     * position (picked in the presentation layer) can resolve to the nearest ladder stop instead of an
+     * arbitrary default index, without that layer needing any Camera2 type.
      */
     private var lastAutoExposureTimeNs: Long? = null
 
@@ -70,7 +77,7 @@ class CameraController(private val context: Context) {
             request: CaptureRequest,
             result: TotalCaptureResult,
         ) {
-            if (pendingManualIso != null) return
+            if (pendingManualIso != null || pendingManualShutterNs != null) return
             result.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { lastAutoExposureTimeNs = it }
         }
     }
@@ -143,9 +150,11 @@ class CameraController(private val context: Context) {
         lastAutoExposureTimeNs = null
         camera2CameraControl = Camera2CameraControl.from(camera.cameraControl)
         // A fresh bind means a fresh Camera2 capture session with no CaptureRequestOptions of its
-        // own yet — reapply whatever manual ISO was in effect so it survives a lens switch instead
-        // of silently reverting to auto.
-        pendingManualIso?.let { applyManualIso(it) }
+        // own yet — reapply whatever manual exposure was in effect so it survives a lens switch
+        // instead of silently reverting to auto.
+        if (pendingManualIso != null || pendingManualShutterNs != null) {
+            applyManualExposure(pendingManualIso, pendingManualShutterNs)
+        }
         ensureOrientationListener()
     }
 
@@ -209,37 +218,57 @@ class CameraController(private val context: Context) {
         .firstOrNull { cameraManager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK }
 
     /**
-     * `null` [iso] returns to auto (`CONTROL_AE_MODE_ON`) by dropping every custom capture request
-     * option; a non-null [iso] turns `CONTROL_AE_MODE_OFF` on, which per Camera2 also disables auto
-     * *exposure time*, not just auto-ISO — there's no "ISO manual, shutter auto" mode in Camera2. The
-     * fixed shutter speed pinned alongside it is [lastAutoExposureTimeNs] (the last value the auto
-     * pipeline actually converged on before manual mode engaged), clamped to the lens's supported
-     * range, so turning manual ISO on doesn't itself cause a brightness jump.
+     * Both `null` returns to auto (`CONTROL_AE_MODE_ON`) by dropping every custom capture request
+     * option; either non-null turns `CONTROL_AE_MODE_OFF` on, which per Camera2 fixes ISO *and*
+     * exposure time simultaneously — there's no "ISO manual, shutter auto" mode (or vice versa) in
+     * Camera2, so both are written to [CaptureRequestOptions] on every call regardless of which one
+     * the user is actually dragging right now. Whichever of [iso]/[shutterTimeNs] is null (the
+     * parameter *not* currently being dragged, before the presentation layer has resolved an initial
+     * value for it — see `CameraViewModel.onManualShutterResolutionNeeded`) falls back to
+     * [lastAutoExposureTimeNs] for shutter or the range floor for ISO, both clamped to the lens's
+     * supported range, so engaging manual mode for one parameter doesn't itself cause a brightness
+     * jump from whatever the other was left at.
      *
-     * Cached in [pendingManualIso] the same way [setFlashMode] caches [pendingFlashMode], so it's
-     * reapplied by [bindCamera] after a rebind (e.g. a lens switch) instead of silently reverting to
-     * auto.
+     * Cached in [pendingManualIso]/[pendingManualShutterNs] the same way [setFlashMode] caches
+     * [pendingFlashMode], so both are reapplied by [bindCamera] after a rebind (e.g. a lens switch)
+     * instead of silently reverting to auto.
      */
-    fun setManualIso(iso: Int?) {
+    fun setManualExposure(iso: Int?, shutterTimeNs: Long?) {
         pendingManualIso = iso
-        if (iso != null) applyManualIso(iso) else camera2CameraControl?.clearCaptureRequestOptions()
+        pendingManualShutterNs = shutterTimeNs
+        if (iso != null || shutterTimeNs != null) {
+            applyManualExposure(iso, shutterTimeNs)
+        } else {
+            camera2CameraControl?.clearCaptureRequestOptions()
+        }
     }
 
-    private fun applyManualIso(iso: Int) {
+    private fun applyManualExposure(iso: Int?, shutterTimeNs: Long?) {
         val control = camera2CameraControl ?: return
         val capability = manualIsoCapability(currentLens) ?: return
 
-        val clampedIso = iso.coerceIn(capability.isoRange.first, capability.isoRange.last)
-        val exposureTimeNs = (lastAutoExposureTimeNs ?: capability.exposureTimeRange.first)
+        val clampedIso = (iso ?: capability.isoRange.first)
+            .coerceIn(capability.isoRange.first, capability.isoRange.last)
+        val clampedShutterNs = (shutterTimeNs ?: lastAutoExposureTimeNs ?: capability.exposureTimeRange.first)
             .coerceIn(capability.exposureTimeRange.first, capability.exposureTimeRange.last)
 
         val options = CaptureRequestOptions.Builder()
             .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
             .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, clampedIso)
-            .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, exposureTimeNs)
+            .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, clampedShutterNs)
             .build()
         control.setCaptureRequestOptions(options)
     }
+
+    /**
+     * The auto pipeline's last-converged shutter speed as a plain nanosecond `Long` — same value
+     * [applyManualExposure] itself falls back to, exposed so the presentation layer can resolve the
+     * shutter dial's first-touch position (nearest ladder stop, see
+     * [com.dragote.xcamera.feature.camera.domain.model.nearestShutterStopIndex]) without needing any
+     * Camera2 type. `null` before the session capture callback has fired at least once (e.g. right
+     * after a fresh bind, before the first frame lands).
+     */
+    fun currentAutoExposureTimeNs(): Long? = lastAutoExposureTimeNs
 
     /**
      * Most multi-lens phones fuse ultra-wide/main/tele into one LOGICAL_MULTI_CAMERA logical
