@@ -64,11 +64,11 @@ import com.dragote.xcamera.feature.camera.presentation.CameraViewModel
 import com.dragote.xcamera.feature.camera.ui.component.ExposingIndicator
 import com.dragote.xcamera.feature.camera.ui.component.FlashLever
 import com.dragote.xcamera.feature.camera.ui.component.GridLever
+import com.dragote.xcamera.feature.camera.ui.component.IsoDial
 import com.dragote.xcamera.feature.camera.ui.component.LensDial
-import com.dragote.xcamera.feature.camera.ui.component.ManualExposureDial
-import com.dragote.xcamera.feature.camera.ui.component.ManualExposureTargetSelector
 import com.dragote.xcamera.feature.camera.ui.component.ModeLever
 import com.dragote.xcamera.feature.camera.ui.component.ShutterButton
+import com.dragote.xcamera.feature.camera.ui.component.ShutterSpeedDial
 import com.dragote.xcamera.feature.camera.ui.component.ViewfinderGridOverlay
 import com.dragote.xcamera.feature.camera.ui.component.ViewfinderThumbnailChip
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
@@ -148,15 +148,18 @@ private fun rememberCameraRepository(): CameraRepository {
 
 /**
  * Full-screen skeuomorphic chrome ported from the "Camera App UI v3" design: a graphite body with
- * FLASH/GRID/MODE levers above the viewfinder and a LENS/shutter/exposure deck below it. The raw
- * [TextureView] preview itself is untouched in layout terms, just re-framed, with a real
- * [ViewfinderGridOverlay] drawn on top of it now. All seven controls now carry real behavior. The
- * former "ZOOM" dial is gone — zoom doesn't exist as a feature in xCamera — replaced by
- * [ManualExposureDial], which drives manual ISO *and* shutter speed via
- * [CameraViewModel.setManualExposure] (Camera2's `CONTROL_AE_MODE_OFF` fixes both together, there's
- * no "ISO manual, shutter auto" mode); [ManualExposureTargetSelector]'s two overlay buttons over the
- * viewfinder pick which of the two the dial currently shows/drives. MODE ([ModeLever]) just reflects
- * whether manual mode is currently engaged and lets you leave it back to auto.
+ * FLASH/GRID/MODE levers above the viewfinder and a LENS/shutter/ISO/shutter-speed deck below it.
+ * The raw [TextureView] preview itself is untouched in layout terms, just re-framed, with a real
+ * [ViewfinderGridOverlay] drawn on top of it now. All eight controls now carry real behavior. The
+ * former "ZOOM" dial is gone — zoom doesn't exist as a feature in xCamera — replaced by two
+ * independent, always-visible physical dials, [IsoDial] and [ShutterSpeedDial], sitting to the right
+ * of [LensDial]/[ShutterButton] (which stay paired together on the left) in the bottom deck. Dragging
+ * either one immediately drives
+ * manual exposure via [CameraViewModel.setManualExposure] (Camera2's `CONTROL_AE_MODE_OFF` fixes ISO
+ * and shutter speed together, there's no "ISO manual, shutter auto" mode — see
+ * [CameraViewModel.onManualExposureDialDragStarted]). There's no separate overlay control to pick
+ * between them anymore, unlike the single shared dial this replaced. MODE ([ModeLever]) just
+ * reflects whether manual mode is currently engaged and lets you leave it back to auto.
  *
  * The thumbnail chip shows [latestGalleryUri] (the actual last photo in the device's gallery,
  * queried once permission allows it — see [galleryReadPermission]) until a fresh capture replaces
@@ -273,16 +276,6 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
         viewModel.onManualIsoCapabilityChanged(viewModel.manualIsoCapability(uiState.selectedLens))
     }
 
-    // The shutter dial's first-touch position (before the user has actually dragged it this manual
-    // session) resolves to the ladder stop nearest the auto pipeline's last-converged exposure time,
-    // rather than an arbitrary default index — see CameraViewModel.onManualShutterResolutionNeeded.
-    // A no-op once that's already resolved (real drag, or an earlier run of this same effect).
-    LaunchedEffect(uiState.manualModeEnabled, uiState.manualTarget) {
-        if (uiState.manualModeEnabled && uiState.manualTarget == ManualControlTarget.SHUTTER_SPEED) {
-            viewModel.onManualShutterResolutionNeeded(viewModel.currentAutoExposureTimeNs())
-        }
-    }
-
     LaunchedEffect(
         uiState.manualModeEnabled,
         uiState.selectedIsoIndex,
@@ -360,12 +353,6 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                         },
                         modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
                     )
-                    ManualExposureTargetSelector(
-                        visible = uiState.manualModeEnabled,
-                        target = uiState.manualTarget,
-                        onTargetSelected = viewModel::onManualTargetSelected,
-                        modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
-                    )
                     ViewfinderThumbnailChip(
                         photoUri = uiState.lastSavedUri ?: latestGalleryUri,
                         onClick = {
@@ -406,15 +393,22 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                         enabled = !uiState.isCapturing,
                         onCapture = ::capture,
                     )
-                    ManualExposureDial(
-                        target = uiState.manualTarget,
+                    IsoDial(
                         isoStops = uiState.isoStops,
                         selectedIsoIndex = uiState.selectedIsoIndex,
+                        onIsoIndexChange = viewModel::onIsoIndexChanged,
+                        onDragActiveChanged = { active ->
+                            if (active) viewModel.onManualExposureDialDragStarted(ManualControlTarget.ISO)
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                    ShutterSpeedDial(
                         shutterStops = uiState.shutterStops,
                         selectedShutterIndex = uiState.selectedShutterIndex,
-                        onIsoIndexChange = viewModel::onIsoIndexChanged,
                         onShutterIndexChange = viewModel::onShutterIndexChanged,
-                        onDragActiveChanged = { active -> if (active) viewModel.onManualExposureDialDragStarted() },
+                        onDragActiveChanged = { active ->
+                            if (active) viewModel.onManualExposureDialDragStarted(ManualControlTarget.SHUTTER_SPEED)
+                        },
                         modifier = Modifier.weight(1f),
                     )
                 }

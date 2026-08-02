@@ -77,18 +77,19 @@ class CameraRepositoryImplTest {
     }
 
     @Test
-    fun `currentAutoExposureTimeNs delegates to the controller`() {
-        every { cameraController.currentAutoExposureTimeNs() } returns 250_000L
-
-        assertEquals(250_000L, repository.currentAutoExposureTimeNs())
-    }
-
-    @Test
     fun `observeAutoIso delegates to the controller's autoIso flow`() {
         val autoIsoFlow = MutableStateFlow<Int?>(400)
         every { cameraController.autoIso } returns autoIsoFlow
 
         assertEquals(autoIsoFlow, repository.observeAutoIso())
+    }
+
+    @Test
+    fun `observeAutoExposureTime delegates to the controller's autoExposureTimeNs flow`() {
+        val autoExposureTimeFlow = MutableStateFlow<Long?>(250_000L)
+        every { cameraController.autoExposureTimeNs } returns autoExposureTimeFlow
+
+        assertEquals(autoExposureTimeFlow, repository.observeAutoExposureTime())
     }
 
     @Test

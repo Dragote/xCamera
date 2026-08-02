@@ -27,10 +27,10 @@ import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
- * Reflects real manual-exposure state now (see `ManualExposureDial`/
+ * Reflects real manual-exposure state now (see `IsoDial`/`ShutterSpeedDial`/
  * `CameraViewModel.onManualExposureDialDragStarted`) rather than owning its own decorative one —
- * there's no way to *enter* manual mode from this lever itself (only the exposure dial does that,
- * the instant you start dragging it), only to leave it: tapping while
+ * there's no way to *enter* manual mode from this lever itself (only the ISO/shutter-speed dials do
+ * that, the instant you start dragging either one), only to leave it: tapping while
  * [manual] is true calls [onExitManualMode] to fall back to auto; tapping while already auto is a
  * no-op, since there's nothing for a bare tap here to turn on. Built directly on [LeverBody] (rather
  * than [CameraLever]) since the A/M lettering needs real Compose text laid on top of the knob, not a

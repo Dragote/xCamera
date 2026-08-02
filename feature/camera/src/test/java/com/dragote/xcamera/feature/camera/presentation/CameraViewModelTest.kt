@@ -31,13 +31,16 @@ class CameraViewModelTest {
 
     private lateinit var cameraRepository: CameraRepository
     private lateinit var autoIsoFlow: MutableStateFlow<Int?>
+    private lateinit var autoExposureTimeFlow: MutableStateFlow<Long?>
     private lateinit var viewModel: CameraViewModel
 
     @Before
     fun setUp() {
         cameraRepository = mockk()
         autoIsoFlow = MutableStateFlow(null)
+        autoExposureTimeFlow = MutableStateFlow(null)
         every { cameraRepository.observeAutoIso() } returns autoIsoFlow
+        every { cameraRepository.observeAutoExposureTime() } returns autoExposureTimeFlow
         viewModel = CameraViewModel(cameraRepository)
     }
 
@@ -145,13 +148,6 @@ class CameraViewModelTest {
     }
 
     @Test
-    fun `default manual target is ISO`() = runTest {
-        viewModel.uiState.test {
-            assertEquals(ManualControlTarget.ISO, awaitItem().manualTarget)
-        }
-    }
-
-    @Test
     fun `onManualIsoCapabilityChanged with no capability disables manual mode entirely`() = runTest {
         val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
 
@@ -170,7 +166,7 @@ class CameraViewModelTest {
     }
 
     @Test
-    fun `dragging the dial enters manual mode without requiring an index change`() = runTest {
+    fun `dragging either dial enters manual mode without requiring an index change`() = runTest {
         val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
 
         viewModel.uiState.test {
@@ -179,13 +175,19 @@ class CameraViewModelTest {
             viewModel.onManualIsoCapabilityChanged(capability)
             assertFalse(awaitItem().manualModeEnabled)
 
-            viewModel.onManualExposureDialDragStarted()
+            viewModel.onManualExposureDialDragStarted(ManualControlTarget.ISO)
+            assertTrue(awaitItem().manualModeEnabled)
+
+            viewModel.onManualModeExitRequested()
+            assertFalse(awaitItem().manualModeEnabled)
+
+            viewModel.onManualExposureDialDragStarted(ManualControlTarget.SHUTTER_SPEED)
             assertTrue(awaitItem().manualModeEnabled)
         }
     }
 
     @Test
-    fun `dragging the dial while the active target has no stops is a no-op`() = runTest {
+    fun `dragging a dial whose own target has no stops is a no-op`() = runTest {
         // ISO range aligns to the standard ladder, exposure-time range doesn't cover any stop.
         val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1L..10L)
 
@@ -197,11 +199,8 @@ class CameraViewModelTest {
             assertTrue(loaded.isoStops.isNotEmpty())
             assertTrue(loaded.shutterStops.isEmpty())
 
-            viewModel.onManualTargetSelected(ManualControlTarget.SHUTTER_SPEED)
-            assertEquals(ManualControlTarget.SHUTTER_SPEED, awaitItem().manualTarget)
-
-            // Active target (SHUTTER_SPEED) has no stops to offer — dragging shouldn't engage manual.
-            viewModel.onManualExposureDialDragStarted()
+            // SHUTTER_SPEED has no stops to offer — dragging that dial shouldn't engage manual mode.
+            viewModel.onManualExposureDialDragStarted(ManualControlTarget.SHUTTER_SPEED)
             expectNoEvents()
         }
     }
@@ -225,7 +224,7 @@ class CameraViewModelTest {
     }
 
     @Test
-    fun `onShutterIndexChanged clamps the index, engages manual mode and marks it initialized`() = runTest {
+    fun `onShutterIndexChanged clamps the index and engages manual mode`() = runTest {
         val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
 
         viewModel.uiState.test {
@@ -243,7 +242,7 @@ class CameraViewModelTest {
     }
 
     @Test
-    fun `switching manual target preserves both indices independently`() = runTest {
+    fun `onIsoIndexChanged and onShutterIndexChanged update both indices independently`() = runTest {
         val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
 
         viewModel.uiState.test {
@@ -256,77 +255,15 @@ class CameraViewModelTest {
             val isoSet = awaitItem()
             assertEquals(3, isoSet.selectedIsoIndex)
 
-            viewModel.onManualTargetSelected(ManualControlTarget.SHUTTER_SPEED)
-            val switchedToShutter = awaitItem()
-            assertEquals(ManualControlTarget.SHUTTER_SPEED, switchedToShutter.manualTarget)
-            assertEquals(3, switchedToShutter.selectedIsoIndex) // untouched by the switch
-
             viewModel.onShutterIndexChanged(1)
             val shutterSet = awaitItem()
             assertEquals(1, shutterSet.selectedShutterIndex)
-
-            viewModel.onManualTargetSelected(ManualControlTarget.ISO)
-            val switchedBackToIso = awaitItem()
-            assertEquals(ManualControlTarget.ISO, switchedBackToIso.manualTarget)
-            assertEquals(3, switchedBackToIso.selectedIsoIndex) // still untouched
-            assertEquals(1, switchedBackToIso.selectedShutterIndex) // still untouched
+            assertEquals(3, shutterSet.selectedIsoIndex) // untouched by the shutter change
         }
     }
 
     @Test
-    fun `onManualShutterResolutionNeeded resolves the nearest stop to the auto exposure value`() = runTest {
-        val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
-
-        viewModel.uiState.test {
-            awaitItem() // initial
-
-            viewModel.onManualIsoCapabilityChanged(capability)
-            val loaded = awaitItem()
-            // shutterStops starts [125_000 (1/8000), 250_000 (1/4000), 500_000 (1/2000), ...]
-            assertEquals(0, loaded.selectedShutterIndex)
-
-            viewModel.onManualShutterResolutionNeeded(240_000L) // nearest is 250_000 (index 1)
-            val resolved = awaitItem()
-            assertEquals(1, resolved.selectedShutterIndex)
-        }
-    }
-
-    @Test
-    fun `onManualShutterResolutionNeeded is a no-op once the shutter index is already initialized`() = runTest {
-        val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
-
-        viewModel.uiState.test {
-            awaitItem() // initial
-
-            viewModel.onManualIsoCapabilityChanged(capability)
-            awaitItem() // loaded
-
-            viewModel.onShutterIndexChanged(2) // real user drag, marks it initialized
-            val userSet = awaitItem()
-            assertEquals(2, userSet.selectedShutterIndex)
-
-            viewModel.onManualShutterResolutionNeeded(125_000L) // would otherwise resolve to index 0
-            expectNoEvents()
-        }
-    }
-
-    @Test
-    fun `onManualShutterResolutionNeeded is a no-op with no auto exposure value yet`() = runTest {
-        val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
-
-        viewModel.uiState.test {
-            awaitItem() // initial
-
-            viewModel.onManualIsoCapabilityChanged(capability)
-            awaitItem() // loaded
-
-            viewModel.onManualShutterResolutionNeeded(null)
-            expectNoEvents()
-        }
-    }
-
-    @Test
-    fun `onManualModeExitRequested falls back to auto and resets shutter index initialization`() = runTest {
+    fun `onManualModeExitRequested falls back to auto`() = runTest {
         val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
 
         viewModel.uiState.test {
@@ -335,7 +272,7 @@ class CameraViewModelTest {
             viewModel.onManualIsoCapabilityChanged(capability)
             awaitItem()
 
-            viewModel.onManualExposureDialDragStarted()
+            viewModel.onManualExposureDialDragStarted(ManualControlTarget.ISO)
             assertTrue(awaitItem().manualModeEnabled)
 
             viewModel.onShutterIndexChanged(2)
@@ -343,14 +280,6 @@ class CameraViewModelTest {
 
             viewModel.onManualModeExitRequested()
             assertFalse(awaitItem().manualModeEnabled)
-
-            // Re-entering manual mode should be able to re-resolve the shutter index fresh.
-            viewModel.onManualExposureDialDragStarted()
-            assertTrue(awaitItem().manualModeEnabled)
-
-            viewModel.onManualShutterResolutionNeeded(500_000L) // nearest is index 2 (500_000) already, but exercises the reset path
-            val resolved = awaitItem()
-            assertEquals(2, resolved.selectedShutterIndex)
         }
     }
 
@@ -450,13 +379,6 @@ class CameraViewModelTest {
     }
 
     @Test
-    fun `currentAutoExposureTimeNs delegates to the repository`() {
-        every { cameraRepository.currentAutoExposureTimeNs() } returns 500_000L
-
-        assertEquals(500_000L, viewModel.currentAutoExposureTimeNs())
-    }
-
-    @Test
     fun `setManualExposure delegates to the repository`() {
         every { cameraRepository.setManualExposure(400, 250_000L) } returns Unit
 
@@ -542,7 +464,7 @@ class CameraViewModelTest {
             viewModel.onManualIsoCapabilityChanged(capability)
             awaitItem() // loaded
 
-            viewModel.onManualExposureDialDragStarted()
+            viewModel.onManualExposureDialDragStarted(ManualControlTarget.ISO)
             assertTrue(awaitItem().manualModeEnabled)
 
             // Would otherwise resolve to a different index — must not fight the user's manual drag.
@@ -575,10 +497,83 @@ class CameraViewModelTest {
             val tracked = awaitItem()
             assertEquals(4, tracked.selectedIsoIndex)
 
-            viewModel.onManualExposureDialDragStarted()
+            viewModel.onManualExposureDialDragStarted(ManualControlTarget.ISO)
             val manual = awaitItem()
             assertTrue(manual.manualModeEnabled)
             assertEquals(4, manual.selectedIsoIndex) // unchanged by merely engaging manual mode
+        }
+    }
+
+    @Test
+    fun `auto exposure time updates move selectedShutterIndex to the nearest stop while auto exposure is active`() = runTest {
+        val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
+
+        viewModel.uiState.test {
+            awaitItem() // initial
+
+            viewModel.onManualIsoCapabilityChanged(capability)
+            val loaded = awaitItem()
+            // shutterStops starts [125_000 (1/8000), 250_000 (1/4000), 500_000 (1/2000), ...]
+            assertEquals(0, loaded.selectedShutterIndex)
+
+            autoExposureTimeFlow.value = 240_000L // nearest is 250_000 (index 1)
+            val updated = awaitItem()
+            assertEquals(1, updated.selectedShutterIndex)
+            assertFalse(updated.manualModeEnabled)
+
+            autoExposureTimeFlow.value = 900_000L // nearest is 1_000_000 (index 3), tracks live
+            val trackedAgain = awaitItem()
+            assertEquals(3, trackedAgain.selectedShutterIndex)
+        }
+    }
+
+    @Test
+    fun `auto exposure time updates are ignored once manual mode is engaged`() = runTest {
+        val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
+
+        viewModel.uiState.test {
+            awaitItem() // initial
+
+            viewModel.onManualIsoCapabilityChanged(capability)
+            awaitItem() // loaded
+
+            viewModel.onManualExposureDialDragStarted(ManualControlTarget.SHUTTER_SPEED)
+            assertTrue(awaitItem().manualModeEnabled)
+
+            // Would otherwise resolve to a different index — must not fight the user's manual drag.
+            autoExposureTimeFlow.value = 500_000_000L
+            expectNoEvents()
+        }
+    }
+
+    @Test
+    fun `auto exposure time updates are a no-op with no shutter stops loaded yet`() = runTest {
+        viewModel.uiState.test {
+            awaitItem() // initial
+
+            autoExposureTimeFlow.value = 250_000L
+            expectNoEvents()
+        }
+    }
+
+    @Test
+    fun `grabbing the shutter dial to enter manual mode starts from whatever auto exposure last settled on`() = runTest {
+        val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
+
+        viewModel.uiState.test {
+            awaitItem() // initial
+
+            viewModel.onManualIsoCapabilityChanged(capability)
+            awaitItem() // loaded
+
+            autoExposureTimeFlow.value = 900_000L // auto settles on ~1_000_000 (index 3)
+            val tracked = awaitItem()
+            assertEquals(3, tracked.selectedShutterIndex)
+
+            viewModel.onManualExposureDialDragStarted(ManualControlTarget.SHUTTER_SPEED)
+            val manual = awaitItem()
+            assertTrue(manual.manualModeEnabled)
+            assertEquals(3, manual.selectedShutterIndex) // unchanged by merely engaging manual mode
         }
     }
 }
