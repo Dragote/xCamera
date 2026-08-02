@@ -4,11 +4,15 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
+import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualControlTarget
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.isoStopsInRange
 import com.dragote.xcamera.feature.camera.domain.model.nearestShutterStopIndex
 import com.dragote.xcamera.feature.camera.domain.model.shutterSpeedStopsInRange
+import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
+import com.dragote.xcamera.shared.common.domain.result.DataError
+import com.dragote.xcamera.shared.common.domain.result.Result
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,11 +20,36 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlin.math.abs
 import javax.inject.Inject
 
+/**
+ * `bindCamera` isn't wrapped here — it needs a Compose `LifecycleOwner` + `Preview.SurfaceProvider`,
+ * which this ViewModel must never import (see `CameraRepository`'s doc); `ui/CameraScreen` calls it
+ * directly against a Hilt-injected [CameraRepository] instead. Every other camera operation is
+ * routed through this ViewModel so the UI only ever calls ViewModel methods and renders [uiState].
+ */
 @HiltViewModel
-class CameraViewModel @Inject constructor() : ViewModel() {
+class CameraViewModel @Inject constructor(
+    private val cameraRepository: CameraRepository,
+) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CameraUiState())
     val uiState: StateFlow<CameraUiState> = _uiState.asStateFlow()
+
+    fun setFlashMode(flashMode: FlashMode) = cameraRepository.setFlashMode(flashMode)
+
+    fun manualIsoCapability(lens: CameraLens?): ManualIsoCapability? =
+        cameraRepository.manualIsoCapability(lens)
+
+    fun currentAutoExposureTimeNs(): Long? = cameraRepository.currentAutoExposureTimeNs()
+
+    fun setManualExposure(iso: Int?, shutterTimeNs: Long?) = cameraRepository.setManualExposure(iso, shutterTimeNs)
+
+    suspend fun takePhoto(): Result<Uri, DataError.Local> = cameraRepository.takePhoto()
+
+    fun listBackLenses(): List<CameraLens> = cameraRepository.listBackLenses()
+
+    suspend fun latestGalleryPhotoUri(): Uri? = cameraRepository.latestGalleryPhotoUri()
+
+    fun stopOrientationListener() = cameraRepository.stopOrientationListener()
 
     fun onPermissionResult(granted: Boolean) {
         _uiState.value = _uiState.value.copy(

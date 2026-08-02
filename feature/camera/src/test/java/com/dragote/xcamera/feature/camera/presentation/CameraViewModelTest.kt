@@ -7,7 +7,14 @@ import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualControlTarget
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
+import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
+import com.dragote.xcamera.shared.common.domain.result.DataError
+import com.dragote.xcamera.shared.common.domain.result.Result
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,7 +23,8 @@ import org.junit.Test
 
 class CameraViewModelTest {
 
-    private val viewModel = CameraViewModel()
+    private val cameraRepository = mockk<CameraRepository>()
+    private val viewModel = CameraViewModel(cameraRepository)
 
     @Test
     fun `onPermissionResult maps granted flag to permission status`() = runTest {
@@ -405,5 +413,85 @@ class CameraViewModelTest {
             assertEquals(narrowed.isoStops.lastIndex, narrowed.selectedIsoIndex)
             assertEquals(narrowed.shutterStops.lastIndex, narrowed.selectedShutterIndex)
         }
+    }
+
+    @Test
+    fun `setFlashMode delegates to the repository`() {
+        every { cameraRepository.setFlashMode(FlashMode.ON) } returns Unit
+
+        viewModel.setFlashMode(FlashMode.ON)
+
+        verify { cameraRepository.setFlashMode(FlashMode.ON) }
+    }
+
+    @Test
+    fun `manualIsoCapability delegates to the repository and returns its result`() {
+        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
+        every { cameraRepository.manualIsoCapability(lens) } returns capability
+
+        assertEquals(capability, viewModel.manualIsoCapability(lens))
+        verify { cameraRepository.manualIsoCapability(lens) }
+    }
+
+    @Test
+    fun `currentAutoExposureTimeNs delegates to the repository`() {
+        every { cameraRepository.currentAutoExposureTimeNs() } returns 500_000L
+
+        assertEquals(500_000L, viewModel.currentAutoExposureTimeNs())
+    }
+
+    @Test
+    fun `setManualExposure delegates to the repository`() {
+        every { cameraRepository.setManualExposure(400, 250_000L) } returns Unit
+
+        viewModel.setManualExposure(400, 250_000L)
+
+        verify { cameraRepository.setManualExposure(400, 250_000L) }
+    }
+
+    @Test
+    fun `listBackLenses delegates to the repository`() {
+        val lenses = listOf(CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f))
+        every { cameraRepository.listBackLenses() } returns lenses
+
+        assertEquals(lenses, viewModel.listBackLenses())
+    }
+
+    @Test
+    fun `latestGalleryPhotoUri delegates to the repository`() = runTest {
+        val uri = mockk<Uri>()
+        coEvery { cameraRepository.latestGalleryPhotoUri() } returns uri
+
+        assertEquals(uri, viewModel.latestGalleryPhotoUri())
+    }
+
+    @Test
+    fun `stopOrientationListener delegates to the repository`() {
+        every { cameraRepository.stopOrientationListener() } returns Unit
+
+        viewModel.stopOrientationListener()
+
+        verify { cameraRepository.stopOrientationListener() }
+    }
+
+    @Test
+    fun `takePhoto delegates to the repository and passes through a successful Result`() = runTest {
+        val uri = mockk<Uri>()
+        coEvery { cameraRepository.takePhoto() } returns Result.Success(uri)
+
+        val result = viewModel.takePhoto()
+
+        assertEquals(Result.Success(uri), result)
+        coVerify { cameraRepository.takePhoto() }
+    }
+
+    @Test
+    fun `takePhoto delegates to the repository and passes through a failed Result`() = runTest {
+        coEvery { cameraRepository.takePhoto() } returns Result.Error(DataError.Local.UNKNOWN)
+
+        val result = viewModel.takePhoto()
+
+        assertEquals(Result.Error(DataError.Local.UNKNOWN), result)
     }
 }
