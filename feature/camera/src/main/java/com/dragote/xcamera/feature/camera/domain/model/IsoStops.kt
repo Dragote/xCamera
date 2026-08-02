@@ -1,5 +1,7 @@
 package com.dragote.xcamera.feature.camera.domain.model
 
+import kotlin.math.abs
+
 /** The standard 1-stop ISO ladder photographers actually dial through, independent of any device. */
 private val StandardIsoStops = listOf(50, 100, 200, 400, 800, 1600, 3200, 6400, 12800, 25600)
 
@@ -11,3 +13,16 @@ private val StandardIsoStops = listOf(50, 100, 200, 400, 800, 1600, 3200, 6400, 
  * dependency.
  */
 fun isoStopsInRange(range: IntRange): List<Int> = StandardIsoStops.filter { it in range }
+
+/**
+ * Index of whichever [this] entry is nearest [targetIso] — mirrors
+ * [com.dragote.xcamera.feature.camera.domain.model.nearestShutterStopIndex]'s own "nearest by
+ * absolute difference" contract, used to keep the ISO dial's displayed index reflecting whatever
+ * auto-exposure's live ISO actually is (see `CameraViewModel`'s continuous collection) rather than
+ * just resolving once. Returns 0 for an empty list; callers are expected to already guard on
+ * emptiness the same way [isoStopsInRange] callers do, this is just a safe fallback.
+ */
+fun List<Int>.nearestIsoStopIndex(targetIso: Int): Int {
+    if (isEmpty()) return 0
+    return indices.minByOrNull { i -> abs(this[i] - targetIso) } ?: 0
+}

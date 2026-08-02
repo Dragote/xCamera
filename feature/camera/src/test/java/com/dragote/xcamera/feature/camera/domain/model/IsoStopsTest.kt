@@ -32,4 +32,21 @@ class IsoStopsTest {
     fun `range clipped below the ladder start still keeps values inside it`() {
         assertEquals(listOf(200, 400, 800), isoStopsInRange(150..1000))
     }
+
+    @Test
+    fun `nearestIsoStopIndex picks the closest stop to a raw auto-exposure ISO`() {
+        val stops = listOf(100, 200, 400, 800)
+
+        // Right between 200 and 400, slightly closer to 200.
+        assertEquals(1, stops.nearestIsoStopIndex(290))
+        // Well past the highest stop — still clamps to the nearest (last) one, not out of bounds.
+        assertEquals(3, stops.nearestIsoStopIndex(10_000))
+        // Exact match.
+        assertEquals(2, stops.nearestIsoStopIndex(400))
+    }
+
+    @Test
+    fun `nearestIsoStopIndex on an empty list returns 0`() {
+        assertEquals(0, emptyList<Int>().nearestIsoStopIndex(400))
+    }
 }

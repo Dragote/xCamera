@@ -51,9 +51,11 @@ import com.dragote.xcamera.feature.camera.di.CameraRepositoryEntryPoint
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualControlTarget
+import com.dragote.xcamera.feature.camera.domain.model.formatShutterSpeed
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.feature.camera.presentation.CameraUiState
 import com.dragote.xcamera.feature.camera.presentation.CameraViewModel
+import com.dragote.xcamera.feature.camera.ui.component.ExposingIndicator
 import com.dragote.xcamera.feature.camera.ui.component.FlashLever
 import com.dragote.xcamera.feature.camera.ui.component.GridLever
 import com.dragote.xcamera.feature.camera.ui.component.LensDial
@@ -294,6 +296,15 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                 ) {
                     AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
                     ViewfinderGridOverlay(visible = gridEnabled, modifier = Modifier.fillMaxSize())
+                    ExposingIndicator(
+                        visible = uiState.isCapturing,
+                        durationLabel = if (uiState.manualModeEnabled) {
+                            uiState.shutterStops.getOrNull(uiState.selectedShutterIndex)?.let(::formatShutterSpeed)
+                        } else {
+                            null
+                        },
+                        modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
+                    )
                     ManualExposureTargetSelector(
                         visible = uiState.manualModeEnabled,
                         target = uiState.manualTarget,

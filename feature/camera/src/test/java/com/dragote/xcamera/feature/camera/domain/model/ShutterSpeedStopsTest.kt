@@ -85,4 +85,24 @@ class ShutterSpeedStopsTest {
     fun `nearestShutterStopIndex on an empty list returns 0`() {
         assertEquals(0, emptyList<Long>().nearestShutterStopIndex(1_000_000L))
     }
+
+    @Test
+    fun `manualExposureConfirmationTimeoutMs floors at 1500ms for fast sub-second targets`() {
+        // 1/125s (8_000_000ns) -> 8ms + 500ms buffer = 508ms, well under the 1500ms floor.
+        assertEquals(1_500L, manualExposureConfirmationTimeoutMs(8_000_000L))
+        // 1s exactly -> 1000ms + 500ms buffer = 1500ms, right at the floor.
+        assertEquals(1_500L, manualExposureConfirmationTimeoutMs(1_000_000_000L))
+    }
+
+    @Test
+    fun `manualExposureConfirmationTimeoutMs scales with long manual shutter targets instead of a fixed cap`() {
+        // 2s target -> 2000ms + 500ms buffer = 2500ms, already past the old fixed 1500ms constant —
+        // this is exactly the regression a fixed timeout would silently reintroduce.
+        assertEquals(2_500L, manualExposureConfirmationTimeoutMs(2_000_000_000L))
+        // 4s target -> 4500ms.
+        assertEquals(4_500L, manualExposureConfirmationTimeoutMs(4_000_000_000L))
+        // 8s target -> 8500ms — the confirming frame alone takes 8s to expose, so the timeout must
+        // comfortably exceed that or this whole confirmation mechanism can never actually confirm.
+        assertEquals(8_500L, manualExposureConfirmationTimeoutMs(8_000_000_000L))
+    }
 }

@@ -8,6 +8,7 @@ import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
+import kotlinx.coroutines.flow.Flow
 
 /**
  * Domain-facing contract for CameraX/Camera2 capture, mirroring the operations
@@ -36,6 +37,14 @@ interface CameraRepository {
     fun manualIsoCapability(lens: CameraLens?): ManualIsoCapability?
 
     fun currentAutoExposureTimeNs(): Long?
+
+    /**
+     * Continuously reflects auto-exposure's live ISO (via a session-wide Camera2 capture callback)
+     * for as long as manual mode is off — unlike [currentAutoExposureTimeNs]'s one-shot pull, this is
+     * meant to be collected for the ISO dial's live rotation while auto exposure is active. Emits
+     * `null` before the first frame lands (e.g. right after a fresh bind).
+     */
+    fun observeAutoIso(): Flow<Int?>
 
     fun setManualExposure(iso: Int?, shutterTimeNs: Long?)
 

@@ -12,8 +12,11 @@ import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
+import javax.inject.Singleton
 
+@Singleton
 class CameraRepositoryImpl @Inject constructor(
     private val cameraController: CameraController,
 ) : CameraRepository {
@@ -30,6 +33,8 @@ class CameraRepositoryImpl @Inject constructor(
         cameraController.manualIsoCapability(lens)
 
     override fun currentAutoExposureTimeNs(): Long? = cameraController.currentAutoExposureTimeNs()
+
+    override fun observeAutoIso(): Flow<Int?> = cameraController.autoIso
 
     override fun setManualExposure(iso: Int?, shutterTimeNs: Long?) =
         cameraController.setManualExposure(iso, shutterTimeNs)

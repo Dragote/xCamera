@@ -29,12 +29,20 @@ import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
+import com.dragote.xcamera.feature.camera.domain.model.manualExposureConfirmationTimeoutMs
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
+import javax.inject.Singleton
 
 /**
  * Thin wrapper around CameraX's provider/bind/capture lifecycle. Kept out of the ViewModel since
@@ -44,7 +52,12 @@ import kotlin.math.sqrt
  * Camera2Interop usage below (physical-lens enumeration/selection) is opted in project-wide via
  * this module's lint.xml rather than per-call-site @OptIn, which has no effect here — see that
  * file for why.
+ *
+ * `@Singleton`-scoped (see `di/CameraModule`'s `provideCameraController`) so every injection path —
+ * `CameraViewModel`'s constructor injection and `ui/CameraScreen`'s separate `EntryPointAccessors`
+ * call — shares the one instance `bindCamera()` is actually called on.
  */
+@Singleton
 class CameraController(private val context: Context) {
 
     private var imageCapture: ImageCapture? = null
@@ -71,14 +84,44 @@ class CameraController(private val context: Context) {
      */
     private var lastAutoExposureTimeNs: Long? = null
 
+    /**
+     * Mirrors [lastAutoExposureTimeNs] for ISO, but as a continuously-observed [StateFlow] rather
+     * than a one-shot pull — the ISO dial reflects auto-exposure's live ISO the whole time manual
+     * mode is off (see `CameraViewModel`'s collector), not just the first time it's touched, so a
+     * one-shot accessor like [currentAutoExposureTimeNs] wouldn't fit the same "starts from wherever
+     * auto last settled" convention shutter resolution already uses.
+     */
+    private val _autoIso = MutableStateFlow<Int?>(null)
+    val autoIso: StateFlow<Int?> = _autoIso.asStateFlow()
+
+    /**
+     * Set by [pushExactManualExposureForCapture] right before a still capture while manual mode is
+     * active, cleared as soon as [sessionCaptureCallback] observes a [TotalCaptureResult] whose
+     * exposure/ISO actually match — see that function's doc for why waiting for this (rather than a
+     * fixed delay) is both necessary and sufficient for `CONTROL_AE_MODE_OFF`.
+     */
+    private var pendingCaptureExposureTarget: Pair<Int, Long>? = null
+    private var pendingCaptureExposureContinuation: CancellableContinuation<Unit>? = null
+
     private val sessionCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureCompleted(
             session: CameraCaptureSession,
             request: CaptureRequest,
             result: TotalCaptureResult,
         ) {
+            pendingCaptureExposureTarget?.let { (targetIso, targetShutterNs) ->
+                val resultIso = result.get(CaptureResult.SENSOR_SENSITIVITY)
+                val resultShutterNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+                if (resultIso == targetIso && resultShutterNs == targetShutterNs) {
+                    pendingCaptureExposureTarget = null
+                    pendingCaptureExposureContinuation?.takeIf { it.isActive }?.resume(Unit)
+                    pendingCaptureExposureContinuation = null
+                }
+            }
+
             if (pendingManualIso != null || pendingManualShutterNs != null) return
             result.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { lastAutoExposureTimeNs = it }
+            result.get(CaptureResult.SENSOR_SENSITIVITY)?.let { _autoIso.value = it }
         }
     }
 
@@ -148,6 +191,7 @@ class CameraController(private val context: Context) {
         imageCapture = capture
         currentLens = lens
         lastAutoExposureTimeNs = null
+        _autoIso.value = null
         camera2CameraControl = Camera2CameraControl.from(camera.cameraControl)
         // A fresh bind means a fresh Camera2 capture session with no CaptureRequestOptions of its
         // own yet — reapply whatever manual exposure was in effect so it survives a lens switch
@@ -231,7 +275,12 @@ class CameraController(private val context: Context) {
      *
      * Cached in [pendingManualIso]/[pendingManualShutterNs] the same way [setFlashMode] caches
      * [pendingFlashMode], so both are reapplied by [bindCamera] after a rebind (e.g. a lens switch)
-     * instead of silently reverting to auto.
+     * instead of silently reverting to auto. This is the *live/dragging* path (called on every dial
+     * tick, see `ui/CameraScreen`'s reactive `LaunchedEffect`) — it only ever pushes
+     * [PreviewMaxExposureTimeNs]-capped options to the repeating/preview request via
+     * [applyManualExposure]. The real, uncapped values the user selected are only pushed to the
+     * sensor momentarily at actual capture time, by [pushExactManualExposureForCapture] — see
+     * [takePhoto].
      */
     fun setManualExposure(iso: Int?, shutterTimeNs: Long?) {
         pendingManualIso = iso
@@ -243,21 +292,87 @@ class CameraController(private val context: Context) {
         }
     }
 
+    /** Pushes [PreviewMaxExposureTimeNs]-capped manual exposure options to the live repeating request. */
     private fun applyManualExposure(iso: Int?, shutterTimeNs: Long?) {
         val control = camera2CameraControl ?: return
         val capability = manualIsoCapability(currentLens) ?: return
+        val (resolvedIso, resolvedShutterNs) = resolveManualExposure(iso, shutterTimeNs, capability)
+        control.setCaptureRequestOptions(previewCaptureOptions(resolvedIso, resolvedShutterNs, capability))
+    }
 
+    /**
+     * Resolves [iso]/[shutterTimeNs] the same way regardless of caller: whichever is null (the
+     * parameter not currently being dragged) falls back to [lastAutoExposureTimeNs] for shutter or
+     * the range floor for ISO, then both are clamped to [capability]'s supported sensor range — see
+     * [applyManualExposure]'s doc for the full reasoning. This is the real, full-fidelity exposure
+     * the user actually selected; [previewCaptureOptions] is the only place that further caps it for
+     * the live preview.
+     */
+    private fun resolveManualExposure(iso: Int?, shutterTimeNs: Long?, capability: ManualIsoCapability): Pair<Int, Long> {
         val clampedIso = (iso ?: capability.isoRange.first)
             .coerceIn(capability.isoRange.first, capability.isoRange.last)
         val clampedShutterNs = (shutterTimeNs ?: lastAutoExposureTimeNs ?: capability.exposureTimeRange.first)
             .coerceIn(capability.exposureTimeRange.first, capability.exposureTimeRange.last)
+        return clampedIso to clampedShutterNs
+    }
+
+    /**
+     * Builds the [CaptureRequestOptions] actually pushed to the *live* repeating/preview request:
+     * exposure time capped at [PreviewMaxExposureTimeNs] regardless of how long a shutter speed the
+     * user has dragged to, with whatever brightness the cap costs made up for by boosting
+     * [CaptureRequest.SENSOR_SENSITIVITY] instead (re-clamped to [capability]'s ISO range — a very
+     * long dragged shutter speed may not be fully compensable within the sensor's ISO ceiling, in
+     * which case the live preview just runs a bit dark; that's expected and harmless, since the real
+     * exposure is what actually lands in the photo, not this preview approximation). ISO alone
+     * doesn't cost preview frame rate, so a manually-dragged ISO passes straight through uncapped
+     * (only still clamped to the sensor's range by [resolveManualExposure]).
+     */
+    private fun previewCaptureOptions(iso: Int, shutterNs: Long, capability: ManualIsoCapability): CaptureRequestOptions {
+        val previewShutterNs = shutterNs.coerceAtMost(PreviewMaxExposureTimeNs)
+        val compensation = if (previewShutterNs > 0) shutterNs.toDouble() / previewShutterNs else 1.0
+        val previewIso = (iso * compensation).roundToInt()
+            .coerceIn(capability.isoRange.first, capability.isoRange.last)
+
+        return CaptureRequestOptions.Builder()
+            .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+            .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, previewIso)
+            .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, previewShutterNs)
+            .build()
+    }
+
+    /**
+     * Pushes the real, unclamped-by-preview ISO/shutter the user actually dragged to (only clamped
+     * to the lens's supported sensor ranges, via [resolveManualExposure]) to the repeating request,
+     * then suspends until a [TotalCaptureResult] confirms the sensor is actually honoring those exact
+     * values before returning — see [pendingCaptureExposureTarget]'s doc and [sessionCaptureCallback].
+     * The wait is capped at [manualExposureConfirmationTimeoutMs] of [targetShutterNs] — *not* a fixed
+     * constant — as a safety net against a dropped/lost frame hanging a capture forever; see that
+     * function's own doc for why the confirming frame's own exposure duration (not just pipeline
+     * catch-up) has to be accounted for, especially for the long (2s/4s/8s+) manual shutter speeds
+     * this whole mechanism exists to protect.
+     */
+    private suspend fun pushExactManualExposureForCapture() {
+        val control = camera2CameraControl ?: return
+        val capability = manualIsoCapability(currentLens) ?: return
+        val (targetIso, targetShutterNs) = resolveManualExposure(pendingManualIso, pendingManualShutterNs, capability)
 
         val options = CaptureRequestOptions.Builder()
             .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-            .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, clampedIso)
-            .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, clampedShutterNs)
+            .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, targetIso)
+            .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, targetShutterNs)
             .build()
-        control.setCaptureRequestOptions(options)
+
+        withTimeoutOrNull(manualExposureConfirmationTimeoutMs(targetShutterNs)) {
+            suspendCancellableCoroutine { continuation ->
+                pendingCaptureExposureTarget = targetIso to targetShutterNs
+                pendingCaptureExposureContinuation = continuation
+                continuation.invokeOnCancellation {
+                    pendingCaptureExposureTarget = null
+                    pendingCaptureExposureContinuation = null
+                }
+                control.setCaptureRequestOptions(options)
+            }
+        }
     }
 
     /**
@@ -390,9 +505,36 @@ class CameraController(private val context: Context) {
         return focalLength * (fullFrameDiagonalMm / sensorDiagonalMm)
     }
 
+    /**
+     * While manual exposure is active, the real (preview-uncapped) ISO/shutter the user selected is
+     * only ever live on the sensor for the moment of this call — [pushExactManualExposureForCapture]
+     * pushes it and waits for confirmation immediately before [capturePhoto], and the `finally` block
+     * reapplies whichever preview-capped/auto state is current *now* once the capture settles,
+     * checking [pendingManualIso]/[pendingManualShutterNs] fresh rather than reapplying the
+     * pre-capture snapshot — the user may have exited manual mode or changed the target mid-capture.
+     */
     suspend fun takePhoto(): Uri {
         val capture = checkNotNull(imageCapture) { "Camera not bound yet" }
+        val manualExposureActive = pendingManualIso != null || pendingManualShutterNs != null
 
+        if (manualExposureActive) {
+            pushExactManualExposureForCapture()
+        }
+
+        return try {
+            capturePhoto(capture)
+        } finally {
+            if (manualExposureActive) {
+                if (pendingManualIso != null || pendingManualShutterNs != null) {
+                    applyManualExposure(pendingManualIso, pendingManualShutterNs)
+                } else {
+                    camera2CameraControl?.clearCaptureRequestOptions()
+                }
+            }
+        }
+    }
+
+    private suspend fun capturePhoto(capture: ImageCapture): Uri {
         val name = "xCamera_${System.currentTimeMillis()}.jpg"
         val contentValues = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
@@ -459,5 +601,22 @@ class CameraController(private val context: Context) {
             { continuation.resume(future.get()) },
             ContextCompat.getMainExecutor(context),
         )
+    }
+
+    private companion object {
+        /**
+         * Ceiling on the exposure time actually pushed to the *live* repeating (preview) request
+         * while manual mode is active, regardless of how long a shutter speed the user has dragged
+         * to. Once `CONTROL_AE_MODE_OFF` is set, each preview frame's duration *is* the configured
+         * `SENSOR_EXPOSURE_TIME` — pushing an 8s exposure straight to the repeating request would
+         * drop the viewfinder to ~0.125fps and leave it visibly frozen afterward too, since the
+         * sensor has to finish reading out whatever long-exposure frames were already queued before a
+         * fresh fast one can land. 1/15s keeps manual-mode preview comfortably fluid (a frame-rate a
+         * dim-light *auto*-exposure preview already commonly runs at) while still long enough that
+         * the [SENSOR_SENSITIVITY] compensation needed to match brightness rarely needs to leave a
+         * flagship sensor's usable ISO range. The user's actual selected shutter speed is only ever
+         * pushed to the sensor for real at capture time — see [pushExactManualExposureForCapture].
+         */
+        const val PreviewMaxExposureTimeNs = 1_000_000_000L / 15
     }
 }

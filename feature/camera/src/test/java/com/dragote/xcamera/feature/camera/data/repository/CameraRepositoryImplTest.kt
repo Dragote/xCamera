@@ -15,6 +15,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -59,6 +60,14 @@ class CameraRepositoryImplTest {
         every { cameraController.currentAutoExposureTimeNs() } returns 250_000L
 
         assertEquals(250_000L, repository.currentAutoExposureTimeNs())
+    }
+
+    @Test
+    fun `observeAutoIso delegates to the controller's autoIso flow`() {
+        val autoIsoFlow = MutableStateFlow<Int?>(400)
+        every { cameraController.autoIso } returns autoIsoFlow
+
+        assertEquals(autoIsoFlow, repository.observeAutoIso())
     }
 
     @Test

@@ -15,16 +15,31 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 
 class CameraViewModelTest {
 
-    private val cameraRepository = mockk<CameraRepository>()
-    private val viewModel = CameraViewModel(cameraRepository)
+    @get:Rule
+    val mainDispatcherRule = MainDispatcherRule()
+
+    private lateinit var cameraRepository: CameraRepository
+    private lateinit var autoIsoFlow: MutableStateFlow<Int?>
+    private lateinit var viewModel: CameraViewModel
+
+    @Before
+    fun setUp() {
+        cameraRepository = mockk()
+        autoIsoFlow = MutableStateFlow(null)
+        every { cameraRepository.observeAutoIso() } returns autoIsoFlow
+        viewModel = CameraViewModel(cameraRepository)
+    }
 
     @Test
     fun `onPermissionResult maps granted flag to permission status`() = runTest {
@@ -493,5 +508,77 @@ class CameraViewModelTest {
         val result = viewModel.takePhoto()
 
         assertEquals(Result.Error(DataError.Local.UNKNOWN), result)
+    }
+
+    @Test
+    fun `auto ISO updates move selectedIsoIndex to the nearest stop while auto exposure is active`() = runTest {
+        val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
+
+        viewModel.uiState.test {
+            awaitItem() // initial
+
+            viewModel.onManualIsoCapabilityChanged(capability)
+            val loaded = awaitItem()
+            assertEquals(0, loaded.selectedIsoIndex) // stops start [100, 200, 400, 800, 1600, 3200]
+
+            autoIsoFlow.value = 340 // nearest is 400 (index 2)
+            val updated = awaitItem()
+            assertEquals(2, updated.selectedIsoIndex)
+            assertFalse(updated.manualModeEnabled)
+
+            autoIsoFlow.value = 1500 // nearest is 1600 (index 4), tracks live as lighting changes
+            val trackedAgain = awaitItem()
+            assertEquals(4, trackedAgain.selectedIsoIndex)
+        }
+    }
+
+    @Test
+    fun `auto ISO updates are ignored once manual mode is engaged`() = runTest {
+        val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
+
+        viewModel.uiState.test {
+            awaitItem() // initial
+
+            viewModel.onManualIsoCapabilityChanged(capability)
+            awaitItem() // loaded
+
+            viewModel.onManualExposureDialDragStarted()
+            assertTrue(awaitItem().manualModeEnabled)
+
+            // Would otherwise resolve to a different index — must not fight the user's manual drag.
+            autoIsoFlow.value = 3200
+            expectNoEvents()
+        }
+    }
+
+    @Test
+    fun `auto ISO updates are a no-op with no ISO stops loaded yet`() = runTest {
+        viewModel.uiState.test {
+            awaitItem() // initial
+
+            autoIsoFlow.value = 400
+            expectNoEvents()
+        }
+    }
+
+    @Test
+    fun `grabbing the ISO dial to enter manual mode starts from whatever auto-ISO last settled on`() = runTest {
+        val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
+
+        viewModel.uiState.test {
+            awaitItem() // initial
+
+            viewModel.onManualIsoCapabilityChanged(capability)
+            awaitItem() // loaded
+
+            autoIsoFlow.value = 1500 // auto settles on ~1600 (index 4)
+            val tracked = awaitItem()
+            assertEquals(4, tracked.selectedIsoIndex)
+
+            viewModel.onManualExposureDialDragStarted()
+            val manual = awaitItem()
+            assertTrue(manual.manualModeEnabled)
+            assertEquals(4, manual.selectedIsoIndex) // unchanged by merely engaging manual mode
+        }
     }
 }
