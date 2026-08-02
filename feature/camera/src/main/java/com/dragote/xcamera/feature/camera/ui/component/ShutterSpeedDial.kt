@@ -41,7 +41,6 @@ fun ShutterSpeedDial(
         onIndexChange = if (supported) onShutterIndexChange else { _ -> },
         modifier = modifier,
         accent = Accent,
-        stepPx = 30f,
         onDragActiveChanged = if (supported) onDragActiveChanged else { _ -> },
     )
 }
