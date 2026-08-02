@@ -17,6 +17,10 @@ xCamera is a multi-module native Android app (Kotlin + Jetpack Compose) built on
 
 Feature modules never depend on each other directly — cross-feature communication goes through `shared:common` domain contracts (none needed yet). Camera hardware access (`Camera2`/`CameraX`) conventions specific to `feature:camera` are documented in `.claude/agents/camera-engineer.md`, not duplicated here.
 
+## Feature docs & issue writing
+
+`docs/features/` holds one short file per feature (`docs/features/README.md` is the one-line-per-feature index, mirroring the pattern of this repo's memory `MEMORY.md`) — deliberately kept lean (~40 lines/feature) so it's cheap to load into context, not a full spec dump. GitHub issues follow a Problem/Requirements/Non-goals/Technical-notes template, flat (no epics). Both are maintained by the `spec-writer` agent (`.claude/agents/spec-writer.md`) — use it instead of hand-writing issues or feature docs.
+
 ## Build system: build-logic convention plugins
 
 `build-logic/` is an included build (`pluginManagement.includeBuild("build-logic")` in root `settings.gradle.kts`). Its `convention` subproject defines Kotlin `Plugin<Project>` classes registered as precompiled Gradle plugins:
