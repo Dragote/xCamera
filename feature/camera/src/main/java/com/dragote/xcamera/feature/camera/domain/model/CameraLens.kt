@@ -7,7 +7,7 @@ package com.dragote.xcamera.feature.camera.domain.model
  * Most multi-lens phones (Pixel, Samsung flagships) expose ultra-wide/tele not as separate
  * top-level camera IDs but as [physicalCameraId]s within one LOGICAL_MULTI_CAMERA [logicalCameraId]
  * — binding always targets [logicalCameraId], with [physicalCameraId] (if non-null) pinning which
- * physical sensor backs it via Camera2Interop.
+ * physical sensor backs it via `OutputConfiguration.setPhysicalCameraId`.
  */
 data class CameraLens(
     val logicalCameraId: String,

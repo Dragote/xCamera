@@ -64,28 +64,3 @@ fun List<Long>.nearestShutterStopIndex(targetNs: Long): Int {
     if (isEmpty()) return 0
     return indices.minByOrNull { i -> abs(this[i] - targetNs) } ?: 0
 }
-
-/** Sub-second-target floor for [manualExposureConfirmationTimeoutMs] — see its own doc. */
-private const val ExposureConfirmationFloorMs = 1_500L
-
-/** Buffer on top of the raw target exposure duration for [manualExposureConfirmationTimeoutMs]. */
-private const val ExposureConfirmationBufferMs = 500L
-
-/**
- * How long `CameraController.pushExactManualExposureForCapture` should wait for a
- * `TotalCaptureResult` confirming the sensor has actually converged on [targetShutterNs] before
- * giving up and proceeding to capture anyway. The *confirming frame itself* is exposed for
- * [targetShutterNs] worth of real time — it physically cannot land before that much time has
- * elapsed — so this timeout must scale with the target rather than being a fixed constant; a fixed
- * sub-second timeout would spuriously elapse before real confirmation for every long manual shutter
- * speed (2s/4s/8s+, exactly the range the whole preview-exposure-decoupling fix targets), silently
- * undermining the "make sure the sensor is actually honoring the exact requested exposure before
- * capturing" guarantee this confirmation exists for. [ExposureConfirmationFloorMs] covers ordinary
- * pipeline/readout latency for fast (sub-second) targets, where the raw exposure time itself is
- * negligible; [ExposureConfirmationBufferMs] covers that same latency on top of a long exposure's
- * own duration. Pure by design (nanoseconds in, milliseconds out) so this scaling logic — the part
- * that's actually easy to get wrong — stays unit-testable independent of the surrounding
- * non-testable Camera2/CameraX orchestration.
- */
-fun manualExposureConfirmationTimeoutMs(targetShutterNs: Long): Long =
-    (targetShutterNs / 1_000_000L + ExposureConfirmationBufferMs).coerceAtLeast(ExposureConfirmationFloorMs)

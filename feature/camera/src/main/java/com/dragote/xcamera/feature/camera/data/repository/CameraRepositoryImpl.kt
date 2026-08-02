@@ -1,8 +1,9 @@
 package com.dragote.xcamera.feature.camera.data.repository
 
+import android.hardware.camera2.CameraAccessException
 import android.net.Uri
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.Preview
+import android.util.Size
+import android.view.Surface
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.data.CameraController
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
@@ -23,9 +24,14 @@ class CameraRepositoryImpl @Inject constructor(
 
     override suspend fun bindCamera(
         lifecycleOwner: LifecycleOwner,
-        surfaceProvider: Preview.SurfaceProvider,
+        surface: Surface,
         lens: CameraLens?,
-    ) = cameraController.bindCamera(lifecycleOwner, surfaceProvider, lens)
+    ) = cameraController.bindCamera(lifecycleOwner, surface, lens)
+
+    override fun unbindCamera() = cameraController.unbindCamera()
+
+    override fun previewOutputSize(lens: CameraLens?, targetWidth: Int, targetHeight: Int): Size =
+        cameraController.previewOutputSize(lens, targetWidth, targetHeight)
 
     override fun setFlashMode(flashMode: FlashMode) = cameraController.setFlashMode(flashMode)
 
@@ -43,9 +49,9 @@ class CameraRepositoryImpl @Inject constructor(
         Result.Success(cameraController.takePhoto())
     } catch (e: CancellationException) {
         throw e
-    } catch (e: ImageCaptureException) {
-        Result.Error(DataError.Local.UNKNOWN)
     } catch (e: IllegalStateException) {
+        Result.Error(DataError.Local.UNKNOWN)
+    } catch (e: CameraAccessException) {
         Result.Error(DataError.Local.UNKNOWN)
     }
 

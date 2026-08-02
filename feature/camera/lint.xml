@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <lint>
     <!--
-        Camera2Interop (Camera2CameraInfo, getCameraCharacteristic) is used throughout
-        CameraController for physical-lens enumeration/selection. @OptIn doesn't suppress this
-        check because ExperimentalCamera2Interop uses androidx.annotation.RequiresOptIn rather
-        than kotlin.RequiresOptIn, so Kotlin never attaches the opt-in to the compiled call site.
-        This is AndroidX's own documented workaround for that mismatch.
+        ui/CameraScreen.kt's TextureView.SurfaceTextureListener wraps the TextureView's
+        SurfaceTexture in a Surface once (in onSurfaceTextureAvailable) and releases that same
+        Surface once (in onSurfaceTextureDestroyed, via Surface.release()) — but lint's Recycle
+        check only does intraprocedural analysis within a single method/lambda, so it can't see that
+        the release happens in a *different* callback against the shared `previewSurface` Compose
+        state var the constructor's result is stored in. This is a documented false positive for
+        this specific field-lifetime-spans-callbacks pattern, not a real leak.
     -->
-    <issue id="UnsafeOptInUsageError">
-        <option name="opt-in" value="androidx.camera.camera2.interop.ExperimentalCamera2Interop" />
+    <issue id="Recycle">
+        <ignore path="src/main/java/com/dragote/xcamera/feature/camera/ui/CameraScreen.kt" />
     </issue>
 </lint>

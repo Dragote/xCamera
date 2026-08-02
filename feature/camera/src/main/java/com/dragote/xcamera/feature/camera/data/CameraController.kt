@@ -3,68 +3,116 @@ package com.dragote.xcamera.feature.camera.data
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.ImageFormat
+import android.graphics.SurfaceTexture
+import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
+import android.hardware.camera2.params.OutputConfiguration
+import android.hardware.camera2.params.SessionConfiguration
+import android.media.ImageReader
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
+import android.os.HandlerThread
 import android.provider.MediaStore
-import androidx.camera.camera2.interop.Camera2CameraControl
-import androidx.camera.camera2.interop.Camera2CameraInfo
-import androidx.camera.camera2.interop.Camera2Interop
-import androidx.camera.camera2.interop.CaptureRequestOptions
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
+import android.util.Size
 import android.view.OrientationEventListener
 import android.view.Surface
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
-import com.dragote.xcamera.feature.camera.domain.model.manualExposureConfirmationTimeoutMs
 import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import javax.inject.Singleton
 
 /**
- * Thin wrapper around CameraX's provider/bind/capture lifecycle. Kept out of the ViewModel since
- * binding inherently needs a Compose LifecycleOwner + Preview.SurfaceProvider, which are ui-layer
- * types — see CLAUDE.md's data-layer-owns-hardware convention.
+ * Raw `android.hardware.camera2` wrapper: opens a [CameraDevice], configures one
+ * [CameraCaptureSession] with two independent output surfaces (the live preview surface handed to
+ * [bindCamera], and a private [android.media.ImageReader] for JPEG stills), and issues genuinely
+ * separate Camera2 requests against each — a live-updatable [CameraCaptureSession
+ * .setRepeatingRequest] for the preview surface (see [buildPreviewRequest]), and a one-off
+ * [CameraCaptureSession.capture] for the still surface (see [captureStillJpeg]) that carries the
+ * real, preview-uncapped user-selected manual exposure when manual mode is active. The two share no
+ * mutable request state — they only both read the same [pendingManualIso]/[pendingManualShutterNs]
+ * cache and independently resolve/clamp it via [resolveManualExposure].
  *
- * Camera2Interop usage below (physical-lens enumeration/selection) is opted in project-wide via
- * this module's lint.xml rather than per-call-site @OptIn, which has no effect here — see that
- * file for why.
+ * This replaces an earlier CameraX (`Preview`/`ImageCapture` use case)-based implementation. CameraX's
+ * `Camera2Interop`/`Camera2CameraControl` only exposes session-wide dynamic `CaptureRequestOptions`
+ * overrides — there is no supported way to keep a fast repeating preview request running while
+ * submitting an independent still-capture request with unrelated exposure parameters through that
+ * API, since both are merged through the same session-wide override surface before being submitted
+ * to the camera's single serialized executor. That coupling is what caused long manual shutter
+ * speeds (2s/4s/8s+) to visibly freeze the live viewfinder and, at the longest speeds, to fail
+ * capture outright once several long-exposure repeating frames backed up in the HAL ahead of the
+ * still request. Managing the `CameraCaptureSession` directly removes that coupling entirely: the
+ * preview's repeating request and a still capture's one-off request are independent Camera2 requests
+ * from the start, so there is nothing for a manual exposure choice to back up behind.
+ *
+ * Kept out of the ViewModel since [bindCamera] inherently needs a Compose `LifecycleOwner` + a raw
+ * preview `Surface`, which are ui-layer-adjacent types — see CLAUDE.md's data-layer-owns-hardware
+ * convention.
  *
  * `@Singleton`-scoped (see `di/CameraModule`'s `provideCameraController`) so every injection path —
  * `CameraViewModel`'s constructor injection and `ui/CameraScreen`'s separate `EntryPointAccessors`
- * call — shares the one instance `bindCamera()` is actually called on.
+ * call — shares the one instance [bindCamera] is actually called on.
  */
 @Singleton
-class CameraController(private val context: Context) {
+class CameraController(private val context: Context) : LifecycleEventObserver {
 
-    private var imageCapture: ImageCapture? = null
-    private var pendingFlashMode: FlashMode = FlashMode.OFF
+    private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
 
-    private var camera2CameraControl: Camera2CameraControl? = null
+    // All Camera2 device/session/ImageReader callbacks run on a dedicated background thread rather
+    // than the main thread — standard Camera2 practice (mirrors Google's own Camera2Basic sample),
+    // since camera IO/JPEG decoding is too heavy for the main/UI thread.
+    private var backgroundThread: HandlerThread? = null
+    private var backgroundHandler: Handler? = null
+
+    // This class is @Singleton-scoped and lives for the process, same as the Camera2 resources it
+    // owns, so lifecycle-driven reopen/close (see onStateChanged) can launch suspend work here
+    // without depending on whichever caller's coroutine originally triggered bindCamera still being
+    // active.
+    private val controllerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    // Guards openCamera()'s teardown-then-rebuild sequence against overlapping callers — bindCamera
+    // (driven by ui/CameraScreen's LaunchedEffect) and the ON_START lifecycle callback below can both
+    // trigger it independently.
+    private val cameraLock = Mutex()
+
+    private var cameraDevice: CameraDevice? = null
+    private var captureSession: CameraCaptureSession? = null
+    private var imageReader: ImageReader? = null
+
+    private var previewSurface: Surface? = null
     private var currentLens: CameraLens? = null
+    private var boundLifecycle: Lifecycle? = null
+
+    private var pendingFlashMode: FlashMode = FlashMode.OFF
 
     /** Cached the same way [pendingFlashMode] is, so it survives a rebind (e.g. a lens switch). */
     private var pendingManualIso: Int? = null
@@ -73,14 +121,15 @@ class CameraController(private val context: Context) {
     private var pendingManualShutterNs: Long? = null
 
     /**
-     * The most recent auto-AE-converged shutter speed, kept fresh by [sessionCaptureCallback] any
-     * time we're *not* the ones driving [CaptureRequest.CONTROL_AE_MODE_OFF] — this is what gets
-     * pinned as the fixed exposure the instant manual mode turns on (whether the user is dragging ISO
-     * or shutter speed — both parameters are always fixed together, see [setManualExposure]), so
-     * there's no visible brightness jump from whatever auto-exposure last settled on. Also exposed via
+     * The most recent auto-AE-converged shutter speed. While manual mode is off, the preview's
+     * repeating request runs plain auto-exposure and every result here reflects a genuine AE
+     * convergence value; while manual mode is on, the preview's repeating request instead carries a
+     * *forced* capped-manual exposure (see [buildPreviewRequest]) that must **not** be mistaken for a
+     * real auto-converged value, which is exactly what [previewCaptureCallback]'s
+     * [pendingManualIso]/[pendingManualShutterNs] guard prevents. Exposed via
      * [currentAutoExposureTimeNs] as a plain nanosecond `Long` so the shutter dial's own first-touch
-     * position (picked in the presentation layer) can resolve to the nearest ladder stop instead of an
-     * arbitrary default index, without that layer needing any Camera2 type.
+     * position (picked in the presentation layer) can resolve to the nearest ladder stop instead of
+     * an arbitrary default index, without that layer needing any Camera2 type.
      */
     private var lastAutoExposureTimeNs: Long? = null
 
@@ -95,51 +144,59 @@ class CameraController(private val context: Context) {
     val autoIso: StateFlow<Int?> = _autoIso.asStateFlow()
 
     /**
-     * Set by [pushExactManualExposureForCapture] right before a still capture while manual mode is
-     * active, cleared as soon as [sessionCaptureCallback] observes a [TotalCaptureResult] whose
-     * exposure/ISO actually match — see that function's doc for why waiting for this (rather than a
-     * fixed delay) is both necessary and sufficient for `CONTROL_AE_MODE_OFF`.
+     * While manual mode is active ([pendingManualIso]/[pendingManualShutterNs] non-null), the
+     * preview's repeating request carries a forced capped-manual exposure (see
+     * [buildPreviewRequest]), not a genuine AE convergence value — so this must skip updating
+     * [lastAutoExposureTimeNs]/[_autoIso] in that case, exactly as it did before live manual preview
+     * feedback was reintroduced, otherwise the shutter dial's auto-resolution and the ISO dial's live
+     * auto-tracking would both get fed a bogus "auto" value that's actually just whatever the preview
+     * cap forced.
      */
-    private var pendingCaptureExposureTarget: Pair<Int, Long>? = null
-    private var pendingCaptureExposureContinuation: CancellableContinuation<Unit>? = null
-
-    private val sessionCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
+    private val previewCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureCompleted(
             session: CameraCaptureSession,
             request: CaptureRequest,
             result: TotalCaptureResult,
         ) {
-            pendingCaptureExposureTarget?.let { (targetIso, targetShutterNs) ->
-                val resultIso = result.get(CaptureResult.SENSOR_SENSITIVITY)
-                val resultShutterNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME)
-                if (resultIso == targetIso && resultShutterNs == targetShutterNs) {
-                    pendingCaptureExposureTarget = null
-                    pendingCaptureExposureContinuation?.takeIf { it.isActive }?.resume(Unit)
-                    pendingCaptureExposureContinuation = null
-                }
-            }
-
             if (pendingManualIso != null || pendingManualShutterNs != null) return
             result.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { lastAutoExposureTimeNs = it }
             result.get(CaptureResult.SENSOR_SENSITIVITY)?.let { _autoIso.value = it }
         }
     }
 
+    /** Resolved by [captureStillJpeg] once the pending still capture's JPEG bytes are delivered. */
+    private var pendingCapture: CancellableContinuation<ByteArray>? = null
+
+    private val imageAvailableListener = ImageReader.OnImageAvailableListener { reader ->
+        val image = reader.acquireLatestImage()
+        if (image == null) return@OnImageAvailableListener
+        val bytes = try {
+            val buffer = image.planes[0].buffer
+            ByteArray(buffer.remaining()).also { buffer.get(it) }
+        } finally {
+            image.close()
+        }
+        pendingCapture?.takeIf { it.isActive }?.resume(bytes)
+        pendingCapture = null
+    }
+
     /**
-     * The activity is locked to portrait (see AndroidManifest) so the skeuomorphic UI never
-     * rotates, which means [ImageCapture] no longer gets a fresh target rotation for free from
-     * the Activity's own configuration changes. This listener tracks the phone's *physical*
-     * orientation via the accelerometer instead, so a photo taken while the phone is held in
-     * landscape is still saved landscape rather than being locked to portrait output.
+     * The activity is locked to portrait (see AndroidManifest) so the skeuomorphic UI never rotates,
+     * which means there's no configuration-change signal to derive a target rotation from. This
+     * listener tracks the phone's *physical* orientation via the accelerometer instead, bucketed into
+     * the same four [Surface.ROTATION_0]-style buckets a `targetRotation` API would use, so a photo
+     * taken while the phone is held in landscape is still saved landscape (see [jpegOrientation])
+     * rather than being locked to portrait output.
      */
     private var orientationEventListener: OrientationEventListener? = null
+    private var targetRotation: Int = Surface.ROTATION_0
 
     private fun ensureOrientationListener() {
         if (orientationEventListener != null) return
         orientationEventListener = object : OrientationEventListener(context) {
             override fun onOrientationChanged(orientation: Int) {
                 if (orientation == ORIENTATION_UNKNOWN) return
-                imageCapture?.targetRotation = when (orientation) {
+                targetRotation = when (orientation) {
                     in 45 until 135 -> Surface.ROTATION_270
                     in 135 until 225 -> Surface.ROTATION_180
                     in 225 until 315 -> Surface.ROTATION_90
@@ -157,69 +214,338 @@ class CameraController(private val context: Context) {
 
     /**
      * [lens] is null for the plain default back camera. When non-null, [CameraLens.physicalCameraId]
-     * (if set) is pinned via Camera2Interop — most multi-lens phones expose their extra lenses as
-     * physical sub-cameras of one logical camera rather than as separate top-level camera IDs, and
-     * a bare [CameraSelector] filter can only pick among top-level IDs.
+     * (if set) is pinned per output surface via [OutputConfiguration.setPhysicalCameraId] — most
+     * multi-lens phones expose their extra lenses as physical sub-cameras of one logical camera
+     * rather than as separate top-level camera IDs.
+     *
+     * [surface] must already have its backing buffer sized (e.g. via [SurfaceTexture
+     * .setDefaultBufferSize]) to whatever [previewOutputSize] returned for [lens] — this function
+     * configures the capture session against the surface as handed to it, it does not resize it.
+     *
+     * Camera2 has no lifecycle-aware bind/unbind equivalent to CameraX's `bindToLifecycle`, so this
+     * registers as a [LifecycleEventObserver] on [lifecycleOwner]'s lifecycle to open the device/
+     * session at `ON_START` and close it at `ON_STOP` — otherwise the camera would stay open with no
+     * lifecycle-driven release once the app backgrounds, a resource leak that also blocks every other
+     * app from using the camera. [unbindCamera] is for the separate, surface-destroyed case (e.g. the
+     * hosting view leaves composition) — call it independently, not as an ON_STOP substitute.
      */
     suspend fun bindCamera(
         lifecycleOwner: LifecycleOwner,
-        surfaceProvider: Preview.SurfaceProvider,
+        surface: Surface,
         lens: CameraLens? = null,
     ) {
-        val cameraProvider = getCameraProvider()
-        val cameraSelector = lens?.let { selectorFor(it) } ?: CameraSelector.DEFAULT_BACK_CAMERA
+        ensureBackgroundThread()
+        previewSurface = surface
+        currentLens = lens
 
-        val previewBuilder = Preview.Builder()
-        val captureBuilder = ImageCapture.Builder()
-        // Session-wide (not per-request) capture callback, needed to keep tracking the
-        // auto-converged shutter speed for manual ISO's exposure pin — see sessionCaptureCallback.
-        Camera2Interop.Extender(previewBuilder).setSessionCaptureCallback(sessionCaptureCallback)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            lens?.physicalCameraId?.let { physicalCameraId ->
-                Camera2Interop.Extender(previewBuilder).setPhysicalCameraId(physicalCameraId)
-                Camera2Interop.Extender(captureBuilder).setPhysicalCameraId(physicalCameraId)
+        val lifecycle = lifecycleOwner.lifecycle
+        if (boundLifecycle !== lifecycle) {
+            boundLifecycle?.removeObserver(this)
+            boundLifecycle = lifecycle
+            lifecycle.addObserver(this)
+        }
+
+        ensureOrientationListener()
+
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            openCamera()
+        }
+    }
+
+    /** Call once the preview surface backing a previous [bindCamera] call is no longer valid. */
+    fun unbindCamera() {
+        boundLifecycle?.removeObserver(this)
+        boundLifecycle = null
+        previewSurface = null
+        // Close (and only then stop the background thread its callbacks run on) under cameraLock —
+        // see closeCameraAndSession's own doc for why serializing against an in-flight openCamera
+        // matters here.
+        controllerScope.launch {
+            cameraLock.withLock { closeCameraAndSessionLocked() }
+            stopBackgroundThread()
+        }
+    }
+
+    override fun onStateChanged(source: LifecycleOwner, event: Lifecycle.Event) {
+        when (event) {
+            Lifecycle.Event.ON_START -> {
+                if (previewSurface != null) controllerScope.launch { openCamera() }
+            }
+            Lifecycle.Event.ON_STOP -> closeCameraAndSession()
+            Lifecycle.Event.ON_DESTROY -> unbindCamera()
+            else -> Unit
+        }
+    }
+
+    private suspend fun openCamera() = cameraLock.withLock {
+        val surface = previewSurface ?: return@withLock
+        closeCameraAndSessionLocked()
+
+        val cameraId = resolveLogicalCameraId(currentLens) ?: return@withLock
+        val effectiveCharacteristics = characteristicsFor(currentLens) ?: return@withLock
+
+        val device = try {
+            openCameraDevice(cameraId)
+        } catch (e: CameraAccessException) {
+            return@withLock
+        } catch (e: SecurityException) {
+            return@withLock
+        } catch (e: IllegalStateException) {
+            return@withLock
+        }
+        cameraDevice = device
+
+        val reader = createImageReader(effectiveCharacteristics)
+        imageReader = reader
+
+        val session = try {
+            createCaptureSession(device, surface, reader.surface, currentLens)
+        } catch (e: CameraAccessException) {
+            device.close()
+            cameraDevice = null
+            reader.close()
+            imageReader = null
+            return@withLock
+        } catch (e: IllegalStateException) {
+            device.close()
+            cameraDevice = null
+            reader.close()
+            imageReader = null
+            return@withLock
+        }
+        captureSession = session
+        startPreviewRepeating(device, session, surface)
+    }
+
+    @Suppress("MissingPermission") // CAMERA permission is gated by ui/CameraScreen before bindCamera is ever called.
+    private suspend fun openCameraDevice(cameraId: String): CameraDevice =
+        suspendCancellableCoroutine { continuation ->
+            cameraManager.openCamera(
+                cameraId,
+                object : CameraDevice.StateCallback() {
+                    override fun onOpened(camera: CameraDevice) {
+                        if (continuation.isActive) continuation.resume(camera) else camera.close()
+                    }
+
+                    override fun onDisconnected(camera: CameraDevice) {
+                        camera.close()
+                        if (continuation.isActive) {
+                            continuation.resumeWithException(IllegalStateException("Camera disconnected"))
+                        }
+                    }
+
+                    override fun onError(camera: CameraDevice, error: Int) {
+                        camera.close()
+                        if (continuation.isActive) {
+                            continuation.resumeWithException(IllegalStateException("Camera error: $error"))
+                        }
+                    }
+                },
+                backgroundHandler,
+            )
+        }
+
+    private suspend fun createCaptureSession(
+        device: CameraDevice,
+        previewSurface: Surface,
+        stillSurface: Surface,
+        lens: CameraLens?,
+    ): CameraCaptureSession = suspendCancellableCoroutine { continuation ->
+        val stateCallback = object : CameraCaptureSession.StateCallback() {
+            override fun onConfigured(session: CameraCaptureSession) {
+                if (continuation.isActive) continuation.resume(session)
+            }
+
+            override fun onConfigureFailed(session: CameraCaptureSession) {
+                if (continuation.isActive) {
+                    continuation.resumeWithException(IllegalStateException("Capture session configuration failed"))
+                }
             }
         }
 
-        val preview = previewBuilder.build().apply { setSurfaceProvider(surfaceProvider) }
-        val capture = captureBuilder.build().apply {
-            flashMode = pendingFlashMode.toImageCaptureFlashMode()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val previewConfig = OutputConfiguration(previewSurface).apply {
+                lens?.physicalCameraId?.let(::setPhysicalCameraId)
+            }
+            val stillConfig = OutputConfiguration(stillSurface).apply {
+                lens?.physicalCameraId?.let(::setPhysicalCameraId)
+            }
+            val sessionConfiguration = SessionConfiguration(
+                SessionConfiguration.SESSION_REGULAR,
+                listOf(previewConfig, stillConfig),
+                ContextCompat.getMainExecutor(context),
+                stateCallback,
+            )
+            device.createCaptureSession(sessionConfiguration)
+        } else {
+            @Suppress("DEPRECATION")
+            device.createCaptureSession(listOf(previewSurface, stillSurface), stateCallback, backgroundHandler)
         }
-
-        cameraProvider.unbindAll()
-        val camera = cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, capture)
-        imageCapture = capture
-        currentLens = lens
-        lastAutoExposureTimeNs = null
-        _autoIso.value = null
-        camera2CameraControl = Camera2CameraControl.from(camera.cameraControl)
-        // A fresh bind means a fresh Camera2 capture session with no CaptureRequestOptions of its
-        // own yet — reapply whatever manual exposure was in effect so it survives a lens switch
-        // instead of silently reverting to auto.
-        if (pendingManualIso != null || pendingManualShutterNs != null) {
-            applyManualExposure(pendingManualIso, pendingManualShutterNs)
-        }
-        ensureOrientationListener()
     }
 
-    private fun selectorFor(lens: CameraLens): CameraSelector = CameraSelector.Builder()
-        .addCameraFilter { cameraInfos ->
-            cameraInfos.filter { Camera2CameraInfo.from(it).cameraId == lens.logicalCameraId }
-        }
-        .build()
+    /**
+     * Starts (or restarts) the live preview repeating request against [surface], built fresh from
+     * whatever [pendingManualIso]/[pendingManualShutterNs] are set to *right now* — see
+     * [buildPreviewRequest]. Called once from [openCamera] when the session is first configured (so a
+     * lens switch while already in manual mode reopens with the capped-manual preview active rather
+     * than silently reverting to auto), and again any time later via [updatePreviewRepeating] whenever
+     * manual exposure changes — `session.setRepeatingRequest` is cheap to call repeatedly and doesn't
+     * require reconfiguring the session itself.
+     */
+    private fun startPreviewRepeating(device: CameraDevice, session: CameraCaptureSession, surface: Surface) {
+        session.setRepeatingRequest(buildPreviewRequest(device, surface), previewCaptureCallback, backgroundHandler)
+    }
 
     /**
-     * Cached in [pendingFlashMode] so a mode set before [bindCamera] completes (e.g. the initial
-     * composition) still applies once the ImageCapture use case is bound, instead of being lost.
+     * Live-updates the already-running preview repeating request to reflect the current
+     * [pendingManualIso]/[pendingManualShutterNs] — called by [setManualExposure] on every change.
+     * A no-op if no session is open yet (e.g. `setManualExposure` called from the ViewModel before
+     * [bindCamera]/[openCamera] has completed) or if it races a concurrent close/reopen; either way
+     * the next [openCamera] call picks up the current pending state fresh regardless, so there's
+     * nothing to recover here.
+     */
+    private fun updatePreviewRepeating() {
+        val device = cameraDevice ?: return
+        val session = captureSession ?: return
+        val surface = previewSurface ?: return
+        try {
+            startPreviewRepeating(device, session, surface)
+        } catch (e: CameraAccessException) {
+            // Session/device is mid-teardown — ignore, a fresh openCamera() will reflect current state.
+        } catch (e: IllegalStateException) {
+            // Session already closed — same as above.
+        }
+    }
+
+    /**
+     * Plain auto-exposure (`CONTROL_AE_MODE_ON`) when manual mode is off. While manual mode is on,
+     * this reproduces the live-feedback-but-safe preview behavior manual mode always had before the
+     * Camera2 migration: `CONTROL_AE_MODE_OFF` with the *real* selected exposure (via
+     * [resolveManualExposure], same resolution [captureStillJpeg] uses) further capped at
+     * [PreviewMaxExposureTimeNs] so the preview frame rate never degrades, with `SENSOR_SENSITIVITY`
+     * boosted to compensate for the brightness the cap costs (re-clamped to [capability]'s ISO range —
+     * a very long selected shutter speed may not be fully compensable within the sensor's ISO ceiling,
+     * in which case the live preview just runs a bit dark; the *captured* photo is unaffected since
+     * [captureStillJpeg] never applies this cap). This is a completely independent request from
+     * [captureStillJpeg]'s still-capture request — the only thing shared between them is reading the
+     * same [pendingManualIso]/[pendingManualShutterNs] cache, not any Camera2-level session state.
+     */
+    private fun buildPreviewRequest(device: CameraDevice, surface: Surface): CaptureRequest {
+        val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+            addTarget(surface)
+            set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+        }
+
+        val manualCapability = if (pendingManualIso != null || pendingManualShutterNs != null) {
+            manualIsoCapability(currentLens)
+        } else {
+            null
+        }
+
+        if (manualCapability != null) {
+            val (iso, shutterNs) = resolveManualExposure(pendingManualIso, pendingManualShutterNs, manualCapability)
+            val previewShutterNs = shutterNs.coerceAtMost(PreviewMaxExposureTimeNs)
+            val compensation = if (previewShutterNs > 0) shutterNs.toDouble() / previewShutterNs else 1.0
+            val previewIso = (iso * compensation).roundToInt()
+                .coerceIn(manualCapability.isoRange.first, manualCapability.isoRange.last)
+
+            builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+            builder.set(CaptureRequest.SENSOR_SENSITIVITY, previewIso)
+            builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, previewShutterNs)
+        } else {
+            builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+        }
+
+        return builder.build()
+    }
+
+    /**
+     * Fire-and-forget, but still serialized against [openCamera] through [cameraLock] — both run on
+     * [controllerScope]'s `Dispatchers.Main.immediate`, so without this a `ON_STOP` arriving while an
+     * in-flight [openCamera] call is still suspended awaiting the device/session callbacks could null
+     * out state out from under it, then have that stale [openCamera] call overwrite the closed state
+     * once it resumes, leaking an open camera past the lifecycle event that was supposed to close it.
+     */
+    private fun closeCameraAndSession() {
+        controllerScope.launch { cameraLock.withLock { closeCameraAndSessionLocked() } }
+    }
+
+    private fun closeCameraAndSessionLocked() {
+        captureSession?.close()
+        captureSession = null
+        cameraDevice?.close()
+        cameraDevice = null
+        imageReader?.close()
+        imageReader = null
+        lastAutoExposureTimeNs = null
+        _autoIso.value = null
+    }
+
+    private fun ensureBackgroundThread() {
+        if (backgroundThread != null) return
+        val thread = HandlerThread("CameraController-Camera2").apply { start() }
+        backgroundThread = thread
+        backgroundHandler = Handler(thread.looper)
+    }
+
+    private fun stopBackgroundThread() {
+        val thread = backgroundThread ?: return
+        thread.quitSafely()
+        try {
+            thread.join()
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+        backgroundThread = null
+        backgroundHandler = null
+    }
+
+    private fun resolveLogicalCameraId(lens: CameraLens?): String? = lens?.logicalCameraId ?: defaultBackCameraId()
+
+    private fun createImageReader(characteristics: CameraCharacteristics): ImageReader {
+        val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        val jpegSize = map?.getOutputSizes(ImageFormat.JPEG)?.maxByOrNull { it.width.toLong() * it.height }
+            ?: FallbackStillSize
+        return ImageReader.newInstance(jpegSize.width, jpegSize.height, ImageFormat.JPEG, 2).apply {
+            setOnImageAvailableListener(imageAvailableListener, backgroundHandler)
+        }
+    }
+
+    /**
+     * Picks the [android.hardware.camera2.params.StreamConfigurationMap]-supported `SurfaceTexture`
+     * preview size closest in aspect ratio to a [targetWidth]x[targetHeight] view without being
+     * needlessly larger than the viewfinder actually needs (keeps sensor readout/preview frame cost
+     * down). [targetWidth]/[targetHeight] are the *view's* own pixel dimensions (portrait, since the
+     * activity is locked portrait); output sizes from [CameraCharacteristics] are expressed in the
+     * sensor's own native pixel-array coordinate convention, which for essentially every phone's back
+     * camera is landscape (a physically-rotated sensor) regardless of how the device is held — so
+     * matching is done against the width/height-swapped target. `ui/CameraScreen`'s own preview
+     * transform makes the same swap assumption on the consuming side.
+     */
+    fun previewOutputSize(lens: CameraLens?, targetWidth: Int, targetHeight: Int): Size {
+        if (targetWidth <= 0 || targetHeight <= 0) return FallbackPreviewSize
+        val characteristics = characteristicsFor(lens) ?: return FallbackPreviewSize
+        val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return FallbackPreviewSize
+        val candidates = map.getOutputSizes(SurfaceTexture::class.java)?.toList().orEmpty()
+        if (candidates.isEmpty()) return FallbackPreviewSize
+
+        val targetAspect = targetWidth.toFloat() / targetHeight.toFloat()
+        val withinCap = candidates.filter { it.width <= MaxPreviewDimension && it.height <= MaxPreviewDimension }
+        return (withinCap.ifEmpty { candidates })
+            .minByOrNull { size -> abs(size.height.toFloat() / size.width.toFloat() - targetAspect) }
+            ?: FallbackPreviewSize
+    }
+
+    /**
+     * Cached in [pendingFlashMode]/[pendingManualIso]/[pendingManualShutterNs] the same way manual
+     * exposure is cached below, so a mode set before the next still capture (or after a lens switch)
+     * still applies. Since flash/manual exposure now only ever apply to the still-capture request
+     * built fresh by [captureStillJpeg] on every [takePhoto] call — never the live preview, which
+     * always stays on plain auto-exposure — there's nothing to push to the sensor immediately when
+     * this is called, unlike the previous CameraX-based implementation.
      */
     fun setFlashMode(flashMode: FlashMode) {
         pendingFlashMode = flashMode
-        imageCapture?.flashMode = flashMode.toImageCaptureFlashMode()
-    }
-
-    private fun FlashMode.toImageCaptureFlashMode(): Int = when (this) {
-        FlashMode.OFF -> ImageCapture.FLASH_MODE_OFF
-        FlashMode.ON -> ImageCapture.FLASH_MODE_ON
     }
 
     /**
@@ -233,18 +559,7 @@ class CameraController(private val context: Context) {
      * bound yet.
      */
     fun manualIsoCapability(lens: CameraLens?): ManualIsoCapability? {
-        val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        val characteristics = try {
-            val physicalCameraId = lens?.physicalCameraId
-            if (physicalCameraId != null) {
-                cameraManager.getCameraCharacteristics(physicalCameraId)
-            } else {
-                val logicalCameraId = lens?.logicalCameraId ?: defaultBackCameraId(cameraManager) ?: return null
-                cameraManager.getCameraCharacteristics(logicalCameraId)
-            }
-        } catch (e: IllegalArgumentException) {
-            return null
-        }
+        val characteristics = characteristicsFor(lens) ?: return null
 
         val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: intArrayOf()
         if (CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR !in capabilities) return null
@@ -258,55 +573,55 @@ class CameraController(private val context: Context) {
         )
     }
 
-    private fun defaultBackCameraId(cameraManager: CameraManager): String? = cameraManager.cameraIdList
+    /**
+     * Shared by [manualIsoCapability], still-capture orientation/exposure resolution, and preview/
+     * still surface sizing — physical-lens characteristics (when [CameraLens.physicalCameraId] is
+     * set) instead of the logical camera's own, per the same per-physical-lens reasoning
+     * [manualIsoCapability] documents.
+     */
+    private fun characteristicsFor(lens: CameraLens?): CameraCharacteristics? {
+        val physicalCameraId = lens?.physicalCameraId
+        return try {
+            if (physicalCameraId != null) {
+                cameraManager.getCameraCharacteristics(physicalCameraId)
+            } else {
+                val logicalCameraId = lens?.logicalCameraId ?: defaultBackCameraId() ?: return null
+                cameraManager.getCameraCharacteristics(logicalCameraId)
+            }
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+    }
+
+    private fun defaultBackCameraId(): String? = cameraManager.cameraIdList
         .firstOrNull { cameraManager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK }
 
     /**
-     * Both `null` returns to auto (`CONTROL_AE_MODE_ON`) by dropping every custom capture request
-     * option; either non-null turns `CONTROL_AE_MODE_OFF` on, which per Camera2 fixes ISO *and*
-     * exposure time simultaneously — there's no "ISO manual, shutter auto" mode (or vice versa) in
-     * Camera2, so both are written to [CaptureRequestOptions] on every call regardless of which one
-     * the user is actually dragging right now. Whichever of [iso]/[shutterTimeNs] is null (the
-     * parameter *not* currently being dragged, before the presentation layer has resolved an initial
-     * value for it — see `CameraViewModel.onManualShutterResolutionNeeded`) falls back to
-     * [lastAutoExposureTimeNs] for shutter or the range floor for ISO, both clamped to the lens's
-     * supported range, so engaging manual mode for one parameter doesn't itself cause a brightness
-     * jump from whatever the other was left at.
-     *
-     * Cached in [pendingManualIso]/[pendingManualShutterNs] the same way [setFlashMode] caches
-     * [pendingFlashMode], so both are reapplied by [bindCamera] after a rebind (e.g. a lens switch)
-     * instead of silently reverting to auto. This is the *live/dragging* path (called on every dial
-     * tick, see `ui/CameraScreen`'s reactive `LaunchedEffect`) — it only ever pushes
-     * [PreviewMaxExposureTimeNs]-capped options to the repeating/preview request via
-     * [applyManualExposure]. The real, uncapped values the user selected are only pushed to the
-     * sensor momentarily at actual capture time, by [pushExactManualExposureForCapture] — see
-     * [takePhoto].
+     * Both `null` means the next still capture runs plain auto-exposure; either non-null fixes both
+     * ISO and shutter speed together on that capture — per Camera2, `CONTROL_AE_MODE_OFF` fixes ISO
+     * *and* exposure time simultaneously, there's no "ISO manual, shutter auto" mode (or vice versa).
+     * Cached in [pendingManualIso]/[pendingManualShutterNs] so it's reapplied to the next still
+     * capture regardless of lens rebinds in between — see [captureStillJpeg]. Also immediately
+     * live-updates the preview's repeating request via [updatePreviewRepeating] (a no-op if no
+     * session is open yet) so the viewfinder visually reflects every dial tick, capped to a
+     * preview-safe exposure time — see [buildPreviewRequest] for why that's safe now in a way it
+     * wasn't through CameraX's session-wide `CaptureRequestOptions`: this only ever touches the
+     * preview's own repeating request, [captureStillJpeg]'s still-capture request is built completely
+     * independently and is never affected by it.
      */
     fun setManualExposure(iso: Int?, shutterTimeNs: Long?) {
         pendingManualIso = iso
         pendingManualShutterNs = shutterTimeNs
-        if (iso != null || shutterTimeNs != null) {
-            applyManualExposure(iso, shutterTimeNs)
-        } else {
-            camera2CameraControl?.clearCaptureRequestOptions()
-        }
-    }
-
-    /** Pushes [PreviewMaxExposureTimeNs]-capped manual exposure options to the live repeating request. */
-    private fun applyManualExposure(iso: Int?, shutterTimeNs: Long?) {
-        val control = camera2CameraControl ?: return
-        val capability = manualIsoCapability(currentLens) ?: return
-        val (resolvedIso, resolvedShutterNs) = resolveManualExposure(iso, shutterTimeNs, capability)
-        control.setCaptureRequestOptions(previewCaptureOptions(resolvedIso, resolvedShutterNs, capability))
+        updatePreviewRepeating()
     }
 
     /**
-     * Resolves [iso]/[shutterTimeNs] the same way regardless of caller: whichever is null (the
-     * parameter not currently being dragged) falls back to [lastAutoExposureTimeNs] for shutter or
-     * the range floor for ISO, then both are clamped to [capability]'s supported sensor range — see
-     * [applyManualExposure]'s doc for the full reasoning. This is the real, full-fidelity exposure
-     * the user actually selected; [previewCaptureOptions] is the only place that further caps it for
-     * the live preview.
+     * Resolves [iso]/[shutterTimeNs] for the still-capture request: whichever is null (the parameter
+     * not currently being dragged, before the presentation layer has resolved an initial value for
+     * it — see `CameraViewModel.onManualShutterResolutionNeeded`) falls back to
+     * [lastAutoExposureTimeNs] for shutter or the range floor for ISO, then both are clamped to
+     * [capability]'s supported sensor range, so engaging manual mode for one parameter doesn't itself
+     * cause a brightness jump from whatever the other was left at.
      */
     private fun resolveManualExposure(iso: Int?, shutterTimeNs: Long?, capability: ManualIsoCapability): Pair<Int, Long> {
         val clampedIso = (iso ?: capability.isoRange.first)
@@ -317,73 +632,32 @@ class CameraController(private val context: Context) {
     }
 
     /**
-     * Builds the [CaptureRequestOptions] actually pushed to the *live* repeating/preview request:
-     * exposure time capped at [PreviewMaxExposureTimeNs] regardless of how long a shutter speed the
-     * user has dragged to, with whatever brightness the cap costs made up for by boosting
-     * [CaptureRequest.SENSOR_SENSITIVITY] instead (re-clamped to [capability]'s ISO range — a very
-     * long dragged shutter speed may not be fully compensable within the sensor's ISO ceiling, in
-     * which case the live preview just runs a bit dark; that's expected and harmless, since the real
-     * exposure is what actually lands in the photo, not this preview approximation). ISO alone
-     * doesn't cost preview frame rate, so a manually-dragged ISO passes straight through uncapped
-     * (only still clamped to the sensor's range by [resolveManualExposure]).
-     */
-    private fun previewCaptureOptions(iso: Int, shutterNs: Long, capability: ManualIsoCapability): CaptureRequestOptions {
-        val previewShutterNs = shutterNs.coerceAtMost(PreviewMaxExposureTimeNs)
-        val compensation = if (previewShutterNs > 0) shutterNs.toDouble() / previewShutterNs else 1.0
-        val previewIso = (iso * compensation).roundToInt()
-            .coerceIn(capability.isoRange.first, capability.isoRange.last)
-
-        return CaptureRequestOptions.Builder()
-            .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-            .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, previewIso)
-            .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, previewShutterNs)
-            .build()
-    }
-
-    /**
-     * Pushes the real, unclamped-by-preview ISO/shutter the user actually dragged to (only clamped
-     * to the lens's supported sensor ranges, via [resolveManualExposure]) to the repeating request,
-     * then suspends until a [TotalCaptureResult] confirms the sensor is actually honoring those exact
-     * values before returning — see [pendingCaptureExposureTarget]'s doc and [sessionCaptureCallback].
-     * The wait is capped at [manualExposureConfirmationTimeoutMs] of [targetShutterNs] — *not* a fixed
-     * constant — as a safety net against a dropped/lost frame hanging a capture forever; see that
-     * function's own doc for why the confirming frame's own exposure duration (not just pipeline
-     * catch-up) has to be accounted for, especially for the long (2s/4s/8s+) manual shutter speeds
-     * this whole mechanism exists to protect.
-     */
-    private suspend fun pushExactManualExposureForCapture() {
-        val control = camera2CameraControl ?: return
-        val capability = manualIsoCapability(currentLens) ?: return
-        val (targetIso, targetShutterNs) = resolveManualExposure(pendingManualIso, pendingManualShutterNs, capability)
-
-        val options = CaptureRequestOptions.Builder()
-            .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-            .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, targetIso)
-            .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, targetShutterNs)
-            .build()
-
-        withTimeoutOrNull(manualExposureConfirmationTimeoutMs(targetShutterNs)) {
-            suspendCancellableCoroutine { continuation ->
-                pendingCaptureExposureTarget = targetIso to targetShutterNs
-                pendingCaptureExposureContinuation = continuation
-                continuation.invokeOnCancellation {
-                    pendingCaptureExposureTarget = null
-                    pendingCaptureExposureContinuation = null
-                }
-                control.setCaptureRequestOptions(options)
-            }
-        }
-    }
-
-    /**
      * The auto pipeline's last-converged shutter speed as a plain nanosecond `Long` — same value
-     * [applyManualExposure] itself falls back to, exposed so the presentation layer can resolve the
+     * [resolveManualExposure] itself falls back to, exposed so the presentation layer can resolve the
      * shutter dial's first-touch position (nearest ladder stop, see
      * [com.dragote.xcamera.feature.camera.domain.model.nearestShutterStopIndex]) without needing any
-     * Camera2 type. `null` before the session capture callback has fired at least once (e.g. right
-     * after a fresh bind, before the first frame lands).
+     * Camera2 type. `null` before the preview repeating request's callback has fired at least once
+     * (e.g. right after a fresh bind, before the first frame lands).
      */
     fun currentAutoExposureTimeNs(): Long? = lastAutoExposureTimeNs
+
+    /**
+     * `(sensorOrientation - surfaceRotationDegrees + 360) % 360`, the standard back-camera Camera2
+     * `JPEG_ORIENTATION` formula (front cameras additionally mirror, not needed here since this app
+     * only ever binds back lenses — see [listBackLenses]). [targetRotation] substitutes for a live
+     * `Display.getRotation()` query since the activity is locked to portrait (see
+     * [orientationEventListener]'s own doc).
+     */
+    private fun jpegOrientation(characteristics: CameraCharacteristics): Int {
+        val sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+        val surfaceRotationDegrees = when (targetRotation) {
+            Surface.ROTATION_90 -> 90
+            Surface.ROTATION_180 -> 180
+            Surface.ROTATION_270 -> 270
+            else -> 0
+        }
+        return (sensorOrientation - surfaceRotationDegrees + 360) % 360
+    }
 
     /**
      * Most multi-lens phones fuse ultra-wide/main/tele into one LOGICAL_MULTI_CAMERA logical
@@ -408,7 +682,6 @@ class CameraController(private val context: Context) {
      * largest-sensor-area entry per group below collapses those back into their real lens.
      */
     fun listBackLenses(): List<CameraLens> {
-        val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         val allCameraIds = cameraManager.cameraIdList.toSet()
 
         data class Candidate(
@@ -506,35 +779,70 @@ class CameraController(private val context: Context) {
     }
 
     /**
-     * While manual exposure is active, the real (preview-uncapped) ISO/shutter the user selected is
-     * only ever live on the sensor for the moment of this call — [pushExactManualExposureForCapture]
-     * pushes it and waits for confirmation immediately before [capturePhoto], and the `finally` block
-     * reapplies whichever preview-capped/auto state is current *now* once the capture settles,
-     * checking [pendingManualIso]/[pendingManualShutterNs] fresh rather than reapplying the
-     * pre-capture snapshot — the user may have exited manual mode or changed the target mid-capture.
+     * Issues the still-capture request and writes the resulting JPEG to `MediaStore`. While manual
+     * exposure is active, the real (preview-uncapped) ISO/shutter the user selected is carried
+     * directly on this one-off request via [resolveManualExposure] — completely independent of
+     * whatever the live preview's repeating request is doing (see this class's own doc for why that
+     * decoupling is the whole point of the Camera2 migration).
      */
     suspend fun takePhoto(): Uri {
-        val capture = checkNotNull(imageCapture) { "Camera not bound yet" }
-        val manualExposureActive = pendingManualIso != null || pendingManualShutterNs != null
+        val device = checkNotNull(cameraDevice) { "Camera not bound yet" }
+        val session = checkNotNull(captureSession) { "Camera not bound yet" }
+        val reader = checkNotNull(imageReader) { "Camera not bound yet" }
+        val characteristics = characteristicsFor(currentLens)
+            ?: throw IllegalStateException("No CameraCharacteristics available for the bound lens")
 
-        if (manualExposureActive) {
-            pushExactManualExposureForCapture()
+        val bytes = captureStillJpeg(device, session, reader, characteristics)
+        return withContext(Dispatchers.IO) { saveJpegToMediaStore(bytes) }
+    }
+
+    private suspend fun captureStillJpeg(
+        device: CameraDevice,
+        session: CameraCaptureSession,
+        reader: ImageReader,
+        characteristics: CameraCharacteristics,
+    ): ByteArray = suspendCancellableCoroutine { continuation ->
+        pendingCapture = continuation
+        continuation.invokeOnCancellation { if (pendingCapture === continuation) pendingCapture = null }
+
+        val manualCapability = if (pendingManualIso != null || pendingManualShutterNs != null) {
+            manualIsoCapability(currentLens)
+        } else {
+            null
         }
 
-        return try {
-            capturePhoto(capture)
-        } finally {
-            if (manualExposureActive) {
-                if (pendingManualIso != null || pendingManualShutterNs != null) {
-                    applyManualExposure(pendingManualIso, pendingManualShutterNs)
-                } else {
-                    camera2CameraControl?.clearCaptureRequestOptions()
-                }
+        val request = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+            addTarget(reader.surface)
+            set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation(characteristics))
+            set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+
+            if (manualCapability != null) {
+                val (iso, shutterNs) = resolveManualExposure(pendingManualIso, pendingManualShutterNs, manualCapability)
+                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+                set(CaptureRequest.SENSOR_SENSITIVITY, iso)
+                set(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterNs)
+            } else {
+                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
             }
+
+            set(
+                CaptureRequest.FLASH_MODE,
+                if (pendingFlashMode == FlashMode.ON) CaptureRequest.FLASH_MODE_SINGLE else CaptureRequest.FLASH_MODE_OFF,
+            )
+        }.build()
+
+        try {
+            session.capture(request, null, backgroundHandler)
+        } catch (e: CameraAccessException) {
+            pendingCapture = null
+            continuation.resumeWithException(e)
+        } catch (e: IllegalStateException) {
+            pendingCapture = null
+            continuation.resumeWithException(e)
         }
     }
 
-    private suspend fun capturePhoto(capture: ImageCapture): Uri {
+    private fun saveJpegToMediaStore(bytes: ByteArray): Uri {
         val name = "xCamera_${System.currentTimeMillis()}.jpg"
         val contentValues = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
@@ -545,32 +853,11 @@ class CameraController(private val context: Context) {
                 put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DCIM}/Camera")
             }
         }
-        val outputOptions = ImageCapture.OutputFileOptions.Builder(
-            context.contentResolver,
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            contentValues,
-        ).build()
-
-        return suspendCancellableCoroutine { continuation ->
-            capture.takePicture(
-                outputOptions,
-                ContextCompat.getMainExecutor(context),
-                object : ImageCapture.OnImageSavedCallback {
-                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                        val uri = outputFileResults.savedUri
-                        if (uri != null) {
-                            continuation.resume(uri)
-                        } else {
-                            continuation.resumeWithException(IllegalStateException("Photo saved but no URI returned"))
-                        }
-                    }
-
-                    override fun onError(exception: ImageCaptureException) {
-                        continuation.resumeWithException(exception)
-                    }
-                },
-            )
-        }
+        val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+            ?: throw IllegalStateException("MediaStore insert failed")
+        context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+            ?: throw IllegalStateException("Couldn't open an output stream for $uri")
+        return uri
     }
 
     /**
@@ -595,27 +882,27 @@ class CameraController(private val context: Context) {
         }
     }
 
-    private suspend fun getCameraProvider(): ProcessCameraProvider = suspendCancellableCoroutine { continuation ->
-        val future = ProcessCameraProvider.getInstance(context)
-        future.addListener(
-            { continuation.resume(future.get()) },
-            ContextCompat.getMainExecutor(context),
-        )
-    }
-
     private companion object {
+        /** Preview stream resolution cap — plenty for a full-screen viewfinder, keeps frame cost down. */
+        const val MaxPreviewDimension = 1920
+
+        val FallbackPreviewSize = Size(1920, 1080)
+        val FallbackStillSize = Size(1920, 1080)
+
         /**
-         * Ceiling on the exposure time actually pushed to the *live* repeating (preview) request
-         * while manual mode is active, regardless of how long a shutter speed the user has dragged
-         * to. Once `CONTROL_AE_MODE_OFF` is set, each preview frame's duration *is* the configured
-         * `SENSOR_EXPOSURE_TIME` — pushing an 8s exposure straight to the repeating request would
-         * drop the viewfinder to ~0.125fps and leave it visibly frozen afterward too, since the
-         * sensor has to finish reading out whatever long-exposure frames were already queued before a
-         * fresh fast one can land. 1/15s keeps manual-mode preview comfortably fluid (a frame-rate a
-         * dim-light *auto*-exposure preview already commonly runs at) while still long enough that
-         * the [SENSOR_SENSITIVITY] compensation needed to match brightness rarely needs to leave a
-         * flagship sensor's usable ISO range. The user's actual selected shutter speed is only ever
-         * pushed to the sensor for real at capture time — see [pushExactManualExposureForCapture].
+         * Ceiling on the exposure time pushed to the *live preview's* repeating request while manual
+         * mode is active, regardless of how long a shutter speed the user has actually dragged to —
+         * see [buildPreviewRequest]. Once `CONTROL_AE_MODE_OFF` is set, each preview frame's duration
+         * *is* the configured `SENSOR_EXPOSURE_TIME`; pushing an 8s exposure straight to the repeating
+         * request would drop the viewfinder to ~0.125fps and leave it visibly frozen, since the sensor
+         * has to finish reading out whatever long-exposure frames were already queued before a fresh
+         * fast one can land. 1/15s keeps manual-mode preview comfortably fluid (a frame rate a dim-
+         * light *auto*-exposure preview already commonly runs at) while still long enough that the
+         * `SENSOR_SENSITIVITY` compensation needed to match brightness rarely needs to leave a
+         * flagship sensor's usable ISO range. Unlike the pre-Camera2-migration version of this same
+         * mechanism, this only ever affects the preview's own repeating request — the still capture in
+         * [captureStillJpeg] always uses the real, uncapped selected shutter speed, with no shared
+         * Camera2-level state between the two requests.
          */
         const val PreviewMaxExposureTimeNs = 1_000_000_000L / 15
     }

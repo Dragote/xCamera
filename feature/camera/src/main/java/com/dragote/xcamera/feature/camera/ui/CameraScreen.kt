@@ -4,13 +4,18 @@ import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Matrix
+import android.graphics.RectF
+import android.graphics.SurfaceTexture
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import android.util.Size
+import android.view.Surface
+import android.view.TextureView
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,6 +46,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -72,6 +78,7 @@ import com.dragote.xcamera.shared.designsystem.component.ErrorState
 import com.ramcosta.composedestinations.annotation.Destination
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.launch
+import kotlin.math.max
 
 private val requiredPermissions: List<String> = buildList {
     add(Manifest.permission.CAMERA)
@@ -141,15 +148,15 @@ private fun rememberCameraRepository(): CameraRepository {
 
 /**
  * Full-screen skeuomorphic chrome ported from the "Camera App UI v3" design: a graphite body with
- * FLASH/GRID/MODE levers above the viewfinder and a LENS/shutter/exposure deck below it. The
- * [PreviewView] itself is untouched, just re-framed, with a real [ViewfinderGridOverlay] drawn on
- * top of it now. All seven controls now carry real behavior. The former "ZOOM" dial is gone — zoom
- * doesn't exist as a feature in xCamera — replaced by [ManualExposureDial], which drives manual ISO
- * *and* shutter speed via [CameraViewModel.setManualExposure] (Camera2's `CONTROL_AE_MODE_OFF`
- * fixes both together, there's no "ISO manual, shutter auto" mode); [ManualExposureTargetSelector]'s
- * two overlay buttons over the viewfinder pick which of the two the dial currently shows/drives.
- * MODE ([ModeLever]) just reflects whether manual mode is currently engaged and lets you leave it
- * back to auto.
+ * FLASH/GRID/MODE levers above the viewfinder and a LENS/shutter/exposure deck below it. The raw
+ * [TextureView] preview itself is untouched in layout terms, just re-framed, with a real
+ * [ViewfinderGridOverlay] drawn on top of it now. All seven controls now carry real behavior. The
+ * former "ZOOM" dial is gone — zoom doesn't exist as a feature in xCamera — replaced by
+ * [ManualExposureDial], which drives manual ISO *and* shutter speed via
+ * [CameraViewModel.setManualExposure] (Camera2's `CONTROL_AE_MODE_OFF` fixes both together, there's
+ * no "ISO manual, shutter auto" mode); [ManualExposureTargetSelector]'s two overlay buttons over the
+ * viewfinder pick which of the two the dial currently shows/drives. MODE ([ModeLever]) just reflects
+ * whether manual mode is currently engaged and lets you leave it back to auto.
  *
  * The thumbnail chip shows [latestGalleryUri] (the actual last photo in the device's gallery,
  * queried once permission allows it — see [galleryReadPermission]) until a fresh capture replaces
@@ -162,16 +169,50 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val coroutineScope = rememberCoroutineScope()
     val cameraRepository = rememberCameraRepository()
-    val previewView = remember {
-        PreviewView(context).apply {
-            scaleType = PreviewView.ScaleType.FILL_CENTER
+
+    // A raw Camera2 preview surface (unlike CameraX's Preview.SurfaceProvider) has to come from a
+    // real Android view's SurfaceTexture that ui/ owns and sizes itself — see CameraRepository's own
+    // doc for why bindCamera takes a plain Surface now. previewSurface/previewViewSize are only set
+    // once the TextureView is actually attached and measured; textureView.surfaceTexture is read
+    // fresh (not cached) below since it's still the same object for as long as previewSurface is
+    // non-null.
+    var previewSurface by remember { mutableStateOf<Surface?>(null) }
+    var previewViewSize by remember { mutableStateOf(IntSize.Zero) }
+    val textureView = remember {
+        TextureView(context).apply {
+            surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
+                    previewSurface = Surface(surfaceTexture)
+                    previewViewSize = IntSize(width, height)
+                }
+
+                override fun onSurfaceTextureSizeChanged(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
+                    previewViewSize = IntSize(width, height)
+                }
+
+                override fun onSurfaceTextureDestroyed(surfaceTexture: SurfaceTexture): Boolean {
+                    cameraRepository.unbindCamera()
+                    previewSurface?.release()
+                    previewSurface = null
+                    return true
+                }
+
+                override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) = Unit
+            }
         }
     }
     var gridEnabled by remember { mutableStateOf(false) }
     var latestGalleryUri by remember { mutableStateOf<Uri?>(null) }
 
     DisposableEffect(viewModel) {
-        onDispose { viewModel.stopOrientationListener() }
+        onDispose {
+            viewModel.stopOrientationListener()
+            // Idempotent if onSurfaceTextureDestroyed already ran (e.g. the view was detached before
+            // this composable left composition) — CameraController.unbindCamera is a no-op with
+            // nothing bound. Still needed as a backstop for the case where the TextureView isn't torn
+            // down as part of this composable leaving composition.
+            cameraRepository.unbindCamera()
+        }
     }
 
     val galleryPermissionLauncher = rememberLauncherForActivityResult(
@@ -193,16 +234,30 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
         }
     }
 
-    LaunchedEffect(previewView) {
+    LaunchedEffect(Unit) {
         viewModel.onLensesLoaded(viewModel.listBackLenses())
     }
 
     // Called directly against the injected repository, not the ViewModel — bindCamera needs
-    // Compose's LifecycleOwner + Preview.SurfaceProvider, which CameraViewModel must never import.
-    LaunchedEffect(previewView, uiState.selectedLens) {
+    // Compose's LifecycleOwner + a raw preview Surface, which CameraViewModel must never import.
+    // Re-runs on a lens switch (rebinding against the same Surface, CameraController tears down and
+    // reopens the session for the new lens) and whenever the TextureView's SurfaceTexture itself
+    // changes (first becomes available, or is resized by a layout pass) since the surface's buffer
+    // size/preview transform both depend on the chosen lens's supported preview sizes.
+    LaunchedEffect(previewSurface, previewViewSize, uiState.selectedLens) {
+        val surface = previewSurface ?: return@LaunchedEffect
+        val surfaceTexture = textureView.surfaceTexture ?: return@LaunchedEffect
+        val viewWidth = previewViewSize.width
+        val viewHeight = previewViewSize.height
+        if (viewWidth == 0 || viewHeight == 0) return@LaunchedEffect
+
+        val previewSize = cameraRepository.previewOutputSize(uiState.selectedLens, viewWidth, viewHeight)
+        surfaceTexture.setDefaultBufferSize(previewSize.width, previewSize.height)
+        textureView.setTransform(previewFillTransform(viewWidth, viewHeight, previewSize))
+
         cameraRepository.bindCamera(
             lifecycleOwner = lifecycleOwner,
-            surfaceProvider = previewView.surfaceProvider,
+            surface = surface,
             lens = uiState.selectedLens,
         )
     }
@@ -294,7 +349,7 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                         .clip(RoundedCornerShape(16.dp))
                         .background(CameraChrome.ViewfinderInsetColor),
                 ) {
-                    AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+                    AndroidView(factory = { textureView }, modifier = Modifier.fillMaxSize())
                     ViewfinderGridOverlay(visible = gridEnabled, modifier = Modifier.fillMaxSize())
                     ExposingIndicator(
                         visible = uiState.isCapturing,
@@ -386,4 +441,32 @@ private val SeamBrush = Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0
 @Composable
 private fun Seam(modifier: Modifier = Modifier) {
     Box(modifier = modifier.fillMaxWidth().height(2.dp).background(SeamBrush))
+}
+
+/**
+ * Center-crop scale (mirrors the previous `PreviewView`'s `FILL_CENTER` `scaleType`) mapping a raw
+ * Camera2 preview buffer onto a [viewWidth]x[viewHeight] [TextureView]. Applied unconditionally
+ * rather than gated on a `Display.getRotation()` check the way Google's own Camera2Basic sample's
+ * `configureTransform` is: this app's activity is locked to portrait (see `CameraController`'s own
+ * `targetRotation` doc), and Compose's `AndroidView(Modifier.fillMaxSize())` forces an exact view
+ * size regardless of the `TextureView`'s own measured aspect ratio, so there's no
+ * `AutoFitTextureView`-style measure-time aspect-locking to fall back on the way the classic sample
+ * has — the crop has to be computed here every time instead. [bufferSize] is width/height-swapped
+ * when building the mapping rect since Camera2 expresses it in the sensor's own (landscape, for a
+ * portrait-mounted back camera) coordinate convention — see `CameraController.previewOutputSize`'s
+ * own doc for the same assumption on the producing side.
+ */
+private fun previewFillTransform(viewWidth: Int, viewHeight: Int, bufferSize: Size): Matrix {
+    val matrix = Matrix()
+    if (viewWidth <= 0 || viewHeight <= 0 || bufferSize.width <= 0 || bufferSize.height <= 0) return matrix
+
+    val viewRect = RectF(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat())
+    val bufferRect = RectF(0f, 0f, bufferSize.height.toFloat(), bufferSize.width.toFloat())
+    val centerX = viewRect.centerX()
+    val centerY = viewRect.centerY()
+    bufferRect.offset(centerX - bufferRect.centerX(), centerY - bufferRect.centerY())
+    matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL)
+    val scale = max(viewHeight.toFloat() / bufferSize.width, viewWidth.toFloat() / bufferSize.height)
+    matrix.postScale(scale, scale, centerX, centerY)
+    return matrix
 }
