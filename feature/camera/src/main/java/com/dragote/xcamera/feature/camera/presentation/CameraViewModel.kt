@@ -39,14 +39,27 @@ class CameraViewModel @Inject constructor(
 
     init {
         // While auto exposure is driving (manual mode off), keep the ISO dial's displayed index
-        // continuously in sync with whatever ISO the sensor is actually converged on right now,
-        // rather than only resolving it once on first touch the way the shutter dial does — see
-        // CameraRepository.observeAutoIso's own doc. Never fights a user's manual drag.
+        // continuously in sync with whatever ISO the sensor is actually converged on right now —
+        // see CameraRepository.observeAutoIso's own doc. Never fights a user's manual drag.
         viewModelScope.launch {
             cameraRepository.observeAutoIso().collect { iso ->
                 val current = _uiState.value
                 if (iso == null || current.manualModeEnabled || current.isoStops.isEmpty()) return@collect
                 _uiState.value = current.copy(selectedIsoIndex = current.isoStops.nearestIsoStopIndex(iso))
+            }
+        }
+
+        // Mirrors the ISO collector above for the shutter-speed dial — see
+        // CameraRepository.observeAutoExposureTime's own doc.
+        viewModelScope.launch {
+            cameraRepository.observeAutoExposureTime().collect { exposureTimeNs ->
+                val current = _uiState.value
+                if (exposureTimeNs == null || current.manualModeEnabled || current.shutterStops.isEmpty()) {
+                    return@collect
+                }
+                _uiState.value = current.copy(
+                    selectedShutterIndex = current.shutterStops.nearestShutterStopIndex(exposureTimeNs),
+                )
             }
         }
     }
@@ -55,8 +68,6 @@ class CameraViewModel @Inject constructor(
 
     fun manualIsoCapability(lens: CameraLens?): ManualIsoCapability? =
         cameraRepository.manualIsoCapability(lens)
-
-    fun currentAutoExposureTimeNs(): Long? = cameraRepository.currentAutoExposureTimeNs()
 
     fun setManualExposure(iso: Int?, shutterTimeNs: Long?) = cameraRepository.setManualExposure(iso, shutterTimeNs)
 
@@ -108,8 +119,8 @@ class CameraViewModel @Inject constructor(
      * all, this falls back to auto rather than leaving a manual UI with nothing to actually drive —
      * but if only one of the two lists goes empty (e.g. a narrow exposure-time range that doesn't
      * line up with the standard ladder), manual mode stays on for whichever parameter still has
-     * stops, matching `ManualExposureDial`'s own per-parameter "--" placeholder fallback. Either way,
-     * both [CameraUiState.selectedIsoIndex] and [CameraUiState.selectedShutterIndex] are re-clamped
+     * stops, matching `IsoDial`/`ShutterSpeedDial`'s own "--" placeholder fallback for an empty stop
+     * list. Either way, both [CameraUiState.selectedIsoIndex] and [CameraUiState.selectedShutterIndex] are re-clamped
      * against their (possibly narrower, possibly empty) new stop lists so neither dangles past the
      * end of its list.
      */
@@ -129,16 +140,16 @@ class CameraViewModel @Inject constructor(
     }
 
     /**
-     * The dial always shows/controls whichever of [CameraUiState.manualTarget]'s two parameters is
-     * active — there's no separate toggle to enter manual mode, so the instant the user starts
-     * dragging it (see `DialWheel`'s `onDragActiveChanged`), the app enters manual mode. Dragging back
-     * to the same index it started at still counts as engaging manual mode, since the user physically
-     * grabbed the control. A no-op if the currently active target has no stops to offer (mirrors
+     * ISO and shutter speed now each have their own always-visible physical dial — there's no
+     * separate toggle to enter manual mode, so the instant the user starts dragging *either* one (see
+     * `DialWheel`'s `onDragActiveChanged`), the app enters manual mode. Dragging back to the same
+     * index it started at still counts as engaging manual mode, since the user physically grabbed the
+     * control. A no-op if [target]'s own stop list has nothing to offer (mirrors
      * [onIsoIndexChanged]/[onShutterIndexChanged]'s own emptiness guard).
      */
-    fun onManualExposureDialDragStarted() {
+    fun onManualExposureDialDragStarted(target: ManualControlTarget) {
         val current = _uiState.value
-        val activeStopsEmpty = when (current.manualTarget) {
+        val activeStopsEmpty = when (target) {
             ManualControlTarget.ISO -> current.isoStops.isEmpty()
             ManualControlTarget.SHUTTER_SPEED -> current.shutterStops.isEmpty()
         }
@@ -161,37 +172,11 @@ class CameraViewModel @Inject constructor(
         _uiState.value = current.copy(
             selectedShutterIndex = index.coerceIn(0, current.shutterStops.lastIndex),
             manualModeEnabled = true,
-            shutterIndexInitialized = true,
         )
     }
 
-    /** Switching targets never resets the index of the parameter being switched away from. */
-    fun onManualTargetSelected(target: ManualControlTarget) {
-        _uiState.value = _uiState.value.copy(manualTarget = target)
-    }
-
-    /**
-     * Resolves [CameraUiState.selectedShutterIndex]'s first-touch position (before the user has
-     * actually dragged the shutter dial this manual session) to whichever stop is nearest
-     * [autoExposureTimeNs] rather than leaving it at an arbitrary default index — the same anti-jump
-     * reasoning `CameraController` already applies when pinning exposure time alongside a
-     * manually-chosen ISO, just surfaced here so the dial's *displayed* index matches what's actually
-     * applied. A no-op once [CameraUiState.shutterIndexInitialized] is already true (a real drag, or an
-     * earlier call to this) so it never overrides a value the user (or this same resolution) already
-     * settled on, and a no-op if there's no auto value yet (e.g. called before the first capture
-     * result lands) or no shutter stops to resolve against.
-     */
-    fun onManualShutterResolutionNeeded(autoExposureTimeNs: Long?) {
-        val current = _uiState.value
-        if (current.shutterIndexInitialized || current.shutterStops.isEmpty() || autoExposureTimeNs == null) return
-        _uiState.value = current.copy(
-            selectedShutterIndex = current.shutterStops.nearestShutterStopIndex(autoExposureTimeNs),
-            shutterIndexInitialized = true,
-        )
-    }
-
-    /** `ModeLever` has no way to *enter* manual (only the dial does) — only to leave it. */
+    /** `ModeLever` has no way to *enter* manual (only the dials do) — only to leave it. */
     fun onManualModeExitRequested() {
-        _uiState.value = _uiState.value.copy(manualModeEnabled = false, shutterIndexInitialized = false)
+        _uiState.value = _uiState.value.copy(manualModeEnabled = false)
     }
 }

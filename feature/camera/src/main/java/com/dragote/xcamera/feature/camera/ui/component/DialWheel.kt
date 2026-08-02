@@ -51,6 +51,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -104,29 +105,27 @@ fun DialWheel(
         if (coasting == null && abs(drum - (-index * stepPx)) > 0.5f) drum = -index * stepPx
     }
 
-    Column(modifier = modifier.width(107.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 2.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            Text(
-                label,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 10.sp,
-                letterSpacing = 2.sp,
-                color = Color(0xFF877F6C),
-            )
-            Text(
-                values[index.coerceIn(0, maxIndex)],
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
-                color = Color(0xFFDED7C3),
-                textAlign = TextAlign.End,
-            )
-        }
+    Column(
+        modifier = modifier.width(107.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        // Value above the wheel, unit label below it — value gets first billing since it's what the
+        // user is actively dialing in, and centering both (rather than the old label/value-share-a-row
+        // layout) means neither has to fight the other for width: each is the sole occupant of its own
+        // full-width line, so a long value like "1/125" never gets squeezed down to nothing the way it
+        // did sharing a row with "SHUTTER".
+        Text(
+            values[index.coerceIn(0, maxIndex)],
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Bold,
+            fontSize = 13.sp,
+            color = Color(0xFFDED7C3),
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+        )
 
         Canvas(
             Modifier
@@ -203,6 +202,19 @@ fun DialWheel(
             drawWell()
             drawBarrel(accent, drum, stepPx)
         }
+
+        Text(
+            label,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 10.sp,
+            letterSpacing = 2.sp,
+            color = Color(0xFF877F6C),
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+        )
     }
 }
 

@@ -59,15 +59,19 @@ interface CameraRepository {
 
     fun manualIsoCapability(lens: CameraLens?): ManualIsoCapability?
 
-    fun currentAutoExposureTimeNs(): Long?
-
     /**
      * Continuously reflects auto-exposure's live ISO (via a session-wide Camera2 capture callback)
-     * for as long as manual mode is off — unlike [currentAutoExposureTimeNs]'s one-shot pull, this is
-     * meant to be collected for the ISO dial's live rotation while auto exposure is active. Emits
-     * `null` before the first frame lands (e.g. right after a fresh bind).
+     * for as long as manual mode is off — meant to be collected for the ISO dial's live rotation
+     * while auto exposure is active. Emits `null` before the first frame lands (e.g. right after a
+     * fresh bind).
      */
     fun observeAutoIso(): Flow<Int?>
+
+    /**
+     * Mirrors [observeAutoIso] for shutter speed — meant to be collected for the shutter dial's live
+     * rotation the same way [observeAutoIso] drives the ISO dial's.
+     */
+    fun observeAutoExposureTime(): Flow<Long?>
 
     fun setManualExposure(iso: Int?, shutterTimeNs: Long?)
 

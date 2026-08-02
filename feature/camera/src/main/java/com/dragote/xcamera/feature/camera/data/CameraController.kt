@@ -121,36 +121,34 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     private var pendingManualShutterNs: Long? = null
 
     /**
-     * The most recent auto-AE-converged shutter speed. While manual mode is off, the preview's
-     * repeating request runs plain auto-exposure and every result here reflects a genuine AE
-     * convergence value; while manual mode is on, the preview's repeating request instead carries a
-     * *forced* capped-manual exposure (see [buildPreviewRequest]) that must **not** be mistaken for a
-     * real auto-converged value, which is exactly what [previewCaptureCallback]'s
-     * [pendingManualIso]/[pendingManualShutterNs] guard prevents. Exposed via
-     * [currentAutoExposureTimeNs] as a plain nanosecond `Long` so the shutter dial's own first-touch
-     * position (picked in the presentation layer) can resolve to the nearest ladder stop instead of
-     * an arbitrary default index, without that layer needing any Camera2 type.
-     */
-    private var lastAutoExposureTimeNs: Long? = null
-
-    /**
-     * Mirrors [lastAutoExposureTimeNs] for ISO, but as a continuously-observed [StateFlow] rather
-     * than a one-shot pull — the ISO dial reflects auto-exposure's live ISO the whole time manual
-     * mode is off (see `CameraViewModel`'s collector), not just the first time it's touched, so a
-     * one-shot accessor like [currentAutoExposureTimeNs] wouldn't fit the same "starts from wherever
-     * auto last settled" convention shutter resolution already uses.
+     * The most recent auto-AE-converged ISO, continuously observed via this [StateFlow] rather than a
+     * one-shot pull — the ISO dial reflects auto-exposure's live ISO the whole time manual mode is off
+     * (see `CameraViewModel`'s collector), not just the first time it's touched. While manual mode is
+     * on, the preview's repeating request instead carries a *forced* capped-manual exposure (see
+     * [buildPreviewRequest]) that must **not** be mistaken for a real auto-converged value, which is
+     * exactly what [previewCaptureCallback]'s [pendingManualIso]/[pendingManualShutterNs] guard
+     * prevents.
      */
     private val _autoIso = MutableStateFlow<Int?>(null)
     val autoIso: StateFlow<Int?> = _autoIso.asStateFlow()
 
     /**
+     * Mirrors [autoIso] for shutter speed — the shutter dial tracks live auto-exposure the same way
+     * the ISO dial does (see `CameraViewModel`'s two collectors), not just once on first touch. Also
+     * read synchronously by [resolveManualExposure] as the fallback shutter time whenever only ISO is
+     * currently pinned by manual mode (e.g. this lens has no aligned shutter-speed stops), the same
+     * "starts from wherever auto last settled" behavior this had before it became a [StateFlow].
+     */
+    private val _autoExposureTimeNs = MutableStateFlow<Long?>(null)
+    val autoExposureTimeNs: StateFlow<Long?> = _autoExposureTimeNs.asStateFlow()
+
+    /**
      * While manual mode is active ([pendingManualIso]/[pendingManualShutterNs] non-null), the
      * preview's repeating request carries a forced capped-manual exposure (see
      * [buildPreviewRequest]), not a genuine AE convergence value — so this must skip updating
-     * [lastAutoExposureTimeNs]/[_autoIso] in that case, exactly as it did before live manual preview
-     * feedback was reintroduced, otherwise the shutter dial's auto-resolution and the ISO dial's live
-     * auto-tracking would both get fed a bogus "auto" value that's actually just whatever the preview
-     * cap forced.
+     * [_autoIso]/[_autoExposureTimeNs] in that case, exactly as it did before live manual preview
+     * feedback was reintroduced, otherwise the ISO/shutter dials' live auto-tracking would both get
+     * fed a bogus "auto" value that's actually just whatever the preview cap forced.
      */
     private val previewCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureCompleted(
@@ -159,7 +157,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
             result: TotalCaptureResult,
         ) {
             if (pendingManualIso != null || pendingManualShutterNs != null) return
-            result.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { lastAutoExposureTimeNs = it }
+            result.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { _autoExposureTimeNs.value = it }
             result.get(CaptureResult.SENSOR_SENSITIVITY)?.let { _autoIso.value = it }
         }
     }
@@ -477,7 +475,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         cameraDevice = null
         imageReader?.close()
         imageReader = null
-        lastAutoExposureTimeNs = null
+        _autoExposureTimeNs.value = null
         _autoIso.value = null
     }
 
@@ -616,30 +614,21 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     }
 
     /**
-     * Resolves [iso]/[shutterTimeNs] for the still-capture request: whichever is null (the parameter
-     * not currently being dragged, before the presentation layer has resolved an initial value for
-     * it — see `CameraViewModel.onManualShutterResolutionNeeded`) falls back to
-     * [lastAutoExposureTimeNs] for shutter or the range floor for ISO, then both are clamped to
-     * [capability]'s supported sensor range, so engaging manual mode for one parameter doesn't itself
-     * cause a brightness jump from whatever the other was left at.
+     * Resolves [iso]/[shutterTimeNs] for the still-capture request: whichever is null (i.e. that
+     * parameter's stop list is currently empty for this lens, so its own dial has nothing to pin —
+     * both dials are always visible now, but an unsupported/unaligned range can still leave one of
+     * them without a value to contribute) falls back to [_autoExposureTimeNs]'s current value for
+     * shutter or the range floor for ISO, then both are clamped to [capability]'s supported sensor
+     * range, so engaging manual mode for one parameter doesn't itself cause a brightness jump from
+     * whatever the other was left at.
      */
     private fun resolveManualExposure(iso: Int?, shutterTimeNs: Long?, capability: ManualIsoCapability): Pair<Int, Long> {
         val clampedIso = (iso ?: capability.isoRange.first)
             .coerceIn(capability.isoRange.first, capability.isoRange.last)
-        val clampedShutterNs = (shutterTimeNs ?: lastAutoExposureTimeNs ?: capability.exposureTimeRange.first)
+        val clampedShutterNs = (shutterTimeNs ?: _autoExposureTimeNs.value ?: capability.exposureTimeRange.first)
             .coerceIn(capability.exposureTimeRange.first, capability.exposureTimeRange.last)
         return clampedIso to clampedShutterNs
     }
-
-    /**
-     * The auto pipeline's last-converged shutter speed as a plain nanosecond `Long` — same value
-     * [resolveManualExposure] itself falls back to, exposed so the presentation layer can resolve the
-     * shutter dial's first-touch position (nearest ladder stop, see
-     * [com.dragote.xcamera.feature.camera.domain.model.nearestShutterStopIndex]) without needing any
-     * Camera2 type. `null` before the preview repeating request's callback has fired at least once
-     * (e.g. right after a fresh bind, before the first frame lands).
-     */
-    fun currentAutoExposureTimeNs(): Long? = lastAutoExposureTimeNs
 
     /**
      * `(sensorOrientation - surfaceRotationDegrees + 360) % 360`, the standard back-camera Camera2

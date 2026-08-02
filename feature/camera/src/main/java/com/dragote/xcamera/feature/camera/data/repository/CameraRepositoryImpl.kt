@@ -38,9 +38,9 @@ class CameraRepositoryImpl @Inject constructor(
     override fun manualIsoCapability(lens: CameraLens?): ManualIsoCapability? =
         cameraController.manualIsoCapability(lens)
 
-    override fun currentAutoExposureTimeNs(): Long? = cameraController.currentAutoExposureTimeNs()
-
     override fun observeAutoIso(): Flow<Int?> = cameraController.autoIso
+
+    override fun observeAutoExposureTime(): Flow<Long?> = cameraController.autoExposureTimeNs
 
     override fun setManualExposure(iso: Int?, shutterTimeNs: Long?) =
         cameraController.setManualExposure(iso, shutterTimeNs)
