@@ -10,6 +10,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -19,7 +20,12 @@ abstract class CameraModule {
     abstract fun bindCameraRepository(impl: CameraRepositoryImpl): CameraRepository
 
     companion object {
+        // Unscoped would mean every injection point (the ViewModel's constructor injection vs.
+        // ui/CameraScreen's separate EntryPointAccessors call) resolves its own fresh instance,
+        // leaving imageCapture/camera2CameraControl/currentLens permanently null on whichever copy
+        // isn't the one bindCamera() was actually called on — see CameraRepositoryEntryPoint's doc.
         @Provides
+        @Singleton
         fun provideCameraController(@ApplicationContext context: Context): CameraController =
             CameraController(context)
     }

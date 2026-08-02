@@ -1,22 +1,26 @@
 # Camera capture
 
-**Purpose:** The core capture pipeline for `feature:camera` — an Android take on iOS's (Not Boring) Camera app. Skeuomorphic viewfinder UI (levers, dials) driving a CameraX/Camera2-backed capture flow.
+**Purpose:** The core capture pipeline for `feature:camera` — an Android take on iOS's (Not Boring) Camera app. Skeuomorphic viewfinder UI (levers, dials) driving a raw Camera2-backed capture flow.
 
 **Current state:**
-- CameraX for lifecycle/preview/capture; `Camera2Interop`/`Camera2CameraControl` for physical-lens enumeration and manual sensor control (`CameraController` in `data/`).
-- Lens switching (`CameraLens`), flash mode (`FlashMode`).
+- Raw `android.hardware.camera2` (`CameraManager`/`CameraDevice`/`CameraCaptureSession`/`ImageReader`) in `CameraController` (`data/`) — **not** CameraX. One capture session with two independent surfaces: a `TextureView`-backed preview surface (fast repeating request, plain auto-exposure by default) and a private `ImageReader` for stills (one-off `capture()` per photo). The two share no session-wide state, so a long manual exposure never blocks or degrades the live preview.
+- Lens switching (`CameraLens`, via `OutputConfiguration.setPhysicalCameraId`), flash mode (`FlashMode`, applied per still-capture request).
 - Manual ISO control via a repurposed ISO dial, gated on `CameraCharacteristics` `MANUAL_SENSOR` capability (`manualIsoSupported` in `CameraUiState`) — hidden/disabled on devices that don't report it.
 - Manual shutter speed control alongside manual ISO, same manual-mode toggle; `ManualControlTarget` selects which of the two the shared exposure dial currently drives.
 - Manual ISO/shutter ladders (`isoStops`/`shutterStops`) are the standard stop ladder filtered to the selected lens's actual supported range, not a fixed list.
+- Live preview reflects manual ISO/shutter while dragging the dial, capped at a safe exposure-time ceiling (`PreviewMaxExposureTimeNs`, brightness compensated via ISO) so it never drops frame rate; the actual capture always uses the real, uncapped selected values.
+- Auto-exposure's ISO and shutter speed are tracked live off the preview's capture results and reflected on the dials even outside manual mode — grabbing a dial starts manual mode from whatever auto had just settled on.
 - Viewfinder grid overlay, off by default.
-- Capture writes to `MediaStore` (`ContentValues`); no success toast on capture (removed deliberately, see issue #3).
+- Capture writes JPEG bytes straight to `MediaStore` (own encode/write path, no CameraX `ImageCapture` helper); no success toast on capture (removed deliberately, see issue #3).
 - No manual white balance, no RAW/DNG, no LUT grading yet.
 
 **Key decisions:**
-- Camera2 escape hatches (not pure CameraX) for manual ISO/shutter — CameraX alone has no manual sensor control. See `camera-feasibility-android` project memory for the full per-feature API mapping.
+- Migrated off CameraX (`Preview`/`ImageCapture` use cases) onto raw Camera2 in issue #10 — CameraX's `Camera2Interop`/`Camera2CameraControl` only exposes session-wide dynamic capture-request overrides, with no supported way to keep a fast repeating preview request independent from a still capture's request. That coupling caused long manual shutter speeds (4s/8s/16s+) to visibly stall the preview and, at the longest speeds, fail capture outright (confirmed via on-device `adb logcat`: queued long-exposure preview frames backed up in the HAL ahead of the actual still request until CameraX's own capture-session watchdog aborted and reset). Managing the `CameraCaptureSession` directly removes the coupling: preview and capture are independent Camera2 requests from the start.
+- `CameraController`/`CameraRepositoryImpl` are `@Singleton` (`di/CameraModule`) — without it, `CameraViewModel`'s constructor injection and `ui/CameraScreen`'s separate `EntryPointAccessors` call each resolved their own unscoped instance, so `bindCamera()` ran on one while every other operation (including `takePhoto()`) ran on another that was never bound. Regression from the #8/#9 Clean Architecture refactor, fixed alongside #10.
+- Camera2 has no lifecycle-aware bind/unbind like CameraX's `bindToLifecycle` — `CameraController` implements `LifecycleEventObserver` itself, opening the device/session at `ON_START` and closing at `ON_STOP`, plus a separate `unbindCamera()` for the preview surface itself being destroyed.
 - Manual-mode pending values (`pendingManualIso`, `pendingManualShutterNs`) are cached in `CameraController` so they survive a rebind (e.g. switching lenses mid manual-mode).
 - Capability-gated per lens, not per device — `manualIsoSupported` is evaluated against the *selected* lens's `CameraCharacteristics`, since front/back/tele lenses can differ.
 
 **Open questions:**
 - Manual white balance / manual focus scope not yet defined.
-- RAW/DNG capture not yet scoped (tracked at feasibility level only, no issue yet).
+- RAW/DNG capture not yet scoped (tracked at feasibility level only, no issue yet) — the raw Camera2 `ImageReader` pipeline from #10 makes this more straightforward than it would have been on top of CameraX.

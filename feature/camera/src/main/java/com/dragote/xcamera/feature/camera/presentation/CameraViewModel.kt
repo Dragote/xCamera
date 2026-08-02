@@ -2,12 +2,14 @@ package com.dragote.xcamera.feature.camera.presentation
 
 import android.net.Uri
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualControlTarget
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.isoStopsInRange
+import com.dragote.xcamera.feature.camera.domain.model.nearestIsoStopIndex
 import com.dragote.xcamera.feature.camera.domain.model.nearestShutterStopIndex
 import com.dragote.xcamera.feature.camera.domain.model.shutterSpeedStopsInRange
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
@@ -17,6 +19,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 import javax.inject.Inject
 
@@ -33,6 +36,20 @@ class CameraViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(CameraUiState())
     val uiState: StateFlow<CameraUiState> = _uiState.asStateFlow()
+
+    init {
+        // While auto exposure is driving (manual mode off), keep the ISO dial's displayed index
+        // continuously in sync with whatever ISO the sensor is actually converged on right now,
+        // rather than only resolving it once on first touch the way the shutter dial does — see
+        // CameraRepository.observeAutoIso's own doc. Never fights a user's manual drag.
+        viewModelScope.launch {
+            cameraRepository.observeAutoIso().collect { iso ->
+                val current = _uiState.value
+                if (iso == null || current.manualModeEnabled || current.isoStops.isEmpty()) return@collect
+                _uiState.value = current.copy(selectedIsoIndex = current.isoStops.nearestIsoStopIndex(iso))
+            }
+        }
+    }
 
     fun setFlashMode(flashMode: FlashMode) = cameraRepository.setFlashMode(flashMode)
 

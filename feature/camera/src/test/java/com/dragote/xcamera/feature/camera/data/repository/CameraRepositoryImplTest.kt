@@ -1,8 +1,9 @@
 package com.dragote.xcamera.feature.camera.data.repository
 
+import android.hardware.camera2.CameraAccessException
 import android.net.Uri
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.Preview
+import android.util.Size
+import android.view.Surface
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.data.CameraController
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
@@ -15,6 +16,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -27,13 +29,33 @@ class CameraRepositoryImplTest {
     @Test
     fun `bindCamera delegates to the controller`() = runTest {
         val lifecycleOwner = mockk<LifecycleOwner>()
-        val surfaceProvider = mockk<Preview.SurfaceProvider>()
+        val surface = mockk<Surface>()
         val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
-        coEvery { cameraController.bindCamera(lifecycleOwner, surfaceProvider, lens) } returns Unit
+        coEvery { cameraController.bindCamera(lifecycleOwner, surface, lens) } returns Unit
 
-        repository.bindCamera(lifecycleOwner, surfaceProvider, lens)
+        repository.bindCamera(lifecycleOwner, surface, lens)
 
-        coVerify { cameraController.bindCamera(lifecycleOwner, surfaceProvider, lens) }
+        coVerify { cameraController.bindCamera(lifecycleOwner, surface, lens) }
+    }
+
+    @Test
+    fun `unbindCamera delegates to the controller`() {
+        every { cameraController.unbindCamera() } returns Unit
+
+        repository.unbindCamera()
+
+        verify { cameraController.unbindCamera() }
+    }
+
+    @Test
+    fun `previewOutputSize delegates to the controller and returns its result`() {
+        // android.util.Size's own constructor/getters/equals are all unmocked on the JVM unit test
+        // classpath, so this uses a relaxed mock rather than a real Size instance.
+        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val size = mockk<Size>()
+        every { cameraController.previewOutputSize(lens, 1080, 2400) } returns size
+
+        assertEquals(size, repository.previewOutputSize(lens, 1080, 2400))
     }
 
     @Test
@@ -59,6 +81,14 @@ class CameraRepositoryImplTest {
         every { cameraController.currentAutoExposureTimeNs() } returns 250_000L
 
         assertEquals(250_000L, repository.currentAutoExposureTimeNs())
+    }
+
+    @Test
+    fun `observeAutoIso delegates to the controller's autoIso flow`() {
+        val autoIsoFlow = MutableStateFlow<Int?>(400)
+        every { cameraController.autoIso } returns autoIsoFlow
+
+        assertEquals(autoIsoFlow, repository.observeAutoIso())
     }
 
     @Test
@@ -106,8 +136,8 @@ class CameraRepositoryImplTest {
     }
 
     @Test
-    fun `takePhoto wraps an ImageCaptureException in Result Error`() = runTest {
-        coEvery { cameraController.takePhoto() } throws mockk<ImageCaptureException>(relaxed = true)
+    fun `takePhoto wraps a CameraAccessException in Result Error`() = runTest {
+        coEvery { cameraController.takePhoto() } throws mockk<CameraAccessException>(relaxed = true)
 
         val result = repository.takePhoto()
 
