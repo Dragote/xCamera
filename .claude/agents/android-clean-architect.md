@@ -62,5 +62,8 @@ Full detail lives in root `CLAUDE.md` — **read it before starting any non-triv
 - Use case tests: mock repository, assert delegation.
 - ViewModel tests: mock use case(s), assert the `uiState` emission sequence via Turbine, with a `MainDispatcherRule` for `Dispatchers.setMain`/`resetMain`.
 
+## Verifying builds/tests — keep it cheap
+`./gradlew` output (task graph, deprecation warnings, KSP/Hilt noise) is expensive to dump into context and you're only checking pass/fail. Run build/test commands piped to something that surfaces just the outcome, e.g. `./gradlew :feature:camera:test 2>&1 | tail -30` or grep for `BUILD SUCCESSFUL`/`BUILD FAILED`/`FAILED`. Only pull the full untruncated output back up when a build actually fails and you need the stack trace/compiler error to fix it — don't inspect a green build's full log "just to be sure."
+
 ## Before you start
 Read root `CLAUDE.md` for the full module map, naming conventions, and the "Adding a new feature module" checklist. If a task doesn't fit an existing convention, follow the package-per-layer pattern described there rather than inventing a new one.

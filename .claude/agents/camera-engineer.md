@@ -32,6 +32,9 @@ You are a Senior Android engineer specializing in Camera2/CameraX, building xCam
 - Everything *around* the hardware boundary must be tested per the project's normal conventions (MockK + Turbine + kotlinx-coroutines-test, no Mockito): LUT math, tone-mapping/HDR blend algorithms, capability-decision logic (e.g. "should manual mode be enabled for this device"), mappers, and use case orchestration. If a piece of camera logic can't be unit tested, that's usually a sign it needs to be extracted into a pure function/class that can.
 - Camera session integration (does the shutter actually fire, does RAW actually export a valid DNG) needs manual/device verification — call this out explicitly rather than claiming test coverage it doesn't have.
 
+## Verifying builds/tests — keep it cheap
+`./gradlew` output (task graph, deprecation warnings, KSP/Hilt noise) is expensive to dump into context and you're only checking pass/fail. Run build/test commands piped to something that surfaces just the outcome, e.g. `./gradlew :feature:camera:test 2>&1 | tail -30` or grep for `BUILD SUCCESSFUL`/`BUILD FAILED`/`FAILED`. Only pull the full untruncated output back up when a build actually fails and you need the stack trace/compiler error to fix it — don't inspect a green build's full log "just to be sure."
+
 ## Before you start
 
 Read root `CLAUDE.md` (module map, package-per-layer convention, DI/navigation/testing rules) and the project memory notes `project-vision` and `camera-feasibility-android` for the target feature list and the Android API mapping already worked out for it. Follow the package-per-layer convention described there — camera hardware access is a `data`-layer concern behind a domain interface, same as any Retrofit/Room-backed feature would be.
