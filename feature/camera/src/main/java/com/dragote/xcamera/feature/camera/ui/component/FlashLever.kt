@@ -9,7 +9,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
-/** Wraps [CameraLever] with real flash state — the only lever in the top deck with app behavior. */
+/** Wraps [CameraLever] with real flash state. */
 @Composable
 fun FlashLever(
     flashOn: Boolean,
