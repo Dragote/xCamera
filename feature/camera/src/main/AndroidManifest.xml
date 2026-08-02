@@ -14,6 +14,9 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <!-- DialWheel's click-tick haptic goes through Vibrator directly (see DialWheel.kt), not
+         View.performHapticFeedback, so it isn't gated by the system's "Touch feedback" toggle. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-feature
         android:name="android.hardware.camera"
         android:required="true" />

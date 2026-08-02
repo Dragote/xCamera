@@ -32,7 +32,6 @@ fun LensDial(
         onIndexChange = { index -> lenses.getOrNull(index)?.let(onLensSelected) },
         modifier = modifier,
         accent = Accent,
-        stepPx = 42f,
     )
 }
 

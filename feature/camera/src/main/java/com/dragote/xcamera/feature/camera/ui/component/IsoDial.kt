@@ -40,7 +40,6 @@ fun IsoDial(
         onIndexChange = if (supported) onIsoIndexChange else { _ -> },
         modifier = modifier,
         accent = Accent,
-        stepPx = 30f,
         onDragActiveChanged = if (supported) onDragActiveChanged else { _ -> },
     )
 }
