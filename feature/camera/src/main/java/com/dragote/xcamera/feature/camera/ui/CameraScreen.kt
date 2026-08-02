@@ -47,10 +47,11 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.dragote.xcamera.feature.camera.data.CameraController
+import com.dragote.xcamera.feature.camera.di.CameraRepositoryEntryPoint
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualControlTarget
+import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.feature.camera.presentation.CameraUiState
 import com.dragote.xcamera.feature.camera.presentation.CameraViewModel
 import com.dragote.xcamera.feature.camera.ui.component.FlashLever
@@ -64,9 +65,10 @@ import com.dragote.xcamera.feature.camera.ui.component.ViewfinderGridOverlay
 import com.dragote.xcamera.feature.camera.ui.component.ViewfinderThumbnailChip
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.feature.camera.ui.theme.grainTexture
+import com.dragote.xcamera.shared.common.domain.result.Result
 import com.dragote.xcamera.shared.designsystem.component.ErrorState
 import com.ramcosta.composedestinations.annotation.Destination
-import kotlinx.coroutines.CancellationException
+import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.launch
 
 private val requiredPermissions: List<String> = buildList {
@@ -123,12 +125,25 @@ fun CameraScreen(
 }
 
 /**
+ * `bindCamera` is the one camera operation `ui/` calls directly against [CameraRepository] rather
+ * than through [CameraViewModel] — see [CameraRepository]'s doc for why. Uses the application
+ * `Context` (not [LocalContext] directly) since [EntryPointAccessors.fromApplication] requires it.
+ */
+@Composable
+private fun rememberCameraRepository(): CameraRepository {
+    val appContext = LocalContext.current.applicationContext
+    return remember {
+        EntryPointAccessors.fromApplication(appContext, CameraRepositoryEntryPoint::class.java).cameraRepository()
+    }
+}
+
+/**
  * Full-screen skeuomorphic chrome ported from the "Camera App UI v3" design: a graphite body with
  * FLASH/GRID/MODE levers above the viewfinder and a LENS/shutter/exposure deck below it. The
  * [PreviewView] itself is untouched, just re-framed, with a real [ViewfinderGridOverlay] drawn on
  * top of it now. All seven controls now carry real behavior. The former "ZOOM" dial is gone — zoom
  * doesn't exist as a feature in xCamera — replaced by [ManualExposureDial], which drives manual ISO
- * *and* shutter speed via [CameraController.setManualExposure] (Camera2's `CONTROL_AE_MODE_OFF`
+ * *and* shutter speed via [CameraViewModel.setManualExposure] (Camera2's `CONTROL_AE_MODE_OFF`
  * fixes both together, there's no "ISO manual, shutter auto" mode); [ManualExposureTargetSelector]'s
  * two overlay buttons over the viewfinder pick which of the two the dial currently shows/drives.
  * MODE ([ModeLever]) just reflects whether manual mode is currently engaged and lets you leave it
@@ -144,7 +159,7 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val coroutineScope = rememberCoroutineScope()
-    val cameraController = remember { CameraController(context) }
+    val cameraRepository = rememberCameraRepository()
     val previewView = remember {
         PreviewView(context).apply {
             scaleType = PreviewView.ScaleType.FILL_CENTER
@@ -153,15 +168,15 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     var gridEnabled by remember { mutableStateOf(false) }
     var latestGalleryUri by remember { mutableStateOf<Uri?>(null) }
 
-    DisposableEffect(cameraController) {
-        onDispose { cameraController.stopOrientationListener() }
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.stopOrientationListener() }
     }
 
     val galleryPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) {
-            coroutineScope.launch { latestGalleryUri = cameraController.latestGalleryPhotoUri() }
+            coroutineScope.launch { latestGalleryUri = viewModel.latestGalleryPhotoUri() }
         }
     }
 
@@ -170,18 +185,20 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
         val alreadyGranted = permission == null ||
             ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
         if (alreadyGranted) {
-            latestGalleryUri = cameraController.latestGalleryPhotoUri()
+            latestGalleryUri = viewModel.latestGalleryPhotoUri()
         } else {
             galleryPermissionLauncher.launch(permission)
         }
     }
 
     LaunchedEffect(previewView) {
-        viewModel.onLensesLoaded(cameraController.listBackLenses())
+        viewModel.onLensesLoaded(viewModel.listBackLenses())
     }
 
+    // Called directly against the injected repository, not the ViewModel — bindCamera needs
+    // Compose's LifecycleOwner + Preview.SurfaceProvider, which CameraViewModel must never import.
     LaunchedEffect(previewView, uiState.selectedLens) {
-        cameraController.bindCamera(
+        cameraRepository.bindCamera(
             lifecycleOwner = lifecycleOwner,
             surfaceProvider = previewView.surfaceProvider,
             lens = uiState.selectedLens,
@@ -189,14 +206,14 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     }
 
     LaunchedEffect(uiState.flashMode) {
-        cameraController.setFlashMode(uiState.flashMode)
+        viewModel.setFlashMode(uiState.flashMode)
     }
 
     // MANUAL_SENSOR/SENSOR_INFO_SENSITIVITY_RANGE/SENSOR_INFO_EXPOSURE_TIME_RANGE are all
     // per-physical-lens, not per-device, so this re-queries on every lens switch rather than once —
-    // see CameraController.manualIsoCapability.
+    // see CameraViewModel.manualIsoCapability.
     LaunchedEffect(uiState.selectedLens) {
-        viewModel.onManualIsoCapabilityChanged(cameraController.manualIsoCapability(uiState.selectedLens))
+        viewModel.onManualIsoCapabilityChanged(viewModel.manualIsoCapability(uiState.selectedLens))
     }
 
     // The shutter dial's first-touch position (before the user has actually dragged it this manual
@@ -205,7 +222,7 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     // A no-op once that's already resolved (real drag, or an earlier run of this same effect).
     LaunchedEffect(uiState.manualModeEnabled, uiState.manualTarget) {
         if (uiState.manualModeEnabled && uiState.manualTarget == ManualControlTarget.SHUTTER_SPEED) {
-            viewModel.onManualShutterResolutionNeeded(cameraController.currentAutoExposureTimeNs())
+            viewModel.onManualShutterResolutionNeeded(viewModel.currentAutoExposureTimeNs())
         }
     }
 
@@ -218,7 +235,7 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     ) {
         val pinnedIso = uiState.isoStops.getOrNull(uiState.selectedIsoIndex).takeIf { uiState.manualModeEnabled }
         val pinnedShutterNs = uiState.shutterStops.getOrNull(uiState.selectedShutterIndex).takeIf { uiState.manualModeEnabled }
-        cameraController.setManualExposure(pinnedIso, pinnedShutterNs)
+        viewModel.setManualExposure(pinnedIso, pinnedShutterNs)
     }
 
     LaunchedEffect(uiState.captureError) {
@@ -231,13 +248,9 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     fun capture() {
         coroutineScope.launch {
             viewModel.onCaptureStarted()
-            try {
-                val uri = cameraController.takePhoto()
-                viewModel.onPhotoSaved(uri)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                viewModel.onCaptureError(e.message)
+            when (val result = viewModel.takePhoto()) {
+                is Result.Success -> viewModel.onPhotoSaved(result.data)
+                is Result.Error -> viewModel.onCaptureError(result.error.name)
             }
         }
     }
