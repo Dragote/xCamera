@@ -16,6 +16,7 @@ import android.view.TextureView
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,6 +41,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,12 +58,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dragote.xcamera.feature.camera.di.CameraRepositoryEntryPoint
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
-import com.dragote.xcamera.feature.camera.domain.model.ManualControlTarget
 import com.dragote.xcamera.feature.camera.domain.model.formatShutterSpeed
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.feature.camera.presentation.CameraUiState
 import com.dragote.xcamera.feature.camera.presentation.CameraViewModel
 import com.dragote.xcamera.feature.camera.ui.component.ExposingIndicator
+import com.dragote.xcamera.feature.camera.ui.component.ExposureDial
 import com.dragote.xcamera.feature.camera.ui.component.FlashLever
 import com.dragote.xcamera.feature.camera.ui.component.GridLever
 import com.dragote.xcamera.feature.camera.ui.component.IsoDial
@@ -77,8 +79,23 @@ import com.dragote.xcamera.shared.common.domain.result.Result
 import com.dragote.xcamera.shared.designsystem.component.ErrorState
 import com.ramcosta.composedestinations.annotation.Destination
 import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.max
+
+/**
+ * "Quiet window" `ui/CameraScreen`'s post-mode-switch `LaunchedEffect` waits for — [debounce] resets
+ * this timer every time the live auto-ISO/shutter reading actually changes, so pinning only proceeds
+ * once 3A has genuinely stopped moving, not just after a fixed delay that a large EV swing could
+ * easily still be mid-convergence past.
+ */
+private const val ManualExposurePinDelayMs = 300L
+
+/** Hard ceiling on the total wait, in case 3A never quite goes fully quiet (e.g. flicker) — pins on
+ *  whatever the latest reading is once this elapses rather than stalling the mode switch forever. */
+private const val MaxManualPinWaitMs = 1500L
 
 private val requiredPermissions: List<String> = buildList {
     add(Manifest.permission.CAMERA)
@@ -148,24 +165,25 @@ private fun rememberCameraRepository(): CameraRepository {
 
 /**
  * Full-screen skeuomorphic chrome ported from the "Camera App UI v3" design: a graphite body with
- * FLASH/GRID/MODE levers above the viewfinder and a LENS/shutter/ISO/shutter-speed deck below it.
- * The raw [TextureView] preview itself is untouched in layout terms, just re-framed, with a real
- * [ViewfinderGridOverlay] drawn on top of it now. All eight controls now carry real behavior. The
- * former "ZOOM" dial is gone — zoom doesn't exist as a feature in xCamera — replaced by two
- * independent, always-visible physical dials, [IsoDial] and [ShutterSpeedDial], sitting to the right
- * of [LensDial]/[ShutterButton] (which stay paired together on the left) in the bottom deck. Dragging
- * either one immediately drives
- * manual exposure via [CameraViewModel.setManualExposure] (Camera2's `CONTROL_AE_MODE_OFF` fixes ISO
- * and shutter speed together, there's no "ISO manual, shutter auto" mode — see
- * [CameraViewModel.onManualExposureDialDragStarted]). There's no separate overlay control to pick
- * between them anymore, unlike the single shared dial this replaced. MODE ([ModeLever]) just
- * reflects whether manual mode is currently engaged and lets you leave it back to auto.
+ * FLASH/GRID/MODE levers above the viewfinder and a LENS/shutter/exposure deck below it. The raw
+ * [TextureView] preview itself is untouched in layout terms, just re-framed, with a real
+ * [ViewfinderGridOverlay] drawn on top of it now. The former "ZOOM" dial is gone — zoom doesn't exist
+ * as a feature in xCamera. In its place, to the right of [LensDial]/[ShutterButton] (which stay
+ * paired together on the left), the deck shows either a single [ExposureDial] (auto mode — real
+ * Camera2 AE exposure compensation) or the independent [IsoDial]+[ShutterSpeedDial] pair (manual
+ * mode), never both. MODE ([ModeLever]) is now the *only* way to switch between them — tapping it
+ * always calls [CameraViewModel.onManualModeToggled] regardless of current state, which flips
+ * [CameraUiState.manualModeEnabled] (a no-op if the current lens has no manual ISO/shutter stops to
+ * offer). Manual exposure itself still drives through [CameraViewModel.setManualExposure] (Camera2's
+ * `CONTROL_AE_MODE_OFF` fixes ISO and shutter speed together, there's no "ISO manual, shutter auto"
+ * mode).
  *
  * The thumbnail chip shows [latestGalleryUri] (the actual last photo in the device's gallery,
  * queried once permission allows it — see [galleryReadPermission]) until a fresh capture replaces
  * it with [CameraUiState.lastSavedUri]; either way it's just a fallback chain feeding one URI into
  * [ViewfinderThumbnailChip], which owns the image decoding and orientation-reactive rotation.
  */
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
 private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     val context = LocalContext.current
@@ -269,23 +287,62 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
         viewModel.setFlashMode(uiState.flashMode)
     }
 
-    // MANUAL_SENSOR/SENSOR_INFO_SENSITIVITY_RANGE/SENSOR_INFO_EXPOSURE_TIME_RANGE are all
-    // per-physical-lens, not per-device, so this re-queries on every lens switch rather than once —
-    // see CameraViewModel.manualIsoCapability.
+    // MANUAL_SENSOR/SENSOR_INFO_SENSITIVITY_RANGE/SENSOR_INFO_EXPOSURE_TIME_RANGE and
+    // CONTROL_AE_COMPENSATION_RANGE/CONTROL_AE_COMPENSATION_STEP are all per-physical-lens, not
+    // per-device, so both re-query on every lens switch rather than once — see
+    // CameraViewModel.manualIsoCapability/aeCompensationCapability.
     LaunchedEffect(uiState.selectedLens) {
         viewModel.onManualIsoCapabilityChanged(viewModel.manualIsoCapability(uiState.selectedLens))
+        viewModel.onAeCompensationCapabilityChanged(viewModel.aeCompensationCapability(uiState.selectedLens))
     }
 
+    // Manual mode's *visible* dials appear the instant ModeLever is tapped (manualModeEnabled), but
+    // the camera itself doesn't actually lock exposure (CONTROL_AE_MODE_OFF) until 3A has genuinely
+    // gone quiet (manualExposurePinned) — a fixed delay isn't enough here: a small EV nudge settles in
+    // a couple of frames, but a large compensation swing (say auto→manual right after dragging several
+    // stops of EV) can take much longer to actually converge, and a fixed short wait was pinning on a
+    // reading 3A hadn't finished moving toward yet, which is exactly what made the switch visibly jump.
+    // debounce restarts its quiet-window every time either live reading changes, so this only proceeds
+    // once both have genuinely stopped moving; withTimeoutOrNull is a safety net in case 3A never
+    // fully quiets down (e.g. flicker), so this can't stall forever. Cancels itself (via LaunchedEffect's
+    // key) if manual mode is exited again before it fires.
+    LaunchedEffect(uiState.manualModeEnabled) {
+        if (uiState.manualModeEnabled) {
+            withTimeoutOrNull(MaxManualPinWaitMs) {
+                snapshotFlow { uiState.liveAutoIso to uiState.liveAutoExposureTimeNs }
+                    .debounce(ManualExposurePinDelayMs)
+                    .first()
+            }
+            viewModel.onManualExposurePinningReady()
+        }
+    }
+
+    // Prefers the exact raw liveAutoIso/liveAutoExposureTimeNs reading over the rounded-to-nearest-
+    // stop selectedIsoIndex/selectedShutterIndex whenever it's available — rounding to the nearest
+    // standard-ladder stop is itself a visible brightness step, which is exactly the discontinuity
+    // this is trying to avoid on the first pin after a mode switch. Falls back to the ladder value
+    // once the user actually drags a dial themselves (see CameraUiState.liveAutoIso's own doc).
     LaunchedEffect(
-        uiState.manualModeEnabled,
+        uiState.manualExposurePinned,
         uiState.selectedIsoIndex,
         uiState.selectedShutterIndex,
         uiState.isoStops,
         uiState.shutterStops,
+        uiState.liveAutoIso,
+        uiState.liveAutoExposureTimeNs,
     ) {
-        val pinnedIso = uiState.isoStops.getOrNull(uiState.selectedIsoIndex).takeIf { uiState.manualModeEnabled }
-        val pinnedShutterNs = uiState.shutterStops.getOrNull(uiState.selectedShutterIndex).takeIf { uiState.manualModeEnabled }
+        val pinnedIso = (uiState.liveAutoIso ?: uiState.isoStops.getOrNull(uiState.selectedIsoIndex))
+            .takeIf { uiState.manualExposurePinned }
+        val pinnedShutterNs = (uiState.liveAutoExposureTimeNs ?: uiState.shutterStops.getOrNull(uiState.selectedShutterIndex))
+            .takeIf { uiState.manualExposurePinned }
         viewModel.setManualExposure(pinnedIso, pinnedShutterNs)
+    }
+
+    // Only meaningful while auto-exposure is active — Camera2 ignores CONTROL_AE_EXPOSURE_COMPENSATION
+    // under CONTROL_AE_MODE_OFF (see CameraController.buildPreviewRequest), so this stays harmless to
+    // keep pushing during manual mode too rather than needing its own manualModeEnabled guard.
+    LaunchedEffect(uiState.selectedAeCompensationIndex, uiState.aeCompensationStops) {
+        viewModel.setExposureCompensation(uiState.aeCompensationStops.getOrElse(uiState.selectedAeCompensationIndex) { 0 })
     }
 
     LaunchedEffect(uiState.captureError) {
@@ -320,7 +377,7 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                     GridLever(checked = gridEnabled, onToggle = { gridEnabled = !gridEnabled })
                     ModeLever(
                         manual = uiState.manualModeEnabled,
-                        onExitManualMode = viewModel::onManualModeExitRequested,
+                        onToggle = viewModel::onManualModeToggled,
                     )
                 }
                 Seam(modifier = Modifier.padding(top = 16.dp, start = 12.dp, end = 12.dp))
@@ -393,23 +450,14 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                         enabled = !uiState.isCapturing,
                         onCapture = ::capture,
                     )
-                    IsoDial(
-                        isoStops = uiState.isoStops,
-                        selectedIsoIndex = uiState.selectedIsoIndex,
-                        onIsoIndexChange = viewModel::onIsoIndexChanged,
-                        onDragActiveChanged = { active ->
-                            if (active) viewModel.onManualExposureDialDragStarted(ManualControlTarget.ISO)
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
-                    ShutterSpeedDial(
-                        shutterStops = uiState.shutterStops,
-                        selectedShutterIndex = uiState.selectedShutterIndex,
-                        onShutterIndexChange = viewModel::onShutterIndexChanged,
-                        onDragActiveChanged = { active ->
-                            if (active) viewModel.onManualExposureDialDragStarted(ManualControlTarget.SHUTTER_SPEED)
-                        },
-                        modifier = Modifier.weight(1f),
+                    // weight(2f) matches ISO+SHUTTER's combined footprint in manual mode exactly (Lens
+                    // stays weight(1f) either way, so its own width never differs between modes) —
+                    // ExposureOrManualDials handles the 1.5x-width/centered auto-mode sizing and the
+                    // split/merge animation internally, entirely within that one allocated slot.
+                    ExposureOrManualDials(
+                        uiState = uiState,
+                        viewModel = viewModel,
+                        modifier = Modifier.weight(2f),
                     )
                 }
                 Box(
@@ -425,6 +473,43 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                             .background(Color.White.copy(alpha = 0.22f)),
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Auto shows one EXPOSURE dial at 1.5x a single manual dial's width, centered within [modifier]'s
+ * footprint; manual shows the ISO/SHUTTER pair side by side with the deck row's own `16.dp` item
+ * spacing between them. Just a plain [Crossfade] between the two — no split/merge choreography.
+ */
+@Composable
+private fun ExposureOrManualDials(uiState: CameraUiState, viewModel: CameraViewModel, modifier: Modifier = Modifier) {
+    Crossfade(targetState = uiState.manualModeEnabled, modifier = modifier, label = "exposureOrManualDials") { manual ->
+        if (manual) {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                IsoDial(
+                    isoStops = uiState.isoStops,
+                    selectedIsoIndex = uiState.selectedIsoIndex,
+                    onIsoIndexChange = viewModel::onIsoIndexChanged,
+                    modifier = Modifier.weight(1f),
+                )
+                ShutterSpeedDial(
+                    shutterStops = uiState.shutterStops,
+                    selectedShutterIndex = uiState.selectedShutterIndex,
+                    onShutterIndexChange = viewModel::onShutterIndexChanged,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        } else {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                ExposureDial(
+                    aeCompensationStops = uiState.aeCompensationStops,
+                    aeCompensationStepEv = uiState.aeCompensationStepEv,
+                    selectedIndex = uiState.selectedAeCompensationIndex,
+                    onIndexChange = viewModel::onAeCompensationIndexChanged,
+                    modifier = Modifier.fillMaxWidth(0.75f),
+                )
             }
         }
     }

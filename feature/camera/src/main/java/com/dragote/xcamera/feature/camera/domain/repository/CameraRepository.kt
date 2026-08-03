@@ -4,6 +4,7 @@ import android.net.Uri
 import android.util.Size
 import android.view.Surface
 import androidx.lifecycle.LifecycleOwner
+import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
@@ -59,6 +60,8 @@ interface CameraRepository {
 
     fun manualIsoCapability(lens: CameraLens?): ManualIsoCapability?
 
+    fun aeCompensationCapability(lens: CameraLens?): AeCompensationCapability?
+
     /**
      * Continuously reflects auto-exposure's live ISO (via a session-wide Camera2 capture callback)
      * for as long as manual mode is off — meant to be collected for the ISO dial's live rotation
@@ -74,6 +77,8 @@ interface CameraRepository {
     fun observeAutoExposureTime(): Flow<Long?>
 
     fun setManualExposure(iso: Int?, shutterTimeNs: Long?)
+
+    fun setExposureCompensation(value: Int)
 
     suspend fun takePhoto(): Result<Uri, DataError.Local>
 

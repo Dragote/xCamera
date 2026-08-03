@@ -29,6 +29,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
+import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
@@ -119,6 +120,15 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
 
     /** Cached alongside [pendingManualIso] for the same rebind-survival reason. */
     private var pendingManualShutterNs: Long? = null
+
+    /**
+     * Unlike [pendingManualIso]/[pendingManualShutterNs], this has no "absent" state to represent —
+     * `0` is always a valid, meaningful "no compensation" value, so this is non-null rather than
+     * `Int?`. Applied only while auto-exposure (`CONTROL_AE_MODE_ON`) is active — see
+     * [buildPreviewRequest]/[captureStillJpeg] — Camera2 ignores this key entirely under
+     * `CONTROL_AE_MODE_OFF`, so there's nothing to suppress/reset when manual mode is engaged.
+     */
+    private var pendingAeCompensation: Int = 0
 
     /**
      * The most recent auto-AE-converged ISO, continuously observed via this [StateFlow] rather than a
@@ -452,6 +462,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
             builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, previewShutterNs)
         } else {
             builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+            builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, pendingAeCompensation)
         }
 
         return builder.build()
@@ -572,6 +583,29 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     }
 
     /**
+     * Deliberately independent of [manualIsoCapability]/`MANUAL_SENSOR` — exposure compensation
+     * biases plain auto-exposure and is supported on nearly every camera, not just ones with full
+     * manual sensor control. [CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE] being exactly
+     * `[0,0]` is Camera2's own convention for "not supported", which this returns `null` for rather
+     * than a `[0,0]`-range [AeCompensationCapability] a caller could mistake for "supported but with
+     * zero range". [CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP] is a `Rational`, converted to
+     * a plain `Float` here so the domain-facing [AeCompensationCapability] stays Camera2-type-free.
+     */
+    fun aeCompensationCapability(lens: CameraLens?): AeCompensationCapability? {
+        val characteristics = characteristicsFor(lens) ?: return null
+
+        val range = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE) ?: return null
+        if (range.lower == 0 && range.upper == 0) return null
+
+        val step = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP) ?: return null
+
+        return AeCompensationCapability(
+            range = range.lower..range.upper,
+            stepEv = step.toFloat(),
+        )
+    }
+
+    /**
      * Shared by [manualIsoCapability], still-capture orientation/exposure resolution, and preview/
      * still surface sizing — physical-lens characteristics (when [CameraLens.physicalCameraId] is
      * set) instead of the logical camera's own, per the same per-physical-lens reasoning
@@ -610,6 +644,18 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     fun setManualExposure(iso: Int?, shutterTimeNs: Long?) {
         pendingManualIso = iso
         pendingManualShutterNs = shutterTimeNs
+        updatePreviewRepeating()
+    }
+
+    /**
+     * Cached in [pendingAeCompensation] the same way manual exposure is cached above, and
+     * immediately live-updates the preview's repeating request via [updatePreviewRepeating] so the
+     * viewfinder reflects every EXPOSURE-dial tick. Harmless to call while manual mode is active —
+     * [buildPreviewRequest]/[captureStillJpeg] only ever apply this in their `CONTROL_AE_MODE_ON`
+     * branch, so it's simply unused (not cleared/reset) until auto-exposure is active again.
+     */
+    fun setExposureCompensation(value: Int) {
+        pendingAeCompensation = value
         updatePreviewRepeating()
     }
 
@@ -812,6 +858,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
                 set(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterNs)
             } else {
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, pendingAeCompensation)
             }
 
             set(

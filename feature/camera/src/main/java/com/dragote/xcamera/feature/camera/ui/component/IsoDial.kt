@@ -9,12 +9,13 @@ import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome.Accent
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
- * One of two always-visible physical dials in the bottom control deck (see [ShutterSpeedDial] for
- * the other) — split out of a single shared "ManualExposureDial" that used to flip between ISO and
- * shutter speed via an overlay target selector. Camera2's `CONTROL_AE_MODE_OFF` still fixes ISO and
- * shutter speed together (there's no "ISO manual, shutter auto" mode), but the dials themselves are
- * now independent controls: dragging either one immediately engages manual mode for both, via
- * `CameraViewModel.onManualExposureDialDragStarted`.
+ * One of two independent physical dials shown only while manual mode is engaged (see
+ * [ShutterSpeedDial] for the other; `ExposureDial` is what's shown in its place in auto mode). Manual
+ * mode itself is now entered/exited only by tapping `ModeLever` (see
+ * `CameraViewModel.onManualModeToggled`) — dragging this dial no longer has any manual-mode side
+ * effect, since it's only ever reachable once already in manual mode. Camera2's `CONTROL_AE_MODE_OFF`
+ * still fixes ISO and shutter speed together (there's no "ISO manual, shutter auto" mode), which is
+ * why the two dials still share one manual-mode toggle despite being independent controls.
  *
  * When [isoStops] is empty (`CameraViewModel.onManualIsoCapabilityChanged` found no `MANUAL_SENSOR`
  * support, or a supported-but-unaligned range, for the currently selected lens — e.g. an ultra-wide
@@ -26,7 +27,6 @@ fun IsoDial(
     isoStops: List<Int>,
     selectedIsoIndex: Int,
     onIsoIndexChange: (Int) -> Unit,
-    onDragActiveChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val labels = isoStops.map { it.toString() }.ifEmpty { listOf("--") }
@@ -40,7 +40,6 @@ fun IsoDial(
         onIndexChange = if (supported) onIsoIndexChange else { _ -> },
         modifier = modifier,
         accent = Accent,
-        onDragActiveChanged = if (supported) onDragActiveChanged else { _ -> },
     )
 }
 
@@ -52,7 +51,6 @@ private fun IsoDialPreview() {
             isoStops = listOf(100, 200, 400, 800, 1600, 3200),
             selectedIsoIndex = 1,
             onIsoIndexChange = {},
-            onDragActiveChanged = {},
             modifier = Modifier.padding(24.dp),
         )
     }
@@ -66,7 +64,6 @@ private fun IsoDialUnsupportedPreview() {
             isoStops = emptyList(),
             selectedIsoIndex = 0,
             onIsoIndexChange = {},
-            onDragActiveChanged = {},
             modifier = Modifier.padding(24.dp),
         )
     }

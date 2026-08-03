@@ -27,17 +27,15 @@ import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
- * Reflects real manual-exposure state now (see `IsoDial`/`ShutterSpeedDial`/
- * `CameraViewModel.onManualExposureDialDragStarted`) rather than owning its own decorative one —
- * there's no way to *enter* manual mode from this lever itself (only the ISO/shutter-speed dials do
- * that, the instant you start dragging either one), only to leave it: tapping while
- * [manual] is true calls [onExitManualMode] to fall back to auto; tapping while already auto is a
- * no-op, since there's nothing for a bare tap here to turn on. Built directly on [LeverBody] (rather
- * than [CameraLever]) since the A/M lettering needs real Compose text laid on top of the knob, not a
- * [LeverGlyph] baked into the shared Canvas draw.
+ * Reflects real manual-exposure state (see `IsoDial`/`ShutterSpeedDial`/
+ * `CameraViewModel.onManualModeToggled`) rather than owning its own decorative one — a tap always
+ * calls [onToggle] regardless of current state, letting the ViewModel decide whether that means
+ * entering manual (a no-op if neither ISO nor shutter has anything to offer for the current lens) or
+ * leaving it. Built directly on [LeverBody] (rather than [CameraLever]) since the A/M lettering needs
+ * real Compose text laid on top of the knob, not a [LeverGlyph] baked into the shared Canvas draw.
  */
 @Composable
-fun ModeLever(manual: Boolean, onExitManualMode: () -> Unit, modifier: Modifier = Modifier) {
+fun ModeLever(manual: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
     val haptic = LocalHapticFeedback.current
 
     val t by animateFloatAsState(
@@ -58,10 +56,8 @@ fun ModeLever(manual: Boolean, onExitManualMode: () -> Unit, modifier: Modifier 
     ) {
         Box(Modifier.size(LeverTrackWidth, LeverTrackHeight)) {
             LeverBody(t = t, on = on, glyph = LeverGlyph.AutoManual, accent = CameraChrome.Accent) {
-                if (manual) {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onExitManualMode()
-                }
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                onToggle()
             }
             Box(
                 modifier = Modifier
@@ -89,8 +85,8 @@ fun ModeLever(manual: Boolean, onExitManualMode: () -> Unit, modifier: Modifier 
 private fun ModeLeverPreview() {
     XCameraTheme {
         Row(modifier = Modifier.padding(24.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-            ModeLever(manual = false, onExitManualMode = {})
-            ModeLever(manual = true, onExitManualMode = {})
+            ModeLever(manual = false, onToggle = {})
+            ModeLever(manual = true, onToggle = {})
         }
     }
 }
