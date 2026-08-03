@@ -6,6 +6,7 @@ import android.util.Size
 import android.view.Surface
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.data.CameraController
+import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
@@ -77,6 +78,15 @@ class CameraRepositoryImplTest {
     }
 
     @Test
+    fun `aeCompensationCapability delegates to the controller and returns its result`() {
+        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val capability = AeCompensationCapability(range = -6..6, stepEv = 1f / 3f)
+        every { cameraController.aeCompensationCapability(lens) } returns capability
+
+        assertEquals(capability, repository.aeCompensationCapability(lens))
+    }
+
+    @Test
     fun `observeAutoIso delegates to the controller's autoIso flow`() {
         val autoIsoFlow = MutableStateFlow<Int?>(400)
         every { cameraController.autoIso } returns autoIsoFlow
@@ -99,6 +109,15 @@ class CameraRepositoryImplTest {
         repository.setManualExposure(400, 250_000L)
 
         verify { cameraController.setManualExposure(400, 250_000L) }
+    }
+
+    @Test
+    fun `setExposureCompensation delegates to the controller`() {
+        every { cameraController.setExposureCompensation(3) } returns Unit
+
+        repository.setExposureCompensation(3)
+
+        verify { cameraController.setExposureCompensation(3) }
     }
 
     @Test

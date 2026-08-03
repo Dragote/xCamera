@@ -6,6 +6,7 @@ import android.util.Size
 import android.view.Surface
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.data.CameraController
+import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
@@ -38,12 +39,17 @@ class CameraRepositoryImpl @Inject constructor(
     override fun manualIsoCapability(lens: CameraLens?): ManualIsoCapability? =
         cameraController.manualIsoCapability(lens)
 
+    override fun aeCompensationCapability(lens: CameraLens?): AeCompensationCapability? =
+        cameraController.aeCompensationCapability(lens)
+
     override fun observeAutoIso(): Flow<Int?> = cameraController.autoIso
 
     override fun observeAutoExposureTime(): Flow<Long?> = cameraController.autoExposureTimeNs
 
     override fun setManualExposure(iso: Int?, shutterTimeNs: Long?) =
         cameraController.setManualExposure(iso, shutterTimeNs)
+
+    override fun setExposureCompensation(value: Int) = cameraController.setExposureCompensation(value)
 
     override suspend fun takePhoto(): Result<Uri, DataError.Local> = try {
         Result.Success(cameraController.takePhoto())

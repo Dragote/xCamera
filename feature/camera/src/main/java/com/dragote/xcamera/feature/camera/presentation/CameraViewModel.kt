@@ -3,11 +3,12 @@ package com.dragote.xcamera.feature.camera.presentation
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
-import com.dragote.xcamera.feature.camera.domain.model.ManualControlTarget
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
+import com.dragote.xcamera.feature.camera.domain.model.aeCompensationSteps
 import com.dragote.xcamera.feature.camera.domain.model.isoStopsInRange
 import com.dragote.xcamera.feature.camera.domain.model.nearestIsoStopIndex
 import com.dragote.xcamera.feature.camera.domain.model.nearestShutterStopIndex
@@ -38,14 +39,24 @@ class CameraViewModel @Inject constructor(
     val uiState: StateFlow<CameraUiState> = _uiState.asStateFlow()
 
     init {
-        // While auto exposure is driving (manual mode off), keep the ISO dial's displayed index
-        // continuously in sync with whatever ISO the sensor is actually converged on right now —
-        // see CameraRepository.observeAutoIso's own doc. Never fights a user's manual drag.
+        // Gated on manualExposurePinned, not manualModeEnabled — the latter flips the instant ModeLever
+        // is tapped (so the ISO/SHUTTER dials appear right away), but the camera itself keeps running
+        // genuine auto-exposure for a short grace period after that (see
+        // ui/CameraScreen's LaunchedEffect + onManualExposurePinningReady) so these collectors can keep
+        // tracking the sensor's *actual* converged ISO — including whatever EV compensation bias was
+        // just dialed in — instead of freezing on a reading from before 3A had time to settle onto it.
+        // Never fights a user's manual drag either way, since manualExposurePinned is long since true
+        // by the time a user could physically grab a dial that only became visible on the mode switch.
         viewModelScope.launch {
             cameraRepository.observeAutoIso().collect { iso ->
                 val current = _uiState.value
-                if (iso == null || current.manualModeEnabled || current.isoStops.isEmpty()) return@collect
-                _uiState.value = current.copy(selectedIsoIndex = current.isoStops.nearestIsoStopIndex(iso))
+                if (iso == null || current.manualExposurePinned || current.isoStops.isEmpty()) return@collect
+                _uiState.value = current.copy(
+                    selectedIsoIndex = current.isoStops.nearestIsoStopIndex(iso),
+                    // Exact raw value, not the nearest-stop index above — see CameraUiState.liveAutoIso's
+                    // own doc for why pinning needs this instead of the rounded ladder entry.
+                    liveAutoIso = iso,
+                )
             }
         }
 
@@ -54,11 +65,12 @@ class CameraViewModel @Inject constructor(
         viewModelScope.launch {
             cameraRepository.observeAutoExposureTime().collect { exposureTimeNs ->
                 val current = _uiState.value
-                if (exposureTimeNs == null || current.manualModeEnabled || current.shutterStops.isEmpty()) {
+                if (exposureTimeNs == null || current.manualExposurePinned || current.shutterStops.isEmpty()) {
                     return@collect
                 }
                 _uiState.value = current.copy(
                     selectedShutterIndex = current.shutterStops.nearestShutterStopIndex(exposureTimeNs),
+                    liveAutoExposureTimeNs = exposureTimeNs,
                 )
             }
         }
@@ -69,7 +81,12 @@ class CameraViewModel @Inject constructor(
     fun manualIsoCapability(lens: CameraLens?): ManualIsoCapability? =
         cameraRepository.manualIsoCapability(lens)
 
+    fun aeCompensationCapability(lens: CameraLens?): AeCompensationCapability? =
+        cameraRepository.aeCompensationCapability(lens)
+
     fun setManualExposure(iso: Int?, shutterTimeNs: Long?) = cameraRepository.setManualExposure(iso, shutterTimeNs)
+
+    fun setExposureCompensation(value: Int) = cameraRepository.setExposureCompensation(value)
 
     suspend fun takePhoto(): Result<Uri, DataError.Local> = cameraRepository.takePhoto()
 
@@ -134,27 +151,36 @@ class CameraViewModel @Inject constructor(
             isoStops = stops,
             shutterStops = shutterStops,
             manualModeEnabled = current.manualModeEnabled && stillSupported,
+            manualExposurePinned = current.manualExposurePinned && stillSupported,
             selectedIsoIndex = current.selectedIsoIndex.coerceIn(0, (stops.size - 1).coerceAtLeast(0)),
             selectedShutterIndex = current.selectedShutterIndex.coerceIn(0, (shutterStops.size - 1).coerceAtLeast(0)),
         )
     }
 
     /**
-     * ISO and shutter speed now each have their own always-visible physical dial — there's no
-     * separate toggle to enter manual mode, so the instant the user starts dragging *either* one (see
-     * `DialWheel`'s `onDragActiveChanged`), the app enters manual mode. Dragging back to the same
-     * index it started at still counts as engaging manual mode, since the user physically grabbed the
-     * control. A no-op if [target]'s own stop list has nothing to offer (mirrors
-     * [onIsoIndexChanged]/[onShutterIndexChanged]'s own emptiness guard).
+     * Called whenever [CameraLens.physicalCameraId]/[CameraLens.logicalCameraId] AE-compensation
+     * capability is (re-)queried for [CameraUiState.selectedLens] — mirrors
+     * [onManualIsoCapabilityChanged]'s own per-lens-characteristics reasoning
+     * (`CONTROL_AE_COMPENSATION_RANGE`/`CONTROL_AE_COMPENSATION_STEP` are per-physical-lens too).
+     * Unlike ISO/shutter, the previously-selected index is *not* re-clamped onto the new stop list —
+     * a step index means a different actual EV value once the range changes per lens, so re-clamping
+     * would silently change what EV is applied. Resets to whichever entry represents `0` EV instead.
      */
-    fun onManualExposureDialDragStarted(target: ManualControlTarget) {
+    fun onAeCompensationCapabilityChanged(capability: AeCompensationCapability?) {
+        val stops = capability?.let { aeCompensationSteps(it.range) }.orEmpty()
+        _uiState.value = _uiState.value.copy(
+            aeCompensationStops = stops,
+            aeCompensationStepEv = capability?.stepEv ?: 0f,
+            selectedAeCompensationIndex = stops.indexOf(0).coerceAtLeast(0),
+        )
+    }
+
+    fun onAeCompensationIndexChanged(index: Int) {
         val current = _uiState.value
-        val activeStopsEmpty = when (target) {
-            ManualControlTarget.ISO -> current.isoStops.isEmpty()
-            ManualControlTarget.SHUTTER_SPEED -> current.shutterStops.isEmpty()
-        }
-        if (activeStopsEmpty) return
-        _uiState.value = current.copy(manualModeEnabled = true)
+        if (current.aeCompensationStops.isEmpty()) return
+        _uiState.value = current.copy(
+            selectedAeCompensationIndex = index.coerceIn(0, current.aeCompensationStops.lastIndex),
+        )
     }
 
     fun onIsoIndexChanged(index: Int) {
@@ -162,7 +188,9 @@ class CameraViewModel @Inject constructor(
         if (current.isoStops.isEmpty()) return
         _uiState.value = current.copy(
             selectedIsoIndex = index.coerceIn(0, current.isoStops.lastIndex),
-            manualModeEnabled = true,
+            // The user is now driving ISO directly — stop preferring the frozen exact auto reading
+            // from whenever manual mode was entered (see CameraUiState.liveAutoIso's own doc).
+            liveAutoIso = null,
         )
     }
 
@@ -171,12 +199,39 @@ class CameraViewModel @Inject constructor(
         if (current.shutterStops.isEmpty()) return
         _uiState.value = current.copy(
             selectedShutterIndex = index.coerceIn(0, current.shutterStops.lastIndex),
-            manualModeEnabled = true,
+            liveAutoExposureTimeNs = null,
         )
     }
 
-    /** `ModeLever` has no way to *enter* manual (only the dials do) — only to leave it. */
-    fun onManualModeExitRequested() {
-        _uiState.value = _uiState.value.copy(manualModeEnabled = false)
+    /**
+     * `ModeLever` now enters *and* exits manual mode with the same tap (see its own doc comment) —
+     * entering is a no-op if neither ISO nor shutter has anything to offer for [CameraUiState.selectedLens]
+     * (mirrors [onManualIsoCapabilityChanged]'s own `stillSupported` guard).
+     */
+    fun onManualModeToggled() {
+        val current = _uiState.value
+        if (current.manualModeEnabled) {
+            // Leaving manual is instant — no reason to delay handing exposure back to auto.
+            _uiState.value = current.copy(manualModeEnabled = false, manualExposurePinned = false)
+        } else {
+            if (current.isoStops.isEmpty() && current.shutterStops.isEmpty()) return
+            _uiState.value = current.copy(manualModeEnabled = true, manualExposurePinned = false)
+        }
+    }
+
+    /**
+     * Called from `ui/CameraScreen`'s own `LaunchedEffect` a short grace period after
+     * [CameraUiState.manualModeEnabled] turns true — not immediately, so the `init` block's live
+     * auto-exposure collectors keep tracking the sensor's *actual* converged ISO/shutter (including
+     * whatever EV compensation bias was just dialed in via `ExposureDial`) for a beat longer than the
+     * mode toggle itself, instead of freezing [CameraUiState.selectedIsoIndex]/
+     * [CameraUiState.selectedShutterIndex] on a reading from before 3A had time to settle onto the new
+     * brightness — that staleness is what made the auto→manual switch visibly jump. A no-op if manual
+     * mode was already exited again before this fires (e.g. a fast double-tap of `ModeLever`).
+     */
+    fun onManualExposurePinningReady() {
+        val current = _uiState.value
+        if (!current.manualModeEnabled) return
+        _uiState.value = current.copy(manualExposurePinned = true)
     }
 }

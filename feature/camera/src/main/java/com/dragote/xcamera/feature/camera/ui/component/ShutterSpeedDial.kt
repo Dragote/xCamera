@@ -10,12 +10,13 @@ import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome.Accent
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
- * One of two always-visible physical dials in the bottom control deck (see [IsoDial] for the
- * other) — split out of a single shared "ManualExposureDial" that used to flip between ISO and
- * shutter speed via an overlay target selector. Camera2's `CONTROL_AE_MODE_OFF` still fixes ISO and
- * shutter speed together (there's no "ISO manual, shutter auto" mode), but the dials themselves are
- * now independent controls: dragging either one immediately engages manual mode for both, via
- * `CameraViewModel.onManualExposureDialDragStarted`.
+ * One of two independent physical dials shown only while manual mode is engaged (see [IsoDial] for
+ * the other; `ExposureDial` is what's shown in its place in auto mode). Manual mode itself is now
+ * entered/exited only by tapping `ModeLever` (see `CameraViewModel.onManualModeToggled`) — dragging
+ * this dial no longer has any manual-mode side effect, since it's only ever reachable once already in
+ * manual mode. Camera2's `CONTROL_AE_MODE_OFF` still fixes ISO and shutter speed together (there's no
+ * "ISO manual, shutter auto" mode), which is why the two dials still share one manual-mode toggle
+ * despite being independent controls.
  *
  * When [shutterStops] is empty (`CameraViewModel.onManualIsoCapabilityChanged` found no
  * `MANUAL_SENSOR` support, or a supported-but-unaligned exposure-time range, for the currently
@@ -27,7 +28,6 @@ fun ShutterSpeedDial(
     shutterStops: List<Long>,
     selectedShutterIndex: Int,
     onShutterIndexChange: (Int) -> Unit,
-    onDragActiveChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val labels = shutterStops.map { formatShutterSpeed(it) }.ifEmpty { listOf("--") }
@@ -41,7 +41,6 @@ fun ShutterSpeedDial(
         onIndexChange = if (supported) onShutterIndexChange else { _ -> },
         modifier = modifier,
         accent = Accent,
-        onDragActiveChanged = if (supported) onDragActiveChanged else { _ -> },
     )
 }
 
@@ -53,7 +52,6 @@ private fun ShutterSpeedDialPreview() {
             shutterStops = listOf(4_000_000L, 8_000_000L, 16_666_667L, 125_000_000L, 1_000_000_000L),
             selectedShutterIndex = 2,
             onShutterIndexChange = {},
-            onDragActiveChanged = {},
             modifier = Modifier.padding(24.dp),
         )
     }
@@ -67,7 +65,6 @@ private fun ShutterSpeedDialUnsupportedPreview() {
             shutterStops = emptyList(),
             selectedShutterIndex = 0,
             onShutterIndexChange = {},
-            onDragActiveChanged = {},
             modifier = Modifier.padding(24.dp),
         )
     }
