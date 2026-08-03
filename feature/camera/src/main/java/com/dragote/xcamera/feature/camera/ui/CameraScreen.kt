@@ -16,7 +16,9 @@ import android.view.TextureView
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,9 +39,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -47,6 +51,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -79,6 +85,8 @@ import com.dragote.xcamera.shared.common.domain.result.Result
 import com.dragote.xcamera.shared.designsystem.component.ErrorState
 import com.ramcosta.composedestinations.annotation.Destination
 import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -224,6 +232,11 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     }
     var gridEnabled by remember { mutableStateOf(false) }
     var latestGalleryUri by remember { mutableStateOf<Uri?>(null) }
+    // Top-of-window Y and height (px) of the deck below — DialWheel's mechanical shutters use these
+    // to rebuild the deck's own gradient positioned exactly, so a closed dial reads as the deck
+    // showing through rather than an opaque patch sitting on top of it.
+    var deckTopY by remember { mutableFloatStateOf(0f) }
+    var deckHeight by remember { mutableFloatStateOf(0f) }
 
     DisposableEffect(viewModel) {
         onDispose {
@@ -433,6 +446,10 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(CameraChrome.DeckGradient)
+                    .onGloballyPositioned {
+                        deckTopY = it.positionInRoot().y
+                        deckHeight = it.size.height.toFloat()
+                    }
                     .windowInsetsPadding(WindowInsets.navigationBars),
             ) {
                 Row(
@@ -458,6 +475,8 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                         uiState = uiState,
                         viewModel = viewModel,
                         modifier = Modifier.weight(2f),
+                        backgroundTopY = deckTopY,
+                        backgroundHeight = deckHeight,
                     )
                 }
                 Box(
@@ -478,27 +497,97 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     }
 }
 
+// Duration of one leg (close or open) of the mechanical dial transition below.
+private const val MECHANICAL_DIAL_DURATION_MS = 320
+
+// Beat held fully sealed (shutters closed, indistinguishable from the bare deck — see
+// backgroundTopY/backgroundHeight below) between the outgoing dial finishing its close and the
+// incoming one starting its open — without this the close and open read as one continuous motion
+// instead of two distinct mechanical actions.
+private const val MECHANICAL_DIAL_PAUSE_MS = 150L
+
+// How much later the second manual-mode dial (SHUTTER) starts its close/open relative to the first
+// (ISO) — small enough to read as "not quite in lockstep" rather than an obvious relay.
+private const val MECHANICAL_DIAL_STAGGER_MS = 30L
+
 /**
  * Auto shows one EXPOSURE dial at 1.5x a single manual dial's width, centered within [modifier]'s
  * footprint; manual shows the ISO/SHUTTER pair side by side with the deck row's own `16.dp` item
- * spacing between them. Just a plain [Crossfade] between the two — no split/merge choreography.
+ * spacing between them.
+ *
+ * Switching between them plays a mechanical seal/unseal transition (barrel sinks, shutters close —
+ * see `DialWheel`'s `closedFraction`) rather than a plain crossfade: [closedFractionPrimary] drives
+ * whichever single dial leads (EXPOSURE in auto, ISO in manual); in manual mode, [closedFractionShutter]
+ * drives SHUTTER starting [MECHANICAL_DIAL_STAGGER_MS] after it so the two barrels don't move in
+ * perfect lockstep. Once both reach `1` (fully sealed — the shutters paint the exact deck gradient at
+ * their position, via [backgroundTopY]/[backgroundHeight], so sealed reads as "the deck, uninterrupted"
+ * rather than an opaque patch sitting on it — no separate fade-to-invisible needed), which dial set is
+ * composed swaps, holds there for [MECHANICAL_DIAL_PAUSE_MS] (so close and open read as two distinct
+ * mechanical actions rather than one continuous motion), then both animate back down to `0` to unseal
+ * the new set (staggered the same way) — so the outgoing and incoming dials are never on screen, not
+ * even sealed, at the same time.
  */
 @Composable
-private fun ExposureOrManualDials(uiState: CameraUiState, viewModel: CameraViewModel, modifier: Modifier = Modifier) {
-    Crossfade(targetState = uiState.manualModeEnabled, modifier = modifier, label = "exposureOrManualDials") { manual ->
-        if (manual) {
+private fun ExposureOrManualDials(
+    uiState: CameraUiState,
+    viewModel: CameraViewModel,
+    modifier: Modifier = Modifier,
+    backgroundTopY: Float = 0f,
+    backgroundHeight: Float = 0f,
+) {
+    var displayedManual by remember { mutableStateOf(uiState.manualModeEnabled) }
+    val closedFractionPrimary = remember { Animatable(0f) }
+    val closedFractionShutter = remember { Animatable(0f) }
+    // Which leg closedFraction is currently animating — DialWheel needs this because the sink and
+    // shutter bounces are only correct arriving from one particular direction (see `DialWheel`'s
+    // `closing` parameter); this is the one place that unambiguously knows it, since it's the one
+    // issuing the `animateTo` calls below.
+    var closing by remember { mutableStateOf(true) }
+    val targetManual by rememberUpdatedState(uiState.manualModeEnabled)
+
+    LaunchedEffect(Unit) {
+        snapshotFlow { targetManual }.collect { target ->
+            if (target != displayedManual) {
+                closing = true
+                coroutineScope {
+                    launch { closedFractionPrimary.animateTo(1f, tween(MECHANICAL_DIAL_DURATION_MS, easing = LinearEasing)) }
+                    delay(MECHANICAL_DIAL_STAGGER_MS)
+                    closedFractionShutter.animateTo(1f, tween(MECHANICAL_DIAL_DURATION_MS, easing = LinearEasing))
+                }
+                displayedManual = target
+                delay(MECHANICAL_DIAL_PAUSE_MS)
+                closing = false
+                coroutineScope {
+                    launch { closedFractionPrimary.animateTo(0f, tween(MECHANICAL_DIAL_DURATION_MS, easing = LinearEasing)) }
+                    delay(MECHANICAL_DIAL_STAGGER_MS)
+                    closedFractionShutter.animateTo(0f, tween(MECHANICAL_DIAL_DURATION_MS, easing = LinearEasing))
+                }
+            }
+        }
+    }
+
+    Box(modifier = modifier) {
+        if (displayedManual) {
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 IsoDial(
                     isoStops = uiState.isoStops,
                     selectedIsoIndex = uiState.selectedIsoIndex,
                     onIsoIndexChange = viewModel::onIsoIndexChanged,
                     modifier = Modifier.weight(1f),
+                    closedFraction = closedFractionPrimary.value,
+                    closing = closing,
+                    backgroundTopY = backgroundTopY,
+                    backgroundHeight = backgroundHeight,
                 )
                 ShutterSpeedDial(
                     shutterStops = uiState.shutterStops,
                     selectedShutterIndex = uiState.selectedShutterIndex,
                     onShutterIndexChange = viewModel::onShutterIndexChanged,
                     modifier = Modifier.weight(1f),
+                    closedFraction = closedFractionShutter.value,
+                    closing = closing,
+                    backgroundTopY = backgroundTopY,
+                    backgroundHeight = backgroundHeight,
                 )
             }
         } else {
@@ -509,6 +598,10 @@ private fun ExposureOrManualDials(uiState: CameraUiState, viewModel: CameraViewM
                     selectedIndex = uiState.selectedAeCompensationIndex,
                     onIndexChange = viewModel::onAeCompensationIndexChanged,
                     modifier = Modifier.fillMaxWidth(0.75f),
+                    closedFraction = closedFractionPrimary.value,
+                    closing = closing,
+                    backgroundTopY = backgroundTopY,
+                    backgroundHeight = backgroundHeight,
                 )
             }
         }

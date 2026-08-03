@@ -28,6 +28,10 @@ fun IsoDial(
     selectedIsoIndex: Int,
     onIsoIndexChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    closedFraction: Float = 0f,
+    closing: Boolean = true,
+    backgroundTopY: Float = 0f,
+    backgroundHeight: Float = 0f,
 ) {
     val labels = isoStops.map { it.toString() }.ifEmpty { listOf("--") }
     val index = selectedIsoIndex.coerceIn(0, labels.lastIndex)
@@ -40,6 +44,10 @@ fun IsoDial(
         onIndexChange = if (supported) onIsoIndexChange else { _ -> },
         modifier = modifier,
         accent = Accent,
+        closedFraction = closedFraction,
+        closing = closing,
+        backgroundTopY = backgroundTopY,
+        backgroundHeight = backgroundHeight,
     )
 }
 

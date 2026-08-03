@@ -29,6 +29,10 @@ fun ExposureDial(
     selectedIndex: Int,
     onIndexChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    closedFraction: Float = 0f,
+    closing: Boolean = true,
+    backgroundTopY: Float = 0f,
+    backgroundHeight: Float = 0f,
 ) {
     val labels = aeCompensationStops.map { formatEvCompensation(it, aeCompensationStepEv) }.ifEmpty { listOf("--") }
     val index = selectedIndex.coerceIn(0, labels.lastIndex)
@@ -41,6 +45,10 @@ fun ExposureDial(
         onIndexChange = if (supported) onIndexChange else { _ -> },
         modifier = modifier,
         accent = Accent,
+        closedFraction = closedFraction,
+        closing = closing,
+        backgroundTopY = backgroundTopY,
+        backgroundHeight = backgroundHeight,
     )
 }
 

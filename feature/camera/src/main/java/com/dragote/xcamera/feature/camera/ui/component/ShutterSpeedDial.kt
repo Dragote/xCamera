@@ -29,6 +29,10 @@ fun ShutterSpeedDial(
     selectedShutterIndex: Int,
     onShutterIndexChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    closedFraction: Float = 0f,
+    closing: Boolean = true,
+    backgroundTopY: Float = 0f,
+    backgroundHeight: Float = 0f,
 ) {
     val labels = shutterStops.map { formatShutterSpeed(it) }.ifEmpty { listOf("--") }
     val index = selectedShutterIndex.coerceIn(0, labels.lastIndex)
@@ -41,6 +45,10 @@ fun ShutterSpeedDial(
         onIndexChange = if (supported) onShutterIndexChange else { _ -> },
         modifier = modifier,
         accent = Accent,
+        closedFraction = closedFraction,
+        closing = closing,
+        backgroundTopY = backgroundTopY,
+        backgroundHeight = backgroundHeight,
     )
 }
 

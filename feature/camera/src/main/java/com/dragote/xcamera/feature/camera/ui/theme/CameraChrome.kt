@@ -56,11 +56,16 @@ object CameraChrome {
         1f to Color(0xFF0D0C0B),
     )
 
-    val DeckGradient = Brush.verticalGradient(
+    // Exposed separately (not just baked into DeckGradient below) so anything drawn *on top of* the
+    // deck — e.g. DialWheel's shutters — can rebuild this exact gradient with its own startY/endY,
+    // positioned to land on precisely the colors the real deck would show through at that point.
+    val DeckGradientStops: Array<Pair<Float, Color>> = arrayOf(
         0f to Color(0xFF211F1D),
         0.6f to Color(0xFF191817),
         1f to Color(0xFF100F0E),
     )
+
+    val DeckGradient = Brush.verticalGradient(*DeckGradientStops)
 
     val ViewfinderBezelGradient = Brush.verticalGradient(
         0f to Color(0xFF131210),

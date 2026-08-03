@@ -23,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -42,12 +43,16 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
@@ -61,6 +66,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome.Accent
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 import kotlinx.coroutines.Job
@@ -102,6 +108,23 @@ fun DialWheel(
     modifier: Modifier = Modifier,
     accent: Color = Color(0xFF625D51),
     onDragActiveChanged: (Boolean) -> Unit = {},
+    /** 0 = fully open (normal interactive dial), 1 = fully sealed shut. Driven externally (see
+     *  `ExposureOrManualDials` in `CameraScreen`) to play a mechanical close/open transition when
+     *  swapping between auto and manual dial sets — animating this from 1 back to 0 replays the
+     *  close exactly in reverse, since every phase below is a pure function of this one value. */
+    closedFraction: Float = 0f,
+    /** Which direction [closedFraction] is currently animating — the sink and shutter-contact bounces
+     *  below only make sense arriving from one particular side (barrel overshoots *into* the sink on
+     *  the way down but *past fully risen* on the way up; shutters get a contact bounce closing but
+     *  not opening), so this can't be inferred from [closedFraction] alone. Ignored while
+     *  [closedFraction] is 0 or 1 (nothing animating). */
+    closing: Boolean = true,
+    /** Top-of-window Y (px) and height (px) of the deck this dial sits on — lets the shutters rebuild
+     *  `CameraChrome.DeckGradientStops` positioned so it lands on exactly the colors the real deck
+     *  would show through at each point, instead of an approximation. 0f/0f (the default) falls back
+     *  to a flat color — used by callers (previews, `LensDial`) that don't sit on that deck at all. */
+    backgroundTopY: Float = 0f,
+    backgroundHeight: Float = 0f,
 ) {
     val vibrator = rememberDialVibrator()
     val scope = rememberCoroutineScope()
@@ -138,6 +161,16 @@ fun DialWheel(
         }
     }
 
+    // Fades the value/label text out fast at the very start of closing (and, since this is a pure
+    // function of closedFraction, back in at the very end of opening) — the barrel/shutter motion is
+    // what carries the rest of the transition.
+    val textAlpha = 1f - segmentProgress(closedFraction, 0f, TEXT_FADE_END)
+    val sealed = closedFraction > 0f
+
+    // This canvas's own top-of-window Y — combined with [backgroundTopY]/[backgroundHeight], lets the
+    // shutter brush below be positioned to reproduce exactly what the deck looks like at this spot.
+    var canvasTopY by remember { mutableFloatStateOf(0f) }
+
     Column(
         modifier = modifier.width(107.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -153,7 +186,7 @@ fun DialWheel(
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Bold,
             fontSize = 13.sp,
-            color = Color(0xFFDED7C3),
+            color = Color(0xFFDED7C3).copy(alpha = textAlpha),
             textAlign = TextAlign.Center,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -164,11 +197,14 @@ fun DialWheel(
             Modifier
                 .fillMaxWidth()
                 .height(117.dp)
+                .onGloballyPositioned { canvasTopY = it.positionInRoot().y }
                 .semantics {
                     role = Role.Button
                     contentDescription = "$label: ${values[index.coerceIn(0, maxIndex)]}"
                 }
-                .pointerInput(maxIndex, stepPx) {
+                .then(
+                    // A sealing/sealed dial can't be dragged — no pointerInput at all while closed.
+                    if (sealed) Modifier else Modifier.pointerInput(maxIndex, stepPx) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         onDragActiveChanged(true)
@@ -221,11 +257,75 @@ fun DialWheel(
                         onDragActiveChanged(false)
                         dragging = false
                     }
-                }
+                    },
+                )
         ) {
-            drawWell()
-            drawBarrel(accent, drum, stepPx, valueRange = 0..maxIndex)
-            drawCenterCarets(accent)
+            // Clips *everything* below — well, barrel, shutters — to the well's own rounded
+            // silhouette, so the shutters (plain axis-aligned rects) never square off the well's
+            // rounded corners as they slide in: whatever part of a shutter would fall outside the
+            // rounded outline is simply cut away, leaving a rounded corner behind at every step.
+            val wellPath = Path().apply {
+                addRoundRect(RoundRect(Rect(Offset.Zero, size), CornerRadius(WellCornerRadius.toPx())))
+            }
+            clipPath(wellPath) {
+                // The well's inset shadow (top) / highlight (bottom) stay at full strength the whole
+                // time — no time-based fade. They only need to disappear where the (fully opaque)
+                // shutters have physically covered the well, which happens for free from draw order
+                // below; the still-open gap between the shutters is a genuinely recessed slot for as
+                // long as it's visible, so the shadow legitimately belongs there until covered.
+                drawWell()
+
+                // Raw (linear) progress through each phase, before the shaping below — still what
+                // gates whether a phase's drawing happens at all.
+                val rawSinkT = segmentProgress(closedFraction, 0f, SINK_END)
+                val rawPanelsT = segmentProgress(closedFraction, SINK_END, 1f)
+
+                // The barrel drops in sharply, hits bottom, and rebounds back up a touch before
+                // settling — same shape mirrored for arriving back at fully risen when opening. sinkT
+                // can briefly dip a hair below 0 or above 1 by design; that's the rebound — lerp/
+                // scale/translate below all handle that fine.
+                val sinkT = if (closing) {
+                    bounceArrival(rawSinkT, SINK_BOUNCE_AMOUNT)
+                } else {
+                    1f - bounceArrival(1f - rawSinkT, SINK_BOUNCE_AMOUNT)
+                }
+                translate(0f, lerp(0f, 4.dp.toPx(), sinkT)) {
+                    scale(lerp(1f, 0.80f, sinkT)) {
+                        drawBarrel(accent, drum, stepPx, valueRange = 0..maxIndex)
+                    }
+                }
+                if (sinkT > 0f) drawRect(Color.Black.copy(alpha = 0.45f * sinkT.coerceIn(0f, 1f)))
+
+                drawCenterCarets(accent)
+
+                // Shutters slide in from both edges once the barrel has finished sinking, sealing the
+                // whole well/barrel/carets under a pair of deck-colored panels — covers the rest of
+                // the range through c = 1, no separate seam/point flourish at the end. Closing eases
+                // in (slow start, fast finish) with a barely-there contact bounce right as they meet;
+                // opening eases the same way in reverse but settles cleanly, no bounce.
+                val panelsT = if (closing) {
+                    easeOutBack(rawPanelsT.pow(SHUTTER_EASE_IN_POWER), SHUTTER_CONTACT_BOUNCE_OVERSHOOT)
+                } else {
+                    1f - (1f - rawPanelsT).pow(SHUTTER_EASE_IN_POWER)
+                }
+                if (panelsT > 0f) {
+                    // Rebuilds CameraChrome's exact deck gradient, shifted so its startY/endY land on
+                    // this canvas at the same colors the real deck would show at this position — the
+                    // deck's origin, in this canvas's own local coordinates, is however far above (or
+                    // below) our own top the deck's top is.
+                    val shutterBrush = if (backgroundHeight > 0f) {
+                        val deckOriginLocalY = backgroundTopY - canvasTopY
+                        Brush.verticalGradient(
+                            *CameraChrome.DeckGradientStops,
+                            startY = deckOriginLocalY,
+                            endY = deckOriginLocalY + backgroundHeight,
+                        )
+                    } else {
+                        SolidColor(FallbackShutterColor)
+                    }
+                    drawShutterPanels(panelsT.coerceAtLeast(0f), shutterBrush)
+                }
+            }
         }
 
         Text(
@@ -234,13 +334,75 @@ fun DialWheel(
             fontWeight = FontWeight.SemiBold,
             fontSize = 10.sp,
             letterSpacing = 2.sp,
-            color = Color(0xFF877F6C),
+            color = Color(0xFF877F6C).copy(alpha = textAlpha),
             textAlign = TextAlign.Center,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
         )
     }
+}
+
+/* ── Mechanical open/close (closedFraction) ─────────────────────────────── */
+
+// Sequential phase boundaries along closedFraction's 0..1 range: sink, then shutters, then seam.
+// Each phase reuses the tail end of the previous one's boundary as its own start, so the whole
+// 0..1 sweep is covered with no gaps and no overlap.
+private const val SINK_END = 0.30f
+private const val TEXT_FADE_END = 0.18f
+
+// How pronounced the barrel's arrival bounce / the shutters' contact bounce are.
+private const val SINK_BOUNCE_AMOUNT = 0.16f
+private const val SHUTTER_CONTACT_BOUNCE_OVERSHOOT = 0.45f
+
+// Shapes the shutters' approach/retreat as slow-start-fast-finish rather than linear; higher = more
+// pronounced slow start.
+private const val SHUTTER_EASE_IN_POWER = 2.6f
+
+/** Fast ease-out approach that reaches exactly 1 at `t = riseFraction`, then a single decaying
+ *  rebound *away* from 1 (down to `1 - bounceAmount` at the midpoint of what's left) before settling
+ *  back at exactly 1 by `t = 1`. Models hitting a solid stop and bouncing off it before coming to
+ *  rest, rather than sailing past the stop — the arrival itself is a hard, distinct contact, not a
+ *  smooth glide-through. */
+private fun bounceArrival(t: Float, bounceAmount: Float, riseFraction: Float = 0.55f): Float {
+    val ct = t.coerceIn(0f, 1f)
+    return if (ct <= riseFraction) {
+        val u = ct / riseFraction
+        1f - (1f - u) * (1f - u)
+    } else {
+        val u = (ct - riseFraction) / (1f - riseFraction)
+        1f - bounceAmount * sin(PI.toFloat() * u)
+    }
+}
+
+/** Classic "back" overshoot ease: rises to 1 and, right at the end, briefly overshoots past it before
+ *  settling exactly at 1 — reads as arriving with a little extra momentum that gets reined back in.
+ *  [overshoot] controls how pronounced the bump is; small values keep it barely noticeable. */
+private fun easeOutBack(t: Float, overshoot: Float): Float {
+    val u = t - 1f
+    return 1f + (overshoot + 1f) * u * u * u + overshoot * u * u
+}
+
+// Fallback flat tone for callers that don't pass backgroundTopY/backgroundHeight (previews,
+// LensDial) — those never actually drive closedFraction > 0, so this brush never gets drawn for
+// them in practice; it's just here so the function stays total.
+private val FallbackShutterColor = Color(0xFF191817)
+
+/** Linearly remaps [value] from [start]..[end] into a 0..1 progress, coerced at both ends — used to
+ *  carve closedFraction's single 0..1 sweep into this dial's sequential animation phases. */
+private fun segmentProgress(value: Float, start: Float, end: Float): Float =
+    ((value - start) / (end - start)).coerceIn(0f, 1f)
+
+private fun lerp(start: Float, stop: Float, fraction: Float): Float = start + (stop - start) * fraction
+
+/** Two panels sliding in from the left/right edges to meet at center, at [progress] (0 = fully open,
+ *  1 = fully met) — covers everything drawn before it in the same [DrawScope]. Painted with [brush]
+ *  rather than a flat color so they can reproduce the real deck's gradient at this exact position
+ *  (see the call site in `DialWheel`), reading as the surrounding body rather than an opaque patch. */
+private fun DrawScope.drawShutterPanels(progress: Float, brush: Brush) {
+    val halfWidth = size.width / 2f * progress
+    drawRect(brush, topLeft = Offset(0f, 0f), size = Size(halfWidth, size.height))
+    drawRect(brush, topLeft = Offset(size.width - halfWidth, 0f), size = Size(halfWidth, size.height))
 }
 
 private const val STEP_DP = 64f // finger travel (dp) required to fire one click
@@ -331,8 +493,12 @@ private fun DrawScope.drawCenterCarets(accent: Color) {
 
 /* ── Well ────────────────────────────────────────────────────────────────── */
 
+// Shared with the outer clip in DialWheel's Canvas block, so the well's own rounding and the clip
+// that shutters get cut to always agree.
+internal val WellCornerRadius = 19.dp
+
 internal fun DrawScope.drawWell() {
-    val r = CornerRadius(19.dp.toPx())
+    val r = CornerRadius(WellCornerRadius.toPx())
     val rect = RoundRect(Rect(Offset.Zero, size), r)
 
     // 0 1px 0 rgba(255,255,255,.1) — outer bottom edge highlight
