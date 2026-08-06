@@ -9,6 +9,7 @@ import com.dragote.xcamera.feature.camera.data.CameraController
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
+import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
@@ -59,6 +60,17 @@ class CameraRepositoryImpl @Inject constructor(
     override fun setZebraAnalysisEnabled(enabled: Boolean) = cameraController.setZebraAnalysisEnabled(enabled)
 
     override fun observeZebraMask(): Flow<ZebraMask?> = cameraController.zebraMask
+
+    override fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability? =
+        cameraController.manualFocusCapability(lens)
+
+    override fun triggerAutoFocus(displayXFraction: Float, displayYFraction: Float) =
+        cameraController.triggerAutoFocus(displayXFraction, displayYFraction)
+
+    override fun setManualFocusDistance(distanceDiopters: Float?) =
+        cameraController.setManualFocusDistance(distanceDiopters)
+
+    override fun observeFocusDistance(): Flow<Float?> = cameraController.autoFocusDistanceDiopters
 
     override suspend fun takePhoto(): Result<Uri, DataError.Local> = try {
         Result.Success(cameraController.takePhoto())

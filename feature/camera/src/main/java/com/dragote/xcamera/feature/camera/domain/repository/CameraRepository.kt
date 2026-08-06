@@ -7,6 +7,7 @@ import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
+import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.shared.common.domain.result.DataError
@@ -108,6 +109,22 @@ interface CameraRepository {
      * show.
      */
     fun observeZebraMask(): Flow<ZebraMask?>
+
+    fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability?
+
+    /** Tap-to-focus (issue #21) — see `CameraController.triggerAutoFocus`'s own doc. */
+    fun triggerAutoFocus(displayXFraction: Float, displayYFraction: Float)
+
+    /** Hold-and-rotate manual focus ring (issue #21) — see `CameraController.setManualFocusDistance`'s
+     *  own doc. */
+    fun setManualFocusDistance(distanceDiopters: Float?)
+
+    /**
+     * Continuously reflects continuous-AF's live converged focus distance (diopters) for as long as
+     * manual focus isn't locked — mirrors [observeAutoIso]/[observeAutoExposureTime]. Emits `null`
+     * before the first frame lands, or on a lens with no [manualFocusCapability].
+     */
+    fun observeFocusDistance(): Flow<Float?>
 
     suspend fun takePhoto(): Result<Uri, DataError.Local>
 

@@ -9,6 +9,7 @@ import com.dragote.xcamera.feature.camera.data.CameraController
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
+import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.shared.common.domain.result.DataError
@@ -196,5 +197,40 @@ class CameraRepositoryImplTest {
         val result = repository.takePhoto()
 
         assertEquals(Result.Error(DataError.Local.UNKNOWN), result)
+    }
+
+    @Test
+    fun `manualFocusCapability delegates to the controller and returns its result`() {
+        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val capability = ManualFocusCapability(maxFocusDistanceDiopters = 10f)
+        every { cameraController.manualFocusCapability(lens) } returns capability
+
+        assertEquals(capability, repository.manualFocusCapability(lens))
+    }
+
+    @Test
+    fun `triggerAutoFocus delegates to the controller`() {
+        every { cameraController.triggerAutoFocus(0.4f, 0.7f) } returns Unit
+
+        repository.triggerAutoFocus(0.4f, 0.7f)
+
+        verify { cameraController.triggerAutoFocus(0.4f, 0.7f) }
+    }
+
+    @Test
+    fun `setManualFocusDistance delegates to the controller`() {
+        every { cameraController.setManualFocusDistance(2.5f) } returns Unit
+
+        repository.setManualFocusDistance(2.5f)
+
+        verify { cameraController.setManualFocusDistance(2.5f) }
+    }
+
+    @Test
+    fun `observeFocusDistance delegates to the controller's autoFocusDistanceDiopters flow`() {
+        val focusDistanceFlow = MutableStateFlow<Float?>(3.5f)
+        every { cameraController.autoFocusDistanceDiopters } returns focusDistanceFlow
+
+        assertEquals(focusDistanceFlow, repository.observeFocusDistance())
     }
 }

@@ -4,6 +4,7 @@ import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.ImageFormat
+import android.graphics.Rect
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
@@ -12,6 +13,7 @@ import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
+import android.hardware.camera2.params.MeteringRectangle
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
 import android.media.Image
@@ -33,8 +35,11 @@ import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
+import com.dragote.xcamera.feature.camera.domain.model.FocusRegionSizeFraction
+import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
+import com.dragote.xcamera.feature.camera.domain.model.displayFractionToSensorFraction
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -198,6 +203,28 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     private var pendingManualShutterNs: Long? = null
 
     /**
+     * Non-null while a manual-focus hold gesture (issue #21) is active or has just released — locks
+     * `CONTROL_AF_MODE_OFF` + `LENS_FOCUS_DISTANCE` at this exact value on both the preview's repeating
+     * request ([buildPreviewRequest]) and the next still capture ([captureStillJpeg]), same "cached
+     * pending value, reapplied on every request" pattern as [pendingManualIso]/[pendingManualShutterNs].
+     * Per the issue's own "release-to-lock" requirement, releasing the hold does *not* clear this —
+     * only [triggerAutoFocus] (a fresh tap) does, resuming continuous AF. Survives a rebind the same
+     * way manual exposure does.
+     */
+    private var pendingManualFocusDiopters: Float? = null
+
+    /**
+     * Set by [triggerAutoFocus], applied on every subsequent request while [pendingManualFocusDiopters]
+     * is `null` — Camera2's `CONTROL_AF_TRIGGER_START` only needs to be sent once (see
+     * [triggerAutoFocus]'s own one-off [CameraCaptureSession.capture] call), but the *region* itself
+     * needs to keep being set on every following request for continuous AF to keep tracking around it,
+     * exactly like [pendingAeCompensation] being reapplied on every auto-exposure request. Reset to
+     * `null` on a lens switch (see [bindCamera]) since it's expressed in the *previous* lens's own
+     * `SENSOR_INFO_ACTIVE_ARRAY_SIZE` coordinate space, not portable across lenses.
+     */
+    private var pendingAfRegion: MeteringRectangle? = null
+
+    /**
      * Unlike [pendingManualIso]/[pendingManualShutterNs], this has no "absent" state to represent —
      * `0` is always a valid, meaningful "no compensation" value, so this is non-null rather than
      * `Int?`. Applied only while auto-exposure (`CONTROL_AE_MODE_ON`) is active — see
@@ -229,12 +256,24 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     val autoExposureTimeNs: StateFlow<Long?> = _autoExposureTimeNs.asStateFlow()
 
     /**
+     * Mirrors [autoIso]/[autoExposureTimeNs] for `LENS_FOCUS_DISTANCE` — the most recent
+     * continuous-AF-converged focus distance (diopters), continuously observed rather than a one-shot
+     * pull. Read synchronously by `CameraViewModel`'s own tracking the same way, and used by
+     * `ui/component/FocusRing`'s hold gesture as the starting point a rotation adjusts *from* (see
+     * [manualFocusDistanceForRotation][com.dragote.xcamera.feature.camera.domain.model.manualFocusDistanceForRotation]).
+     */
+    private val _autoFocusDistanceDiopters = MutableStateFlow<Float?>(null)
+    val autoFocusDistanceDiopters: StateFlow<Float?> = _autoFocusDistanceDiopters.asStateFlow()
+
+    /**
      * While manual mode is active ([pendingManualIso]/[pendingManualShutterNs] non-null), the
      * preview's repeating request carries a forced capped-manual exposure (see
      * [buildPreviewRequest]), not a genuine AE convergence value — so this must skip updating
      * [_autoIso]/[_autoExposureTimeNs] in that case, exactly as it did before live manual preview
      * feedback was reintroduced, otherwise the ISO/shutter dials' live auto-tracking would both get
-     * fed a bogus "auto" value that's actually just whatever the preview cap forced.
+     * fed a bogus "auto" value that's actually just whatever the preview cap forced. AF and AE are
+     * independent axes (issue #21) — [pendingManualFocusDiopters] gates [_autoFocusDistanceDiopters]
+     * on its own, regardless of whichever exposure mode is active.
      */
     private val previewCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureCompleted(
@@ -242,9 +281,13 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
             request: CaptureRequest,
             result: TotalCaptureResult,
         ) {
-            if (pendingManualIso != null || pendingManualShutterNs != null) return
-            result.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { _autoExposureTimeNs.value = it }
-            result.get(CaptureResult.SENSOR_SENSITIVITY)?.let { _autoIso.value = it }
+            if (pendingManualIso == null && pendingManualShutterNs == null) {
+                result.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { _autoExposureTimeNs.value = it }
+                result.get(CaptureResult.SENSOR_SENSITIVITY)?.let { _autoIso.value = it }
+            }
+            if (pendingManualFocusDiopters == null) {
+                result.get(CaptureResult.LENS_FOCUS_DISTANCE)?.let { _autoFocusDistanceDiopters.value = it }
+            }
         }
     }
 
@@ -436,6 +479,11 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     ) {
         ensureBackgroundThread()
         isBound = true
+        // pendingAfRegion is expressed in the *previous* lens's own SENSOR_INFO_ACTIVE_ARRAY_SIZE
+        // coordinate space — not portable to a different lens, see pendingAfRegion's own doc.
+        // pendingManualFocusDiopters intentionally survives a lens switch (same reasoning as
+        // pendingManualIso/pendingManualShutterNs) since diopters aren't lens-active-array-relative.
+        if (currentLens != lens) pendingAfRegion = null
         currentLens = lens
         this.previewViewWidth = previewViewWidth
         this.previewViewHeight = previewViewHeight
@@ -681,7 +729,36 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
             builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, pendingAeCompensation)
         }
 
+        applyFocusSettings(builder)
+
         return builder.build()
+    }
+
+    /**
+     * AF is an independent axis from AE (see [buildPreviewRequest]'s own AE branch just above) — issue
+     * #21's tap-to-focus and hold-and-rotate manual focus ring both drive `CONTROL_AF_MODE`/
+     * `LENS_FOCUS_DISTANCE`/`CONTROL_AF_REGIONS`, orthogonal to whichever ISO/shutter mode is active.
+     * Shared between [buildPreviewRequest] and [captureStillJpeg] so a locked manual focus distance
+     * (or an active tap-to-focus region) applies identically to both the live preview and the actual
+     * capture, the same "one cache, reapplied to every request" pattern
+     * [pendingManualIso]/[pendingManualShutterNs] already use for exposure. A no-op (falls through to
+     * the request template's own AF default) on a lens with no [manualFocusCapability] — i.e. a
+     * fixed-focus lens, where there's no `LENS_FOCUS_DISTANCE` control surface to touch at all.
+     */
+    private fun applyFocusSettings(builder: CaptureRequest.Builder) {
+        val focusCapability = manualFocusCapability(currentLens) ?: return
+
+        val manualDistance = pendingManualFocusDiopters
+        if (manualDistance != null) {
+            builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+            builder.set(
+                CaptureRequest.LENS_FOCUS_DISTANCE,
+                manualDistance.coerceIn(0f, focusCapability.maxFocusDistanceDiopters),
+            )
+        } else {
+            builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+            pendingAfRegion?.let { builder.set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(it)) }
+        }
     }
 
     /**
@@ -717,6 +794,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         previewImageReader = null
         _autoExposureTimeNs.value = null
         _autoIso.value = null
+        _autoFocusDistanceDiopters.value = null
         _zebraMask.value = null
         if (hadDevice) {
             withTimeoutOrNull(CameraCloseTimeoutMs) { deviceClosedSignal?.await() }
@@ -884,6 +962,104 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
             range = range.lower..range.upper,
             stepEv = step.toFloat(),
         )
+    }
+
+    /**
+     * `null` return means "hide/no-op both tap-to-focus and the manual focus ring for this lens"
+     * (issue #21) — [CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE] being exactly `0` is
+     * Camera2's own convention for a fixed-focus lens with no `LENS_FOCUS_DISTANCE` control surface at
+     * all, distinct from [manualIsoCapability]'s `MANUAL_SENSOR` gate — a lens can support one without
+     * the other. Per-physical-lens, not per-device, mirroring [manualIsoCapability]'s own reasoning
+     * (an ultra-wide/tele auxiliary lens can have a different minimum focus distance, or none, even
+     * when the main lens supports full manual focus). Pure static [CameraCharacteristics] lookup,
+     * independent of whether a camera is bound yet.
+     */
+    fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability? {
+        val characteristics = characteristicsFor(lens) ?: return null
+        val minimumFocusDistance = characteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE)
+            ?: return null
+        if (minimumFocusDistance <= 0f) return null
+        return ManualFocusCapability(maxFocusDistanceDiopters = minimumFocusDistance)
+    }
+
+    /**
+     * Standard Camera2 tap-to-focus: [displayXFraction]/[displayYFraction] (`0f..1f`, top-left origin)
+     * are a tap point expressed as a fraction of the *displayed* viewfinder — converted into the
+     * sensor's own active-array coordinate space via [displayFractionToSensorFraction] (see that
+     * function's own doc for the approximation it makes), then built into a
+     * [MeteringRectangle] centered on the tap ([FocusRegionSizeFraction] of the active array's own
+     * width/height) and pushed as `CONTROL_AF_REGIONS` alongside a one-off
+     * `CONTROL_AF_TRIGGER_START` capture — the standard Camera2 idiom for "focus here now". Always
+     * clears [pendingManualFocusDiopters] first — a tap always resumes continuous AF, overriding
+     * whatever manual focus lock a previous hold gesture may have left in place, matching the issue's
+     * own "until the next tap or hold" wording. A no-op on a lens with no [manualFocusCapability], or
+     * before a session is actually open (nothing to focus yet).
+     */
+    fun triggerAutoFocus(displayXFraction: Float, displayYFraction: Float) {
+        val device = cameraDevice ?: return
+        val session = captureSession ?: return
+        val surface = previewImageReader?.surface ?: return
+        val characteristics = characteristicsFor(currentLens) ?: return
+        manualFocusCapability(currentLens) ?: return
+        val activeArray = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
+
+        pendingManualFocusDiopters = null
+
+        val (sensorXFraction, sensorYFraction) =
+            displayFractionToSensorFraction(displayXFraction, displayYFraction, analysisRotationDegrees)
+        val region = afRegionAround(sensorXFraction, sensorYFraction, activeArray)
+        pendingAfRegion = region
+
+        try {
+            val triggerRequest = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                addTarget(surface)
+                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(region))
+                set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_START)
+            }.build()
+            session.capture(triggerRequest, null, backgroundHandler)
+        } catch (e: CameraAccessException) {
+            // Session/device is mid-teardown — nothing to recover, the next bind starts fresh.
+        } catch (e: IllegalStateException) {
+            // Session already closed — same as above.
+        }
+
+        // The one-off trigger capture above only fires CONTROL_AF_TRIGGER_START once (repeating it on
+        // every frame would keep re-triggering a fresh AF search instead of letting it converge); the
+        // repeating request still needs the *region* itself reapplied on every subsequent frame for
+        // continuous AF to keep tracking around it — see applyFocusSettings.
+        updatePreviewRepeating()
+    }
+
+    /** [FocusRegionSizeFraction] of the active array's own width/height, centered on
+     *  ([centerXFraction], [centerYFraction]) and clamped within the array's bounds. */
+    private fun afRegionAround(centerXFraction: Float, centerYFraction: Float, activeArray: Rect): MeteringRectangle {
+        val regionWidth = (activeArray.width() * FocusRegionSizeFraction).roundToInt().coerceAtLeast(1)
+        val regionHeight = (activeArray.height() * FocusRegionSizeFraction).roundToInt().coerceAtLeast(1)
+        val centerX = (activeArray.left + centerXFraction * activeArray.width()).roundToInt()
+        val centerY = (activeArray.top + centerYFraction * activeArray.height()).roundToInt()
+        val left = (centerX - regionWidth / 2).coerceIn(activeArray.left, (activeArray.right - 1).coerceAtLeast(activeArray.left))
+        val top = (centerY - regionHeight / 2).coerceIn(activeArray.top, (activeArray.bottom - 1).coerceAtLeast(activeArray.top))
+        val right = (left + regionWidth).coerceAtMost(activeArray.right)
+        val bottom = (top + regionHeight).coerceAtMost(activeArray.bottom)
+        return MeteringRectangle(left, top, (right - left).coerceAtLeast(1), (bottom - top).coerceAtLeast(1), MeteringRectangle.METERING_WEIGHT_MAX)
+    }
+
+    /**
+     * Drives the hold-and-rotate manual focus ring (issue #21): [distanceDiopters] non-`null` locks
+     * `CONTROL_AF_MODE_OFF` + `LENS_FOCUS_DISTANCE` at that value on both the preview's repeating
+     * request and the next still capture (see [applyFocusSettings]) — called on every rotation tick
+     * while the ring is held, and left at whatever value it was last called with once the finger
+     * releases (this function itself is never called with `null` on release — "commit/lock" per the
+     * issue is simply *not clearing* [pendingManualFocusDiopters], the same way manual exposure has no
+     * separate "commit" step beyond having already set the pending value). `null` resumes continuous
+     * AF — only [triggerAutoFocus] (a fresh tap) does that today. Immediately live-updates the
+     * preview's repeating request via [updatePreviewRepeating], mirroring [setManualExposure].
+     */
+    fun setManualFocusDistance(distanceDiopters: Float?) {
+        pendingManualFocusDiopters = distanceDiopters
+        updatePreviewRepeating()
     }
 
     /**
@@ -1153,6 +1329,8 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                 set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, pendingAeCompensation)
             }
+
+            applyFocusSettings(this)
 
             set(
                 CaptureRequest.FLASH_MODE,
