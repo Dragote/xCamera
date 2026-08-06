@@ -37,6 +37,7 @@ import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.FocusRegionSizeFraction
+import com.dragote.xcamera.feature.camera.domain.model.HistogramData
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
@@ -192,6 +193,10 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
 
     /** Throttles zebra classification in [previewImageAvailableListener] — see [ZebraThrottleMs]. */
     private var lastZebraClassifyUptimeMs = 0L
+
+    /** Throttles histogram classification in [previewImageAvailableListener] — see
+     *  [HistogramThrottleMs]. */
+    private var lastHistogramClassifyUptimeMs = 0L
 
     private var currentLens: CameraLens? = null
     private var boundLifecycle: Lifecycle? = null
@@ -414,6 +419,16 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     val zebraMask: StateFlow<ZebraMask?> = _zebraMask.asStateFlow()
 
     /**
+     * Live tonal histogram for the viewfinder — unlike [_zebraMask] this has no enable/disable gate
+     * (see [classifyHistogramIfDue]'s own doc): it's classified on every throttled preview frame for
+     * the entire time the preview is running, only ever `null` before the first frame lands or right
+     * after [closeCameraAndSessionLocked] tears the session down. Its own [StateFlow] for the same
+     * "high-frequency data doesn't belong in one shared UI-state object" reasoning [_zebraMask] docs.
+     */
+    private val _histogramData = MutableStateFlow<HistogramData?>(null)
+    val histogramData: StateFlow<HistogramData?> = _histogramData.asStateFlow()
+
+    /**
      * Guards against exceeding the preview [ImageReader]'s `maxImages` (2) — confirmed on-device this
      * is a real, not just theoretical, risk: `renderer.start()`'s EGL/shader setup takes long enough
      * that several frames' worth of `onImageAvailable` callbacks can fire before the render thread has
@@ -455,6 +470,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         val image = reader.acquireLatestImage() ?: return@OnImageAvailableListener
 
         if (zebraAnalysisEnabled) classifyZebraIfDue(image)
+        classifyHistogramIfDue(image)
 
         val listener = previewFrameListener
         val handler = previewFrameHandler
@@ -505,6 +521,31 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
             rows = if (quarterTurn) ZebraGridColumns else ZebraGridRows,
         )
         _zebraMask.value = rawMask.rotatedBy(analysisRotationDegrees)
+    }
+
+    /**
+     * Mirrors [classifyZebraIfDue]'s own throttle-skip reasoning, just unconditionally (no
+     * [zebraAnalysisEnabled]-style gate — see [_histogramData]'s own doc for why a histogram is
+     * always-on) and at a lighter [HistogramThrottleMs] floor, since this now runs for the entire
+     * preview lifetime rather than only during a drag burst. No rotation handling needed here (unlike
+     * [classifyZebraIfDue]'s [ZebraMask.rotatedBy]) — [HistogramData] is a plain bucket-count
+     * distribution with no spatial layout to rotate, so however the raw buffer's rows/columns are
+     * oriented makes no difference to the result.
+     */
+    private fun classifyHistogramIfDue(image: Image) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastHistogramClassifyUptimeMs < HistogramThrottleMs) return
+        lastHistogramClassifyUptimeMs = now
+
+        val plane = image.planes[0]
+        _histogramData.value = HistogramData.fromLumaPlane(
+            buffer = plane.buffer,
+            rowStride = plane.rowStride,
+            pixelStride = plane.pixelStride,
+            width = image.width,
+            height = image.height,
+            bucketCount = HistogramBucketCount,
+        )
     }
 
     /**
@@ -896,6 +937,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         _autoFocusDistanceDiopters.value = null
         _afConvergenceState.value = null
         _zebraMask.value = null
+        _histogramData.value = null
         if (hadDevice) {
             withTimeoutOrNull(CameraCloseTimeoutMs) { deviceClosedSignal?.await() }
         }
@@ -1544,6 +1586,17 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
 
         /** Floor between real [ZebraMask] recomputations — see [classifyZebraIfDue]. */
         const val ZebraThrottleMs = 66L
+
+        /** Floor between real [HistogramData] recomputations — see [classifyHistogramIfDue]. Lighter
+         *  than [ZebraThrottleMs] (10fps vs. 15fps) since this runs for the entire preview lifetime
+         *  rather than only during a dial-drag burst. */
+        const val HistogramThrottleMs = 100L
+
+        /** Bucket count for [HistogramData.fromLumaPlane] — deliberately coarse (not the domain
+         *  default of 64) to match `HistogramOverlay`'s dot-per-bucket rendering, where each bucket
+         *  gets its own visibly distinct baseline dot rather than blurring into a dense continuous
+         *  bar chart. */
+        const val HistogramBucketCount = 16
 
         /** Bounded safety net for [pendingAfModeAuto] — see that field's own doc. Generous relative to
          *  how fast a triggered AF scan actually settles on-device (observed well under a second on a

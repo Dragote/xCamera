@@ -8,6 +8,7 @@ import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
+import com.dragote.xcamera.feature.camera.domain.model.HistogramData
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
@@ -51,6 +52,15 @@ class CameraViewModel @Inject constructor(
      */
     val zebraMask: StateFlow<ZebraMask?> =
         cameraRepository.observeZebraMask().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * Deliberately its own [StateFlow], not a [CameraUiState] field, for the same reason [zebraMask]
+     * is — unlike [zebraMask] this has no enable/disable gate at all (see
+     * `CameraRepository.observeHistogramData`'s own doc): it streams for the entire lifetime of the
+     * preview, always-on per issue #29.
+     */
+    val histogramData: StateFlow<HistogramData?> =
+        cameraRepository.observeHistogramData().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
      * Deliberately its own [StateFlow], not a [CameraUiState] field, for the same reason [zebraMask]

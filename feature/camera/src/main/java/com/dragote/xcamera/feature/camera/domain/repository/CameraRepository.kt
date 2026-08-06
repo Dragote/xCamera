@@ -8,6 +8,7 @@ import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
+import com.dragote.xcamera.feature.camera.domain.model.HistogramData
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
@@ -110,6 +111,15 @@ interface CameraRepository {
      * show.
      */
     fun observeZebraMask(): Flow<ZebraMask?>
+
+    /**
+     * Live luma histogram for the viewfinder, meant to be collected directly by whatever renders the
+     * histogram overlay — mirrors [observeZebraMask] except there's no corresponding enable/disable
+     * gate: histogram classification is always-on for the lifetime of the preview (see
+     * `CameraController.classifyHistogramIfDue`'s own doc). Emits `null` whenever there's nothing to
+     * show yet (e.g. right after a fresh bind).
+     */
+    fun observeHistogramData(): Flow<HistogramData?>
 
     fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability?
 

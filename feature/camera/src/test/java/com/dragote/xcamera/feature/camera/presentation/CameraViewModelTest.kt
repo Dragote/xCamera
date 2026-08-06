@@ -7,6 +7,7 @@ import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
+import com.dragote.xcamera.feature.camera.domain.model.HistogramData
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraClipping
@@ -37,6 +38,7 @@ class CameraViewModelTest {
     private lateinit var autoIsoFlow: MutableStateFlow<Int?>
     private lateinit var autoExposureTimeFlow: MutableStateFlow<Long?>
     private lateinit var zebraMaskFlow: MutableStateFlow<ZebraMask?>
+    private lateinit var histogramDataFlow: MutableStateFlow<HistogramData?>
     private lateinit var focusDistanceFlow: MutableStateFlow<Float?>
     private lateinit var afConvergenceStateFlow: MutableStateFlow<AfConvergenceState?>
     private lateinit var viewModel: CameraViewModel
@@ -47,11 +49,13 @@ class CameraViewModelTest {
         autoIsoFlow = MutableStateFlow(null)
         autoExposureTimeFlow = MutableStateFlow(null)
         zebraMaskFlow = MutableStateFlow(null)
+        histogramDataFlow = MutableStateFlow(null)
         focusDistanceFlow = MutableStateFlow(null)
         afConvergenceStateFlow = MutableStateFlow(null)
         every { cameraRepository.observeAutoIso() } returns autoIsoFlow
         every { cameraRepository.observeAutoExposureTime() } returns autoExposureTimeFlow
         every { cameraRepository.observeZebraMask() } returns zebraMaskFlow
+        every { cameraRepository.observeHistogramData() } returns histogramDataFlow
         every { cameraRepository.observeFocusDistance() } returns focusDistanceFlow
         every { cameraRepository.observeAfConvergenceState() } returns afConvergenceStateFlow
         viewModel = CameraViewModel(cameraRepository)
@@ -801,6 +805,17 @@ class CameraViewModelTest {
             val mask = ZebraMask(columns = 1, rows = 1, cells = listOf(ZebraClipping.SHADOW))
             zebraMaskFlow.value = mask
             assertEquals(mask, awaitItem())
+        }
+    }
+
+    @Test
+    fun `histogramData mirrors the repository's flow`() = runTest {
+        viewModel.histogramData.test {
+            assertEquals(null, awaitItem())
+
+            val data = HistogramData(listOf(1, 2, 3))
+            histogramDataFlow.value = data
+            assertEquals(data, awaitItem())
         }
     }
 
