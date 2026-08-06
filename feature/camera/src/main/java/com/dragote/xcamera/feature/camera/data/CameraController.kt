@@ -1596,7 +1596,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
          *  default of 64) to match `HistogramOverlay`'s dot-per-bucket rendering, where each bucket
          *  gets its own visibly distinct baseline dot rather than blurring into a dense continuous
          *  bar chart. */
-        const val HistogramBucketCount = 20
+        const val HistogramBucketCount = 16
 
         /** Bounded safety net for [pendingAfModeAuto] — see that field's own doc. Generous relative to
          *  how fast a triggered AF scan actually settles on-device (observed well under a second on a
