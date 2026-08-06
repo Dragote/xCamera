@@ -35,6 +35,14 @@ object CameraChrome {
 
     val Accent = Color(0xFFE8632A)
 
+    /** [com.dragote.xcamera.feature.camera.domain.model.ZebraClipping.SHADOW] stripe tint — crushed
+     *  blacks read as cool blue, matching the reference app's own convention. */
+    val ZebraShadow = Color(0xFF3B82F6)
+
+    /** [com.dragote.xcamera.feature.camera.domain.model.ZebraClipping.HIGHLIGHT] stripe tint — blown
+     *  whites read as hot orange-red, matching the reference app's own convention. */
+    val ZebraHighlight = Color(0xFFE8432A)
+
     /** CSS `ease` — used for simple opacity/color cross-fades (glyphs, track tint). */
     val EaseStandard = CubicBezierEasing(0.25f, 0.1f, 0.25f, 1f)
 

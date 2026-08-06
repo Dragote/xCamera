@@ -7,6 +7,8 @@ import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
+import com.dragote.xcamera.feature.camera.domain.model.ZebraClipping
+import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
@@ -32,6 +34,7 @@ class CameraViewModelTest {
     private lateinit var cameraRepository: CameraRepository
     private lateinit var autoIsoFlow: MutableStateFlow<Int?>
     private lateinit var autoExposureTimeFlow: MutableStateFlow<Long?>
+    private lateinit var zebraMaskFlow: MutableStateFlow<ZebraMask?>
     private lateinit var viewModel: CameraViewModel
 
     @Before
@@ -39,8 +42,10 @@ class CameraViewModelTest {
         cameraRepository = mockk()
         autoIsoFlow = MutableStateFlow(null)
         autoExposureTimeFlow = MutableStateFlow(null)
+        zebraMaskFlow = MutableStateFlow(null)
         every { cameraRepository.observeAutoIso() } returns autoIsoFlow
         every { cameraRepository.observeAutoExposureTime() } returns autoExposureTimeFlow
+        every { cameraRepository.observeZebraMask() } returns zebraMaskFlow
         viewModel = CameraViewModel(cameraRepository)
     }
 
@@ -768,6 +773,26 @@ class CameraViewModelTest {
 
             viewModel.onAeCompensationIndexChanged(2)
             expectNoEvents()
+        }
+    }
+
+    @Test
+    fun `setZebraAnalysisEnabled delegates to the repository`() {
+        every { cameraRepository.setZebraAnalysisEnabled(true) } returns Unit
+
+        viewModel.setZebraAnalysisEnabled(true)
+
+        verify { cameraRepository.setZebraAnalysisEnabled(true) }
+    }
+
+    @Test
+    fun `zebraMask mirrors the repository's flow`() = runTest {
+        viewModel.zebraMask.test {
+            assertEquals(null, awaitItem())
+
+            val mask = ZebraMask(columns = 1, rows = 1, cells = listOf(ZebraClipping.SHADOW))
+            zebraMaskFlow.value = mask
+            assertEquals(mask, awaitItem())
         }
     }
 }

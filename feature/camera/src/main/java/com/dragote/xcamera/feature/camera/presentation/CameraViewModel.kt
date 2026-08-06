@@ -8,6 +8,7 @@ import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
+import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.model.aeCompensationSteps
 import com.dragote.xcamera.feature.camera.domain.model.isoStopsInRange
 import com.dragote.xcamera.feature.camera.domain.model.nearestIsoStopIndex
@@ -18,8 +19,10 @@ import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import javax.inject.Inject
@@ -37,6 +40,15 @@ class CameraViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(CameraUiState())
     val uiState: StateFlow<CameraUiState> = _uiState.asStateFlow()
+
+    /**
+     * Deliberately its own [StateFlow], not a [CameraUiState] field — this can emit at up to ~15fps
+     * while a dial is being dragged (see `CameraController.zebraMask`'s own doc), and folding it into
+     * the single [uiState] object would force every composable reading [uiState] to recompose on every
+     * one of those emissions, not just whatever actually renders the zebra overlay.
+     */
+    val zebraMask: StateFlow<ZebraMask?> =
+        cameraRepository.observeZebraMask().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     init {
         // Gated on manualExposurePinned, not manualModeEnabled — the latter flips the instant ModeLever
@@ -87,6 +99,8 @@ class CameraViewModel @Inject constructor(
     fun setManualExposure(iso: Int?, shutterTimeNs: Long?) = cameraRepository.setManualExposure(iso, shutterTimeNs)
 
     fun setExposureCompensation(value: Int) = cameraRepository.setExposureCompensation(value)
+
+    fun setZebraAnalysisEnabled(enabled: Boolean) = cameraRepository.setZebraAnalysisEnabled(enabled)
 
     suspend fun takePhoto(): Result<Uri, DataError.Local> = cameraRepository.takePhoto()
 

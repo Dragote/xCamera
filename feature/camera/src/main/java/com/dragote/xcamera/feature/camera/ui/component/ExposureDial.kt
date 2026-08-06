@@ -21,6 +21,12 @@ import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
  * own "not supported" convention, or no capability data yet for the currently selected lens), this
  * falls back to a single inert "--" detent, matching [LensDial]/[IsoDial]'s own placeholder
  * convention.
+ *
+ * [onDragActiveChanged] mirrors [IsoDial]/[ShutterSpeedDial]'s own — `ui/CameraScreen` wires it to
+ * `CameraViewModel.setZebraAnalysisEnabled` too, so the zebra-stripe clipping overlay (issue #6) also
+ * lights up while dragging this dial, not just the manual-mode pair. Note this only actually shows
+ * anything on a lens that *also* has `MANUAL_SENSOR` (see `CameraController.zebraBitmap`'s own doc) —
+ * a lens with AE compensation but no manual sensor support has no zebra capture to drive it.
  */
 @Composable
 fun ExposureDial(
@@ -29,6 +35,7 @@ fun ExposureDial(
     selectedIndex: Int,
     onIndexChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    onDragActiveChanged: (Boolean) -> Unit = {},
     closedFraction: Float = 0f,
     closing: Boolean = true,
     backgroundTopY: Float = 0f,
@@ -45,6 +52,7 @@ fun ExposureDial(
         onIndexChange = if (supported) onIndexChange else { _ -> },
         modifier = modifier,
         accent = Accent,
+        onDragActiveChanged = onDragActiveChanged,
         closedFraction = closedFraction,
         closing = closing,
         backgroundTopY = backgroundTopY,

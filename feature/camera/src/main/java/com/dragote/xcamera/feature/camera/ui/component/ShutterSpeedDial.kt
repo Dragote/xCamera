@@ -18,6 +18,10 @@ import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
  * "ISO manual, shutter auto" mode), which is why the two dials still share one manual-mode toggle
  * despite being independent controls.
  *
+ * [onDragActiveChanged] is [DialWheel]'s own drag-active signal, passed straight through — see
+ * [IsoDial]'s own doc for how `ui/CameraScreen` uses this to drive the zebra-stripe clipping overlay
+ * (issue #6).
+ *
  * When [shutterStops] is empty (`CameraViewModel.onManualIsoCapabilityChanged` found no
  * `MANUAL_SENSOR` support, or a supported-but-unaligned exposure-time range, for the currently
  * selected lens), this falls back to a single inert "--" detent, matching [LensDial]'s own
@@ -29,6 +33,7 @@ fun ShutterSpeedDial(
     selectedShutterIndex: Int,
     onShutterIndexChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    onDragActiveChanged: (Boolean) -> Unit = {},
     closedFraction: Float = 0f,
     closing: Boolean = true,
     backgroundTopY: Float = 0f,
@@ -45,6 +50,7 @@ fun ShutterSpeedDial(
         onIndexChange = if (supported) onShutterIndexChange else { _ -> },
         modifier = modifier,
         accent = Accent,
+        onDragActiveChanged = onDragActiveChanged,
         closedFraction = closedFraction,
         closing = closing,
         backgroundTopY = backgroundTopY,
