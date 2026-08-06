@@ -2,11 +2,16 @@ package com.dragote.xcamera.feature.camera.ui
 
 import android.Manifest
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.SurfaceTexture
 import android.net.Uri
 import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.MediaStore
 import android.view.TextureView
 import android.widget.Toast
@@ -16,6 +21,8 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,11 +52,16 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -60,13 +72,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dragote.xcamera.feature.camera.di.CameraRepositoryEntryPoint
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
+import com.dragote.xcamera.feature.camera.domain.model.FocusPeakingMask
 import com.dragote.xcamera.feature.camera.domain.model.formatShutterSpeed
+import com.dragote.xcamera.feature.camera.domain.model.manualFocusDistanceForRotation
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.feature.camera.presentation.CameraUiState
 import com.dragote.xcamera.feature.camera.presentation.CameraViewModel
 import com.dragote.xcamera.feature.camera.ui.component.ExposingIndicator
 import com.dragote.xcamera.feature.camera.ui.component.ExposureDial
 import com.dragote.xcamera.feature.camera.ui.component.FlashLever
+import com.dragote.xcamera.feature.camera.ui.component.FocusRing
 import com.dragote.xcamera.feature.camera.ui.component.GridLever
 import com.dragote.xcamera.feature.camera.ui.component.IsoDial
 import com.dragote.xcamera.feature.camera.ui.component.LensDial
@@ -83,12 +98,18 @@ import com.dragote.xcamera.shared.common.domain.result.Result
 import com.dragote.xcamera.shared.designsystem.component.ErrorState
 import com.ramcosta.composedestinations.annotation.Destination
 import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.PI
+import kotlin.math.atan2
+import kotlin.math.hypot
 
 /**
  * "Quiet window" `ui/CameraScreen`'s post-mode-switch `LaunchedEffect` waits for — [debounce] resets
@@ -240,6 +261,18 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     var deckTopY by remember { mutableFloatStateOf(0f) }
     var deckHeight by remember { mutableFloatStateOf(0f) }
 
+    // Manual focus ring state (issue #21) — center is fixed at hold-start (see FocusGestureModifier
+    // below) and never repositioned by rotation; null means idle (FocusRing plays its own fade-out).
+    var focusRingCenter by remember { mutableStateOf<Offset?>(null) }
+    var focusRingRotationDegrees by remember { mutableFloatStateOf(0f) }
+    var focusLoupeBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    var focusPeakingMask by remember { mutableStateOf<FocusPeakingMask?>(null) }
+    // Snapshotted once at hold-start (see onHoldStart below), not re-read on every rotation tick —
+    // CameraController stops emitting fresh AF-converged readings the moment the first rotation locks
+    // a manual distance (see CameraUiState.liveFocusDistanceDiopters's own doc), so this is the one
+    // correct "distance a rotation adjusts from" for the gesture's whole duration.
+    var focusHoldStartDistance by remember { mutableFloatStateOf(0f) }
+
     DisposableEffect(viewModel) {
         onDispose {
             viewModel.stopOrientationListener()
@@ -314,6 +347,7 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     LaunchedEffect(uiState.selectedLens) {
         viewModel.onManualIsoCapabilityChanged(viewModel.manualIsoCapability(uiState.selectedLens))
         viewModel.onAeCompensationCapabilityChanged(viewModel.aeCompensationCapability(uiState.selectedLens))
+        viewModel.onManualFocusCapabilityChanged(viewModel.manualFocusCapability(uiState.selectedLens))
     }
 
     // Manual mode's *visible* dials appear the instant ModeLever is tapped (manualModeEnabled), but
@@ -382,6 +416,28 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
         }
     }
 
+    // Periodically refreshes the manual-focus ring's loupe crop + focus-peaking highlight (issue #21)
+    // for as long as the hold gesture is active — mirrors the zebra overlay's own "only pay this cost
+    // while actually engaged" pattern. TextureView.getBitmap() snapshots exactly what's currently drawn
+    // onto its own SurfaceTexture, which CameraPreviewRenderer draws the live preview into via GLES, so
+    // this reflects real, current preview content rather than a separate capture path. Runs on the main
+    // thread (a View method) but the actual crop + luma/edge-detection work is pushed onto
+    // Dispatchers.Default so it doesn't block composition/input while the ring is held.
+    LaunchedEffect(focusRingCenter != null) {
+        val center = focusRingCenter ?: return@LaunchedEffect
+        while (isActive) {
+            val fullFrame = runCatching { textureView.getBitmap() }.getOrNull()
+            if (fullFrame != null) {
+                val crop = withContext(Dispatchers.Default) { cropLoupeBitmap(fullFrame, center) }
+                if (crop != null) {
+                    focusLoupeBitmap = crop.asImageBitmap()
+                    focusPeakingMask = withContext(Dispatchers.Default) { focusPeakingMaskFromBitmap(crop) }
+                }
+            }
+            delay(LoupeRefreshIntervalMs)
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(CameraChrome.BodyGradient).grainTexture(alpha = 0.35f)) {
         Column(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)) {
@@ -413,15 +469,72 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                     .background(CameraChrome.ViewfinderBezelGradient)
                     .padding(9.dp),
             ) {
+                val latestUiState by rememberUpdatedState(uiState)
+                val viewConfiguration = LocalViewConfiguration.current
+                val focusVibrator = rememberFocusVibrator()
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .clip(RoundedCornerShape(16.dp))
-                        .background(CameraChrome.ViewfinderInsetColor),
+                        .background(CameraChrome.ViewfinderInsetColor)
+                        .then(
+                            // No gesture detector at all on a lens with no manual-focus capability —
+                            // both tap-to-focus and the hold-and-rotate ring are hidden/no-op together
+                            // (issue #21's own capability gate). Keyed on manualFocusSupported alone
+                            // (not the whole uiState) so an in-progress gesture never gets cancelled
+                            // mid-flight by an unrelated state change — see latestUiState above for how
+                            // the gesture still reads fresh values without restarting on every change.
+                            if (uiState.manualFocusSupported) {
+                                Modifier.pointerInput(Unit) {
+                                    detectFocusGestures(
+                                        viewConfigurationLongPressMs = viewConfiguration.longPressTimeoutMillis,
+                                        viewConfigurationTouchSlopPx = viewConfiguration.touchSlop,
+                                        onTap = { position ->
+                                            if (size.width <= 0 || size.height <= 0) return@detectFocusGestures
+                                            viewModel.triggerAutoFocus(
+                                                displayXFraction = (position.x / size.width).coerceIn(0f, 1f),
+                                                displayYFraction = (position.y / size.height).coerceIn(0f, 1f),
+                                            )
+                                        },
+                                        onHoldStart = { center ->
+                                            focusRingCenter = center
+                                            focusRingRotationDegrees = 0f
+                                            focusLoupeBitmap = null
+                                            focusPeakingMask = null
+                                            focusHoldStartDistance = latestUiState.liveFocusDistanceDiopters ?: 0f
+                                            focusHaptic(focusVibrator)
+                                        },
+                                        onRotate = { totalRotationRadians ->
+                                            focusRingRotationDegrees = Math.toDegrees(totalRotationRadians.toDouble()).toFloat()
+                                            val newDistance = manualFocusDistanceForRotation(
+                                                startDistanceDiopters = focusHoldStartDistance,
+                                                rotationRadians = totalRotationRadians,
+                                                maxFocusDistanceDiopters = latestUiState.maxFocusDistanceDiopters,
+                                            )
+                                            viewModel.setManualFocusDistance(newDistance)
+                                        },
+                                        onHoldEnd = {
+                                            focusRingCenter = null
+                                            focusHaptic(focusVibrator)
+                                        },
+                                    )
+                                }
+                            } else {
+                                Modifier
+                            },
+                        ),
                 ) {
                     AndroidView(factory = { textureView }, modifier = Modifier.fillMaxSize())
                     ViewfinderGridOverlay(visible = gridEnabled, modifier = Modifier.fillMaxSize())
                     ZebraOverlay(mask = zebraMask, modifier = Modifier.fillMaxSize())
+                    FocusRing(
+                        center = focusRingCenter,
+                        rotationDegrees = focusRingRotationDegrees,
+                        loupeImage = focusLoupeBitmap,
+                        peakingMask = focusPeakingMask,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                     ExposingIndicator(
                         visible = uiState.isCapturing,
                         durationLabel = if (uiState.manualModeEnabled) {
@@ -653,3 +766,194 @@ private fun Seam(modifier: Modifier = Modifier) {
 // SurfaceTexture-backed Surface Camera2 writes into directly, so there's no Matrix for this file to
 // compute at all anymore. CameraPreviewRenderer computes the equivalent crop/rotation transform
 // itself, as a GL matrix, from each frame's actually-delivered Image dimensions — see its own doc.
+
+/* ── Manual focus (issue #21): tap-to-focus + hold-and-rotate ring gesture ─────────────────────── */
+
+/** Radius (px) a pointer must be from the fixed hold center before its angle starts contributing to
+ *  rotation — right at the center, a tiny finger jitter's angle is essentially noise (an infinitesimal
+ *  radius amplifies to a huge, meaningless angular swing), so rotation only starts accumulating once
+ *  the finger has genuinely moved out into a circular path around the ring's own center. */
+private const val MinRotationRadiusPx = 24f
+
+/**
+ * Distinguishes a simple tap (short press, negligible movement) from a long-press-and-hold (issue
+ * #21's manual focus ring) on the same gesture, mirroring `DialWheel`'s own `awaitEachGesture` +
+ * `awaitFirstDown` structure. A drag that moves past [viewConfigurationTouchSlopPx] before the
+ * long-press threshold elapses is neither — it's ignored outright (this screen has no pan/swipe
+ * gesture over the viewfinder for this to conflict with).
+ *
+ * While holding, [onRotate] is called on every pointer move with the *total* signed rotation (radians,
+ * positive clockwise) accumulated around the fixed hold center since the hold began — computed by
+ * unwrapping the raw `atan2` angle across the +-pi wrap boundary on every step, the same "accumulate
+ * deltas, not absolute angles" approach true continuous rotation gestures need (an absolute angle
+ * alone can't distinguish one full turn from zero turns). [MinRotationRadiusPx] freezes accumulation
+ * while the pointer is too close to the center for its angle to be meaningful.
+ */
+private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectFocusGestures(
+    viewConfigurationLongPressMs: Long,
+    viewConfigurationTouchSlopPx: Float,
+    onTap: (Offset) -> Unit,
+    onHoldStart: (Offset) -> Unit,
+    onRotate: (totalRotationRadians: Float) -> Unit,
+    onHoldEnd: () -> Unit,
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        val downTimeMs = System.currentTimeMillis()
+        var pointer = down
+        var moved = false
+        var isLongPress = false
+
+        while (true) {
+            val event = awaitPointerEvent()
+            val change = event.changes.firstOrNull { it.id == pointer.id } ?: break
+            if (!change.pressed) {
+                pointer = change
+                break
+            }
+            if ((change.position - down.position).getDistance() > viewConfigurationTouchSlopPx) moved = true
+            if (!moved && System.currentTimeMillis() - downTimeMs >= viewConfigurationLongPressMs) {
+                isLongPress = true
+                pointer = change
+                break
+            }
+            pointer = change
+        }
+
+        when {
+            isLongPress -> {
+                onHoldStart(down.position)
+                var lastAngle = 0f
+                var angleInitialized = false
+                var totalRotationRadians = 0f
+
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull { it.id == pointer.id } ?: break
+                    if (!change.pressed) break
+
+                    val dx = change.position.x - down.position.x
+                    val dy = change.position.y - down.position.y
+                    if (hypot(dx, dy) >= MinRotationRadiusPx) {
+                        val angle = atan2(dy, dx)
+                        if (angleInitialized) {
+                            var delta = angle - lastAngle
+                            if (delta > PI.toFloat()) delta -= (2f * PI.toFloat())
+                            if (delta < -PI.toFloat()) delta += (2f * PI.toFloat())
+                            totalRotationRadians += delta
+                            onRotate(totalRotationRadians)
+                        }
+                        lastAngle = angle
+                        angleInitialized = true
+                    }
+                    change.consume()
+                    pointer = change
+                }
+                onHoldEnd()
+            }
+            !moved && pointer.pressed.not() -> onTap(down.position)
+            else -> Unit // moved past touch slop without reaching the long-press threshold — ignored.
+        }
+    }
+}
+
+/**
+ * Bypasses `View.performHapticFeedback` the same way `DialWheel`'s own tick haptic does (see its own
+ * doc for why a plain `vibrator.vibrate(effect)` alone isn't enough on modern Android) — duplicated
+ * here rather than shared, per this module's "duplicate a small helper until a second feature needs
+ * it, then extract" convention (this is the second occurrence; a future third should factor a shared
+ * `shared:common`/`shared:designsystem` haptics helper instead of a third copy). Falls back to a plain
+ * `createOneShot` below API 29/33, degrading gracefully rather than assuming iPhone-level tactile
+ * fidelity — see this repo's own camera-engineer haptics guidance.
+ */
+@Composable
+private fun rememberFocusVibrator(): Vibrator {
+    val context = LocalContext.current
+    return remember(context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val manager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            manager.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        }
+    }
+}
+
+private fun focusHaptic(vibrator: Vibrator) {
+    if (!vibrator.hasVibrator()) return
+    val effect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
+    } else {
+        VibrationEffect.createOneShot(12L, VibrationEffect.DEFAULT_AMPLITUDE)
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val attributes = android.os.VibrationAttributes.Builder()
+            .setUsage(android.os.VibrationAttributes.USAGE_HARDWARE_FEEDBACK)
+            .build()
+        vibrator.vibrate(effect, attributes)
+    } else {
+        vibrator.vibrate(effect)
+    }
+}
+
+/** How often the loupe crop + focus-peaking mask refresh while the manual focus ring is held — mirrors
+ *  the zebra overlay's own ~66ms throttle (see `CameraController.ZebraThrottleMs`'s own doc), slightly
+ *  looser since this involves a full `TextureView.getBitmap()` readback, not just an already-in-flight
+ *  frame's luma plane. */
+private const val LoupeRefreshIntervalMs = 80L
+
+/** Half-width/height (px, in the *displayed* `TextureView`'s own pixel space) of the square crop taken
+ *  around the hold center for the loupe — deliberately a *view-pixel*-sized crop, not pre-downscaled,
+ *  since [FocusRing] draws it magnified via `Canvas.drawImage`'s own dst-size scaling: cropping small
+ *  and then scaling up (rather than cropping already-downscaled content) is what actually shows finer
+ *  detail than the naked eye sees in the un-magnified viewfinder. */
+private const val LoupeCropRadiusPx = 70
+
+/** [FocusPeakingMask] grid resolution for the loupe crop — coarse enough to read as a handful of
+ *  distinct highlighted regions rather than visual noise, matching [FocusRing]'s own drawn cell size. */
+private const val FocusPeakingGridColumns = 10
+private const val FocusPeakingGridRows = 10
+
+/**
+ * Crops a [LoupeCropRadiusPx]-radius square out of [source] (a full [TextureView.getBitmap] snapshot)
+ * centered on [center], clamped so the crop never runs off the source bitmap's own edges (which would
+ * otherwise throw). Returns `null` if [source] is too small to crop from at all.
+ */
+private fun cropLoupeBitmap(source: Bitmap, center: Offset): Bitmap? {
+    val diameter = LoupeCropRadiusPx * 2
+    if (source.width < 1 || source.height < 1) return null
+    val maxLeft = (source.width - diameter).coerceAtLeast(0)
+    val maxTop = (source.height - diameter).coerceAtLeast(0)
+    val left = (center.x - LoupeCropRadiusPx).toInt().coerceIn(0, maxLeft)
+    val top = (center.y - LoupeCropRadiusPx).toInt().coerceIn(0, maxTop)
+    val width = diameter.coerceAtMost(source.width - left)
+    val height = diameter.coerceAtMost(source.height - top)
+    if (width <= 0 || height <= 0) return null
+    return try {
+        Bitmap.createBitmap(source, left, top, width, height)
+    } catch (e: IllegalArgumentException) {
+        null
+    }
+}
+
+/**
+ * Converts [crop]'s own ARGB pixels to a plain 0..255 luma [IntArray] (standard Rec. 601 luma weights)
+ * and feeds it through the pure, unit-tested [FocusPeakingMask.fromLuma] — this glue function itself
+ * is Android-`Bitmap`-typed and so isn't independently unit-tested (per this module's hardware/Android-
+ * type-boundary testing convention), but the actual edge-classification math it delegates to is.
+ */
+private fun focusPeakingMaskFromBitmap(crop: Bitmap): FocusPeakingMask {
+    val width = crop.width
+    val height = crop.height
+    val pixels = IntArray(width * height)
+    crop.getPixels(pixels, 0, width, 0, 0, width, height)
+    val luma = IntArray(width * height) { i ->
+        val pixel = pixels[i]
+        val r = (pixel shr 16) and 0xFF
+        val g = (pixel shr 8) and 0xFF
+        val b = pixel and 0xFF
+        (r * 299 + g * 587 + b * 114) / 1000
+    }
+    return FocusPeakingMask.fromLuma(luma, width, height, columns = FocusPeakingGridColumns, rows = FocusPeakingGridRows)
+}
