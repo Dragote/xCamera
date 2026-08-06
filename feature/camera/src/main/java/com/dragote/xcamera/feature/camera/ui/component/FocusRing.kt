@@ -203,7 +203,7 @@ private fun DrawScope.drawGearRing(
 }
 
 private val RingDiameter = 156.dp
-private val RingThickness = 20.dp
+private val RingThickness = 2.dp
 private val RingGap = 4.dp
 private const val GearTeeth = 40
 private val RingBodyColor = Color(0xFF201F1E).copy(alpha = 0.92f)

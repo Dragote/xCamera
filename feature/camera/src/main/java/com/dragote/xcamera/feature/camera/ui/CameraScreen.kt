@@ -299,18 +299,24 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     var deckHeight by remember { mutableFloatStateOf(0f) }
 
     // Manual focus ring state (issue #21, reworked per the FocusDial UX split — see FocusDial's own
-    // doc and the deck row below) — two independent hold signals now feed one derived ring center:
-    // screenHoldPosition (a long-press directly on the viewfinder, see detectFocusGestures) is the
-    // *actual* touch point and wins whenever it's held (the more specific signal); dialHeld
+    // doc and the deck row below) — two independent hold signals now feed one derived *loupe source*
+    // center: screenHoldPosition (a long-press directly on the viewfinder, see detectFocusGestures) is
+    // the *actual* touch point and wins whenever it's held (the more specific signal); dialHeld
     // (FocusDial, held with no screen hold) falls back to the viewfinder's own center. The ring stays
-    // up as long as *either* is held — focusRingCenter is only null once both are released. Rotation
-    // itself (and therefore the real manual focus distance) is now driven *exclusively* by FocusDial —
-    // the viewfinder's own long-press only ever repositions the ring/loupe, it no longer adjusts focus
-    // at all (see the viewfinder's own onHoldStart/onHoldEnd below).
+    // up as long as *either* is held — focusLoupeSourceCenter is only null once both are released.
+    // Rotation itself (and therefore the real manual focus distance) is now driven *exclusively* by
+    // FocusDial — the viewfinder's own long-press only ever repositions where the loupe samples from,
+    // it no longer adjusts focus at all (see the viewfinder's own onHoldStart/onHoldEnd below).
     var screenHoldPosition by remember { mutableStateOf<Offset?>(null) }
     var dialHeld by remember { mutableStateOf(false) }
-    val focusRingCenter = screenHoldPosition
+    val focusLoupeSourceCenter = screenHoldPosition
         ?: Offset(previewViewSize.width / 2f, previewViewSize.height / 2f).takeIf { dialHeld }
+    // The ring itself, however, always *renders* dead-center on the viewfinder regardless of where the
+    // loupe is actually sampling from (on-device-QA follow-up: a ring that visually jumps to the touch
+    // point read as broken/inconsistent) — only its content (focusLoupeBitmap/focusPeakingMask, cropped
+    // around focusLoupeSourceCenter below) reflects the touch point; the ring's own position never does.
+    val focusRingDisplayCenter =
+        Offset(previewViewSize.width / 2f, previewViewSize.height / 2f).takeIf { focusLoupeSourceCenter != null }
     var focusRingRotationDegrees by remember { mutableFloatStateOf(0f) }
     var focusLoupeBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
     var focusPeakingMask by remember { mutableStateOf<FocusPeakingMask?>(null) }
@@ -343,7 +349,7 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     // Ring diameter occupies ~92% of the viewfinder's own shorter dimension (on-device-QA follow-up
     // to issue #21 — the ring used to be a small, fixed 156dp regardless of viewfinder size, which
     // read as too small once it was also recentered to the viewfinder's own middle, see
-    // focusRingCenter's own doc above). Falls back to FocusRing's own default before the TextureView
+    // focusRingDisplayCenter's own doc above). Falls back to FocusRing's own default before the TextureView
     // has been laid out at least once (previewViewSize still zero) — never actually visible that
     // early, since there's nothing to long-press yet, just keeps this expression total.
     val density = LocalDensity.current
@@ -511,8 +517,8 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     // this reflects real, current preview content rather than a separate capture path. Runs on the main
     // thread (a View method) but the actual crop + luma/edge-detection work is pushed onto
     // Dispatchers.Default so it doesn't block composition/input while the ring is held.
-    LaunchedEffect(focusRingCenter != null) {
-        val center = focusRingCenter ?: return@LaunchedEffect
+    LaunchedEffect(focusLoupeSourceCenter != null) {
+        val center = focusLoupeSourceCenter ?: return@LaunchedEffect
         while (isActive) {
             val fullFrame = runCatching { textureView.getBitmap() }.getOrNull()
             if (fullFrame != null) {
@@ -649,7 +655,7 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                         modifier = Modifier.fillMaxSize(),
                     )
                     FocusRing(
-                        center = focusRingCenter,
+                        center = focusRingDisplayCenter,
                         rotationDegrees = focusRingRotationDegrees,
                         loupeImage = focusLoupeBitmap,
                         peakingMask = focusPeakingMask,
@@ -1049,7 +1055,7 @@ private const val LoupeRefreshIntervalMs = 80L
  * on-screen size — stays roughly constant instead of the same small crop getting stretched over a much
  * bigger circle and turning to mush.
  */
-private const val LoupeCropRadiusPx = 110
+private const val LoupeCropRadiusPx = 120
 
 /** Must track [FocusRing]'s own (private) `RingDiameter` reference — the value [LoupeCropRadiusPx] was
  *  tuned against — so `focusRingScale` in `CameraContent` scales the loupe crop by the same ratio
