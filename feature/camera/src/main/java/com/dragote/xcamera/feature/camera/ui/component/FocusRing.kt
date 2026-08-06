@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -34,6 +35,7 @@ import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * The hold-and-rotate manual focus ring (issue #21) — a mechanical, gear-toothed ring centered on
@@ -74,6 +76,14 @@ fun FocusRing(
         label = "focusRingAlpha",
     )
 
+    // Rebuilt only when the mask itself changes (throttled to ~12.5fps by CameraScreen's loupe-refresh
+    // loop, not every recomposition — rotationDegrees alone changes far more often during the drag
+    // gesture and must not pay this cost) — see [FocusPeakingMask.toHighlightImage]'s own doc for why
+    // this is a bitmap rather than per-cell shapes.
+    val peakingImage = remember(peakingMask) {
+        peakingMask?.takeIf { it.columns > 0 && it.rows > 0 }?.toHighlightImage(FocusPeakingColor)
+    }
+
     // Every absolute dp measurement below (ring thickness, tooth length/stroke, index-mark size, rim
     // stroke) scales proportionally with diameter relative to the design reference (RingDiameter) —
     // callers now routinely pass a diameter several times RingDiameter (see ui/CameraScreen, issue #21
@@ -87,7 +97,7 @@ fun FocusRing(
         val ringThicknessPx = (RingThickness * scale).toPx()
         val loupeRadiusPx = outerRadiusPx - ringThicknessPx - (RingGap * scale).toPx()
 
-        drawLoupe(ringCenter, loupeRadiusPx, loupeImage, peakingMask, scale)
+        drawLoupe(ringCenter, loupeRadiusPx, loupeImage, peakingImage, scale)
         drawGearRing(ringCenter, outerRadiusPx, ringThicknessPx, rotationDegrees, scale)
     }
 }
@@ -99,7 +109,7 @@ private fun DrawScope.drawLoupe(
     center: Offset,
     radiusPx: Float,
     loupeImage: ImageBitmap?,
-    peakingMask: FocusPeakingMask?,
+    peakingImage: ImageBitmap?,
     scale: Float,
 ) {
     val clip = Path().apply { addOval(Rect(center, radiusPx)) }
@@ -116,35 +126,55 @@ private fun DrawScope.drawLoupe(
         }
         drawRect(Color.Black.copy(alpha = 0.15f), topLeft = center - Offset(radiusPx, radiusPx), size = Size(radiusPx * 2f, radiusPx * 2f))
 
-        if (peakingMask != null && peakingMask.columns > 0 && peakingMask.rows > 0) {
-            drawPeakingHighlight(peakingMask, center, radiusPx, scale)
+        if (peakingImage != null) {
+            val dstSize = (radiusPx * 2f).toInt()
+            drawImage(
+                image = peakingImage,
+                dstOffset = IntOffset((center.x - radiusPx).toInt(), (center.y - radiusPx).toInt()),
+                dstSize = IntSize(dstSize, dstSize),
+            )
         }
     }
     // Loupe rim — a thin inner line separating the magnified content from the gear ring around it.
     drawCircle(color = Color.White.copy(alpha = 0.25f), radius = radiusPx, center = center, style = Stroke(width = (1.dp * scale).toPx()))
 }
 
-/** One outlined rect per [FocusPeakingMask.edge] cell classified `true`, confined to the loupe's own
- *  circular bounds via the caller's `clipPath`. */
-private fun DrawScope.drawPeakingHighlight(mask: FocusPeakingMask, center: Offset, radiusPx: Float, scale: Float) {
-    val boxSize = radiusPx * 2f
-    val cellWidth = boxSize / mask.columns
-    val cellHeight = boxSize / mask.rows
-    val left = center.x - radiusPx
-    val top = center.y - radiusPx
-    val strokeWidth = (1.5.dp * scale).toPx()
-
-    for (row in 0 until mask.rows) {
-        for (col in 0 until mask.columns) {
-            if (mask.edge.getOrNull(row * mask.columns + col) != true) continue
-            drawRect(
-                color = FocusPeakingColor,
-                topLeft = Offset(left + col * cellWidth, top + row * cellHeight),
-                size = Size(cellWidth, cellHeight),
-                style = Stroke(width = strokeWidth),
-            )
+/** Renders [FocusPeakingMask.edge] (one cell per source pixel — see the mask's own doc) as a small
+ *  ARGB bitmap, transparent where `false` and [color] where `true`, that [drawLoupe] then scales up in
+ *  a single `drawImage` call. Bilinear upscaling from mask resolution to the loupe's much larger
+ *  on-screen size is what turns the per-pixel edge classification into a smooth, thin contour tracing
+ *  the sharp object's own silhouette — per-cell shapes (a `Stroke` rect, or even per-side lines) don't
+ *  scale to per-pixel mask resolution: that's tens of thousands of draw calls per frame.
+ *
+ *  [thicknessPx] dilates the raw one-pixel-wide classification by that many mask pixels in every
+ *  direction before rasterizing — a purely visual choice (this is why it lives here, in the UI layer,
+ *  rather than in [FocusPeakingMask] itself, which stays a pure classification): an un-dilated single
+ *  bright pixel surrounded by fully-transparent neighbors gets diluted by the bilinear upscale below,
+ *  reading as a faint, thin line rather than a confident contour. */
+private fun FocusPeakingMask.toHighlightImage(color: Color, thicknessPx: Int = 0): ImageBitmap {
+    val highlight = color.toArgb()
+    val bitmap = android.graphics.Bitmap.createBitmap(columns, rows, android.graphics.Bitmap.Config.ARGB_8888)
+    val pixels = IntArray(columns * rows)
+    for (row in 0 until rows) {
+        for (col in 0 until columns) {
+            var near = false
+            for (dy in -thicknessPx..thicknessPx) {
+                if (near) break
+                val r = row + dy
+                if (r !in 0 until rows) continue
+                for (dx in -thicknessPx..thicknessPx) {
+                    val c = col + dx
+                    if (c in 0 until columns && edge[r * columns + c]) {
+                        near = true
+                        break
+                    }
+                }
+            }
+            pixels[row * columns + col] = if (near) highlight else 0
         }
     }
+    bitmap.setPixels(pixels, 0, columns, 0, 0, columns, rows)
+    return bitmap.asImageBitmap()
 }
 
 /** The mechanical, gear-toothed ring itself — a base stroked circle plus radial "teeth" ticks that
@@ -225,11 +255,22 @@ private fun previewLoupeBitmap(): ImageBitmap {
     return bitmap.asImageBitmap()
 }
 
+/** A ring-shaped mask at pixel-ish resolution — the honest preview shape for [toHighlightImage]'s
+ *  bitmap-overlay rendering (real masks trace an arbitrary object silhouette; a ring is a simple stand-in
+ *  that still exercises "thin contour, not boxed cells" the same way the diagonal-cross grid the old
+ *  per-cell-rectangle renderer used no longer would). */
 private fun previewPeakingMask(): FocusPeakingMask {
-    val columns = 8
-    val rows = 8
-    val edges = List(columns * rows) { i -> (i % columns) == (i / columns) || (i % columns) == columns - 1 - (i / columns) }
-    return FocusPeakingMask(columns, rows, edges)
+    val size = 96
+    val center = size / 2f
+    val outerRadius = size * 0.42f
+    val innerRadius = outerRadius - 3f
+    val edges = List(size * size) { i ->
+        val x = (i % size) - center
+        val y = (i / size) - center
+        val dist = sqrt(x * x + y * y)
+        dist in innerRadius..outerRadius
+    }
+    return FocusPeakingMask(size, size, edges)
 }
 
 // Matches real usage (ui/CameraScreen, issue #21 follow-up): the ring is always centered on the

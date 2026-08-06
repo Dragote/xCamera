@@ -57,17 +57,42 @@ class FocusPeakingMaskTest {
     }
 
     @Test
-    fun `cells are row-major and only the cell actually containing contrast is flagged`() {
-        // 4x4, only the bottom-right quadrant has a sharp edge; the rest is flat.
+    fun `cells are row-major and contrast confined to one quadrant's interior only flags that cell`() {
+        // 4x4, flat except a single bright pixel at (3, 3) — its only differing neighbors ((3, 2) and
+        // (2, 3)) both belong to the same bottom-right cell, so this is genuinely interior contrast with
+        // no cell-boundary pixel involved, unlike the boundary-straddling case covered separately below.
+        val width = 4
+        val height = 4
+        val luma = IntArray(width * height) { 100 }.also { it[3 * width + 3] = 255 }
+        val mask = FocusPeakingMask.fromLuma(luma, width, height, columns = 2, rows = 2)
+        assertEquals(listOf(false, false, false, true), mask.edge)
+    }
+
+    @Test
+    fun `a transition sitting exactly on a cell boundary is still flagged, by the lower-index cell`() {
+        // 4x4, sharp transition between x=1 (col 0) and x=2 (col 1) — straddles the cell boundary rather
+        // than falling inside either cell. Attributed to the cell containing the lower-x pixel (col 0).
         val width = 4
         val height = 4
         val luma = IntArray(width * height) { i ->
             val x = i % width
-            val y = i / width
-            if (y >= 2 && x >= 2) (if (x == 2) 0 else 255) else 128
+            if (x <= 1) 0 else 255
         }
         val mask = FocusPeakingMask.fromLuma(luma, width, height, columns = 2, rows = 2)
-        assertEquals(listOf(false, false, false, true), mask.edge)
+        assertEquals(listOf(true, false, true, false), mask.edge)
+    }
+
+    @Test
+    fun `one cell per pixel (columns=width, rows=height) still detects a sharp edge`() {
+        // ui/CameraScreen's real usage: one mask cell per loupe-crop pixel, so FocusRing can render it
+        // as a bitmap contour (see FocusRing.toHighlightImage). At this resolution every cell's own
+        // xEnd/yEnd equals xStart+1/yStart+1, so this only passes if neighbor comparisons are bounded by
+        // the image, not the (single-pixel) cell — regression coverage for that bug.
+        val width = 4
+        val height = 1
+        val luma = intArrayOf(0, 0, 255, 255)
+        val mask = FocusPeakingMask.fromLuma(luma, width, height, columns = width, rows = height)
+        assertEquals(listOf(false, true, false, false), mask.edge)
     }
 
     @Test

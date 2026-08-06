@@ -1065,10 +1065,6 @@ private const val LoupeCropRadiusPx = 120
  *  [FocusRing] itself scales its ring band/teeth by. */
 private val FocusRingReferenceDiameter = 156.dp
 
-/** [FocusPeakingMask] grid resolution for the loupe crop — coarse enough to read as a handful of
- *  distinct highlighted regions rather than visual noise, matching [FocusRing]'s own drawn cell size. */
-private const val FocusPeakingGridColumns = 10
-private const val FocusPeakingGridRows = 10
 
 /**
  * Crops a [radiusPx]-radius square out of [source] (a full [TextureView.getBitmap] snapshot) centered
@@ -1097,6 +1093,11 @@ private fun cropLoupeBitmap(source: Bitmap, center: Offset, radiusPx: Int): Bitm
  * and feeds it through the pure, unit-tested [FocusPeakingMask.fromLuma] — this glue function itself
  * is Android-`Bitmap`-typed and so isn't independently unit-tested (per this module's hardware/Android-
  * type-boundary testing convention), but the actual edge-classification math it delegates to is.
+ *
+ * One mask cell per source pixel (`columns = width`, `rows = height`) rather than a coarse downsampled
+ * grid — [FocusRing] renders the mask as a scaled-up bitmap overlay (not per-cell rectangles), so
+ * pixel-resolution classification is what makes the highlight trace the actual sharp-object silhouette
+ * as a thin contour instead of boxing whole regions.
  */
 private fun focusPeakingMaskFromBitmap(crop: Bitmap): FocusPeakingMask {
     val width = crop.width
@@ -1110,5 +1111,5 @@ private fun focusPeakingMaskFromBitmap(crop: Bitmap): FocusPeakingMask {
         val b = pixel and 0xFF
         (r * 299 + g * 587 + b * 114) / 1000
     }
-    return FocusPeakingMask.fromLuma(luma, width, height, columns = FocusPeakingGridColumns, rows = FocusPeakingGridRows)
+    return FocusPeakingMask.fromLuma(luma, width, height, columns = width, rows = height)
 }
