@@ -1,15 +1,16 @@
 package com.dragote.xcamera.feature.camera.data.repository
 
 import android.hardware.camera2.CameraAccessException
+import android.media.Image
 import android.net.Uri
-import android.util.Size
-import android.view.Surface
+import android.os.Handler
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.data.CameraController
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
+import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
@@ -25,14 +26,18 @@ class CameraRepositoryImpl @Inject constructor(
 
     override suspend fun bindCamera(
         lifecycleOwner: LifecycleOwner,
-        surface: Surface,
+        previewViewWidth: Int,
+        previewViewHeight: Int,
         lens: CameraLens?,
-    ) = cameraController.bindCamera(lifecycleOwner, surface, lens)
+    ) = cameraController.bindCamera(lifecycleOwner, previewViewWidth, previewViewHeight, lens)
 
     override fun unbindCamera() = cameraController.unbindCamera()
 
-    override fun previewOutputSize(lens: CameraLens?, targetWidth: Int, targetHeight: Int): Size =
-        cameraController.previewOutputSize(lens, targetWidth, targetHeight)
+    override fun setPreviewFrameListener(handler: Handler?, listener: ((Image) -> Unit)?) =
+        cameraController.setPreviewFrameListener(handler, listener)
+
+    override fun previewRotationDegrees(lens: CameraLens?): Int =
+        cameraController.previewRotationDegrees(lens)
 
     override fun setFlashMode(flashMode: FlashMode) = cameraController.setFlashMode(flashMode)
 
@@ -50,6 +55,10 @@ class CameraRepositoryImpl @Inject constructor(
         cameraController.setManualExposure(iso, shutterTimeNs)
 
     override fun setExposureCompensation(value: Int) = cameraController.setExposureCompensation(value)
+
+    override fun setZebraAnalysisEnabled(enabled: Boolean) = cameraController.setZebraAnalysisEnabled(enabled)
+
+    override fun observeZebraMask(): Flow<ZebraMask?> = cameraController.zebraMask
 
     override suspend fun takePhoto(): Result<Uri, DataError.Local> = try {
         Result.Success(cameraController.takePhoto())

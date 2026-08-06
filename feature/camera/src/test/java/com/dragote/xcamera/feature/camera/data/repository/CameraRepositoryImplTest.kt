@@ -1,15 +1,16 @@
 package com.dragote.xcamera.feature.camera.data.repository
 
 import android.hardware.camera2.CameraAccessException
+import android.media.Image
 import android.net.Uri
-import android.util.Size
-import android.view.Surface
+import android.os.Handler
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.data.CameraController
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
+import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
 import io.mockk.coEvery
@@ -30,13 +31,12 @@ class CameraRepositoryImplTest {
     @Test
     fun `bindCamera delegates to the controller`() = runTest {
         val lifecycleOwner = mockk<LifecycleOwner>()
-        val surface = mockk<Surface>()
         val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
-        coEvery { cameraController.bindCamera(lifecycleOwner, surface, lens) } returns Unit
+        coEvery { cameraController.bindCamera(lifecycleOwner, 1080, 2400, lens) } returns Unit
 
-        repository.bindCamera(lifecycleOwner, surface, lens)
+        repository.bindCamera(lifecycleOwner, 1080, 2400, lens)
 
-        coVerify { cameraController.bindCamera(lifecycleOwner, surface, lens) }
+        coVerify { cameraController.bindCamera(lifecycleOwner, 1080, 2400, lens) }
     }
 
     @Test
@@ -49,14 +49,22 @@ class CameraRepositoryImplTest {
     }
 
     @Test
-    fun `previewOutputSize delegates to the controller and returns its result`() {
-        // android.util.Size's own constructor/getters/equals are all unmocked on the JVM unit test
-        // classpath, so this uses a relaxed mock rather than a real Size instance.
-        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
-        val size = mockk<Size>()
-        every { cameraController.previewOutputSize(lens, 1080, 2400) } returns size
+    fun `setPreviewFrameListener delegates to the controller`() {
+        val handler = mockk<Handler>()
+        val listener: (Image) -> Unit = {}
+        every { cameraController.setPreviewFrameListener(handler, listener) } returns Unit
 
-        assertEquals(size, repository.previewOutputSize(lens, 1080, 2400))
+        repository.setPreviewFrameListener(handler, listener)
+
+        verify { cameraController.setPreviewFrameListener(handler, listener) }
+    }
+
+    @Test
+    fun `previewRotationDegrees delegates to the controller and returns its result`() {
+        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        every { cameraController.previewRotationDegrees(lens) } returns 90
+
+        assertEquals(90, repository.previewRotationDegrees(lens))
     }
 
     @Test
@@ -118,6 +126,23 @@ class CameraRepositoryImplTest {
         repository.setExposureCompensation(3)
 
         verify { cameraController.setExposureCompensation(3) }
+    }
+
+    @Test
+    fun `setZebraAnalysisEnabled delegates to the controller`() {
+        every { cameraController.setZebraAnalysisEnabled(true) } returns Unit
+
+        repository.setZebraAnalysisEnabled(true)
+
+        verify { cameraController.setZebraAnalysisEnabled(true) }
+    }
+
+    @Test
+    fun `observeZebraMask delegates to the controller's zebraMask flow`() {
+        val zebraMaskFlow = MutableStateFlow<ZebraMask?>(null)
+        every { cameraController.zebraMask } returns zebraMaskFlow
+
+        assertEquals(zebraMaskFlow, repository.observeZebraMask())
     }
 
     @Test

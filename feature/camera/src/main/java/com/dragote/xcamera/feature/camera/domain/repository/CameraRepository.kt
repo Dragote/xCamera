@@ -1,27 +1,29 @@
 package com.dragote.xcamera.feature.camera.domain.repository
 
+import android.media.Image
 import android.net.Uri
-import android.util.Size
-import android.view.Surface
+import android.os.Handler
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
+import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
 import kotlinx.coroutines.flow.Flow
 
 /**
  * Domain-facing contract for raw `Camera2` capture, mirroring the operations `data.CameraController`
- * performs against the hardware. `bindCamera`/`unbindCamera`/`previewOutputSize` inherently need a
- * Compose `LifecycleOwner` and/or a raw preview `Surface` (see `CameraController`'s own doc for why
- * the live preview's repeating request and a still capture's one-off request must be genuinely
- * independent `CameraCaptureSession` requests rather than routed through a higher-level abstraction),
- * which is why this interface — not just its `CameraController` implementation — keeps those
- * hardware-adjacent types in its signature; per this module's camera conventions,
- * `presentation/CameraViewModel` must never import them, so those three calls are made directly
- * against this repository from `ui/`, everything else is routed through the ViewModel.
+ * performs against the hardware. `bindCamera`/`setPreviewFrameListener`/`previewRotationDegrees`
+ * inherently need a Compose `LifecycleOwner` and/or `android.media.Image`/`android.os.Handler` (see
+ * `CameraController`'s own doc for why the live preview is rendered by app-owned GLES rather than
+ * targeted at a caller-supplied `Surface` — an `ImageReader`'s dimensions are a verifiable
+ * construction-time contract a `SurfaceTexture`'s requested buffer size isn't), which is why this
+ * interface — not just its `CameraController` implementation — keeps those hardware-adjacent types in
+ * its signature; per this module's camera conventions, `presentation/CameraViewModel` must never
+ * import them, so those calls are made directly against this repository from `ui/`, everything else
+ * is routed through the ViewModel.
  *
  * Only [takePhoto] wraps its result in [Result] — it's the one operation with a real, user-facing
  * failure mode (hardware/IO error mid-capture). The rest either can't meaningfully fail
@@ -31,30 +33,41 @@ import kotlinx.coroutines.flow.Flow
 interface CameraRepository {
 
     /**
-     * [surface] is expected to already have its backing buffer sized (e.g. via
-     * `SurfaceTexture.setDefaultBufferSize`) to whatever [previewOutputSize] returned for [lens] —
-     * `CameraController` configures the capture session against the surface as handed to it, it does
-     * not itself resize the buffer. Internally observes [lifecycleOwner]'s lifecycle to open the
-     * camera device/session at `ON_START` and release it at `ON_STOP`, so callers don't need to
-     * manage that themselves — call [unbindCamera] only when the surface itself is going away (e.g.
-     * the hosting view is destroyed), not on every lifecycle pause.
+     * [previewViewWidth]/[previewViewHeight] are the on-screen `TextureView`'s own measured pixel
+     * dimensions, used internally to size the actual preview stream — see `CameraController`'s own
+     * doc for why there's no `Surface` parameter here; register a frame consumer via
+     * [setPreviewFrameListener] separately to actually see pixels. Internally observes
+     * [lifecycleOwner]'s lifecycle to open the camera device/session at `ON_START` and release it at
+     * `ON_STOP`, so callers don't need to manage that themselves — call [unbindCamera] only when the
+     * hosting view itself is going away, not on every lifecycle pause.
      */
     suspend fun bindCamera(
         lifecycleOwner: LifecycleOwner,
-        surface: Surface,
+        previewViewWidth: Int,
+        previewViewHeight: Int,
         lens: CameraLens? = null,
     )
 
-    /** Call once the preview surface backing a previous [bindCamera] call is no longer valid. */
+    /** Call once whatever [bindCamera] was backing is no longer valid (e.g. the hosting view is
+     *  destroyed). */
     fun unbindCamera()
 
     /**
-     * The `SurfaceTexture` preview size to request for [lens], closest in aspect ratio to a
-     * [targetWidth]x[targetHeight] view without being needlessly larger than the viewfinder actually
-     * needs. Callers configure their own `SurfaceTexture`'s default buffer size with this before
-     * wrapping it in the `Surface` passed to [bindCamera].
+     * Registers (or, passing both `null`, unregisters) the render-thread consumer of every delivered
+     * live preview frame — in practice `ui/CameraScreen`'s `CameraPreviewRenderer`, which draws each
+     * [Image] onto the on-screen `TextureView` via app-owned GLES and takes ownership of closing it.
+     * [handler] must be bound to whatever thread owns the GL context frames get drawn with — Camera2/
+     * `ImageReader` callbacks run on `CameraController`'s own background thread, not the caller's.
      */
-    fun previewOutputSize(lens: CameraLens?, targetWidth: Int, targetHeight: Int): Size
+    fun setPreviewFrameListener(handler: Handler?, listener: ((Image) -> Unit)?)
+
+    /**
+     * `CameraCharacteristics.SENSOR_ORIENTATION` for [lens] — the render-thread consumer registered
+     * via [setPreviewFrameListener] needs this to rotate raw preview frames into display orientation
+     * itself, since (unlike a `TextureView`'s own on-screen `SurfaceTexture`) an `ImageReader` surface
+     * gets no automatic producer-side rotation. `0` if unavailable.
+     */
+    fun previewRotationDegrees(lens: CameraLens?): Int
 
     fun setFlashMode(flashMode: FlashMode)
 
@@ -79,6 +92,22 @@ interface CameraRepository {
     fun setManualExposure(iso: Int?, shutterTimeNs: Long?)
 
     fun setExposureCompensation(value: Int)
+
+    /**
+     * Gates the third analysis stream's per-frame cost entirely — `true` only while the ISO/shutter
+     * dial is actively being dragged (see `ui/CameraScreen`'s `DialWheel.onDragActiveChanged` wiring).
+     * A no-op on a lens with no `MANUAL_SENSOR` support, where there's no analysis stream to enable in
+     * the first place.
+     */
+    fun setZebraAnalysisEnabled(enabled: Boolean)
+
+    /**
+     * Grid-coarse over/under-exposure clipping mask for the live viewfinder, meant to be collected
+     * directly by whatever renders the zebra-stripe overlay — not folded into a single UI-state object
+     * (see `CameraController.zebraMask`'s own doc for why). Emits `null` whenever there's nothing to
+     * show.
+     */
+    fun observeZebraMask(): Flow<ZebraMask?>
 
     suspend fun takePhoto(): Result<Uri, DataError.Local>
 

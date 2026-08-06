@@ -4,7 +4,6 @@ import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.ImageFormat
-import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
@@ -15,12 +14,14 @@ import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
+import android.media.Image
 import android.media.ImageReader
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Size
 import android.view.OrientationEventListener
@@ -33,7 +34,9 @@ import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
+import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -45,6 +48,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.abs
@@ -54,14 +58,24 @@ import javax.inject.Singleton
 
 /**
  * Raw `android.hardware.camera2` wrapper: opens a [CameraDevice], configures one
- * [CameraCaptureSession] with two independent output surfaces (the live preview surface handed to
- * [bindCamera], and a private [android.media.ImageReader] for JPEG stills), and issues genuinely
- * separate Camera2 requests against each — a live-updatable [CameraCaptureSession
- * .setRepeatingRequest] for the preview surface (see [buildPreviewRequest]), and a one-off
- * [CameraCaptureSession.capture] for the still surface (see [captureStillJpeg]) that carries the
- * real, preview-uncapped user-selected manual exposure when manual mode is active. The two share no
- * mutable request state — they only both read the same [pendingManualIso]/[pendingManualShutterNs]
- * cache and independently resolve/clamp it via [resolveManualExposure].
+ * [CameraCaptureSession] with two independent output surfaces — a private preview
+ * [android.media.ImageReader] ([previewImageReader], `YUV_420_888`) and a private still
+ * [android.media.ImageReader] ([imageReader], JPEG) — and issues genuinely separate Camera2 requests
+ * against each — a live-updatable [CameraCaptureSession.setRepeatingRequest] for the preview reader
+ * (see [buildPreviewRequest]), and a one-off [CameraCaptureSession.capture] for the still reader (see
+ * [captureStillJpeg]) that carries the real, preview-uncapped user-selected manual exposure when
+ * manual mode is active. The two share no mutable request state — they only both read the same
+ * [pendingManualIso]/[pendingManualShutterNs] cache and independently resolve/clamp it via
+ * [resolveManualExposure].
+ *
+ * The live preview is *rendered*, not just captured, by this class's own surrounding infrastructure:
+ * [setPreviewFrameListener] hands each delivered preview [Image] to a caller-supplied listener/
+ * [Handler] (in practice, `ui/CameraScreen`'s `CameraPreviewRenderer`, which draws it onto the
+ * on-screen `TextureView` via app-owned GLES) — see that class's own doc for why the live preview
+ * deliberately isn't targeted at a caller-supplied `SurfaceTexture`-backed `Surface` the way it used
+ * to be: an `ImageReader`'s dimensions are a hard, verifiable construction-time contract, unlike a
+ * `SurfaceTexture`'s requested buffer size, which this device's Camera2 HAL was found not to always
+ * honor across a session reopen (see `docs/features/camera-capture.md`'s history of that bug).
  *
  * This replaces an earlier CameraX (`Preview`/`ImageCapture` use case)-based implementation. CameraX's
  * `Camera2Interop`/`Camera2CameraControl` only exposes session-wide dynamic `CaptureRequestOptions`
@@ -75,9 +89,8 @@ import javax.inject.Singleton
  * preview's repeating request and a still capture's one-off request are independent Camera2 requests
  * from the start, so there is nothing for a manual exposure choice to back up behind.
  *
- * Kept out of the ViewModel since [bindCamera] inherently needs a Compose `LifecycleOwner` + a raw
- * preview `Surface`, which are ui-layer-adjacent types — see CLAUDE.md's data-layer-owns-hardware
- * convention.
+ * Kept out of the ViewModel since [bindCamera] inherently needs a Compose `LifecycleOwner`, which is
+ * a ui-layer-adjacent type — see CLAUDE.md's data-layer-owns-hardware convention.
  *
  * `@Singleton`-scoped (see `di/CameraModule`'s `provideCameraController`) so every injection path —
  * `CameraViewModel`'s constructor injection and `ui/CameraScreen`'s separate `EntryPointAccessors`
@@ -109,7 +122,70 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     private var captureSession: CameraCaptureSession? = null
     private var imageReader: ImageReader? = null
 
-    private var previewSurface: Surface? = null
+    /**
+     * The live preview's own output — see this class's own doc and [setPreviewFrameListener] for why
+     * this is an `ImageReader` (`YUV_420_888`) rather than a caller-supplied `Surface`. Created fresh
+     * in [openCamera] alongside [imageReader]; the session stays a 2-output configuration exactly as
+     * before this rewrite (preview + still), not 3 — see [createCaptureSession].
+     */
+    private var previewImageReader: ImageReader? = null
+
+    /** Set via [setPreviewFrameListener] — the render-thread [Handler] to post each delivered preview
+     *  [Image] onto, paired with [previewFrameListener]. Both `null` until `ui/CameraScreen` registers
+     *  its renderer, and cleared again in [unbindCamera]. */
+    private var previewFrameHandler: Handler? = null
+
+    /** See [previewFrameHandler]'s own doc — receives ownership of each delivered preview [Image]
+     *  (must eventually `close()` it) via [previewFrameHandler]. */
+    private var previewFrameListener: ((Image) -> Unit)? = null
+
+    /** Cached from [bindCamera]'s parameters — the `TextureView`'s own measured pixel size, needed to
+     *  compute [previewOutputSize] internally now that there's no caller-supplied, already-sized
+     *  `Surface` to size a stream against. */
+    private var previewViewWidth = 0
+    private var previewViewHeight = 0
+
+    /**
+     * Set once by the first [bindCamera] call and cleared by [unbindCamera] — the signal
+     * [onStateChanged]/[openCamera] gate on to know there's something to (re)bind, now that there's
+     * no caller-supplied `Surface` whose mere presence used to mean that.
+     */
+    private var isBound = false
+
+    /**
+     * Completed by [CameraDevice.StateCallback.onClosed] for whichever device [openCameraDevice] most
+     * recently opened — `CameraDevice.close()`/`CameraCaptureSession.close()` (see
+     * [closeCameraAndSessionLocked]) are asynchronous, the call returning immediately while teardown
+     * continues on the HAL/driver side; without waiting for the real `onClosed()` signal, a reopen of
+     * the *same* camera ID (the only path that can happen — see [openCamera]'s own doc) can race an
+     * incompletely-released previous instance of that ID, a known Camera2 pitfall (Google's own
+     * `Camera2Basic` sample explicitly gates its next open behind exactly this kind of wait). On-device
+     * testing traced a live-preview aspect-ratio bug specifically to `ON_STOP`→`ON_START` reopens of
+     * the same camera ID — this wait is the fix. Captured as a local inside [openCameraDevice] and
+     * assigned here so the specific device instance that eventually calls back into it is unambiguous
+     * even if a *newer* open has already replaced this field by the time an old device's `onClosed`
+     * fires (shouldn't happen given [cameraLock] serializes opens after this field's own await
+     * completes, but the local capture makes that not load-bearing for correctness).
+     */
+    private var deviceClosedSignal: CompletableDeferred<Unit>? = null
+
+    /**
+     * `CameraCharacteristics.SENSOR_ORIENTATION` for whichever lens is currently bound, set alongside
+     * [previewImageReader] in [openCamera] — an `ImageReader` (unlike a `TextureView`'s own on-screen
+     * `SurfaceTexture`) gets no automatic producer-side rotation, so [previewImageAvailableListener]'s
+     * zebra classification rotates by this angle itself (via [ZebraMask.rotatedBy]) to line the mask
+     * up with what the fixed-portrait viewfinder actually shows — the same angle [jpegOrientation]
+     * bakes into still captures' `JPEG_ORIENTATION`, minus the live device-tilt component
+     * ([targetRotation]) that only applies to *saved* JPEG metadata, not to the
+     * always-upright-in-its-own-view live preview. [CameraPreviewRenderer] needs this same value too
+     * (for its own rotation, see [previewRotationDegrees]) — computed independently there since it's a
+     * cheap, pure `CameraCharacteristics` lookup, not shared mutable state.
+     */
+    private var analysisRotationDegrees = 0
+
+    /** Throttles zebra classification in [previewImageAvailableListener] — see [ZebraThrottleMs]. */
+    private var lastZebraClassifyUptimeMs = 0L
+
     private var currentLens: CameraLens? = null
     private var boundLifecycle: Lifecycle? = null
 
@@ -189,6 +265,119 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     }
 
     /**
+     * Set via [setZebraAnalysisEnabled] — true only while the ISO/shutter/EV dial is actively being
+     * dragged (see `ui/CameraScreen`'s wiring of `DialWheel.onDragActiveChanged`). Read by
+     * [previewImageAvailableListener] to decide whether it's worth classifying the current frame at
+     * all; while false, classification is skipped entirely, so there's zero analysis cost outside an
+     * actual drag even though the preview stream itself is always running.
+     */
+    private var zebraAnalysisEnabled = false
+
+    /**
+     * Grid-coarse clipping mask for the live viewfinder, `null` whenever there's nothing to show
+     * (analysis disabled or no frame has landed yet). See [CameraUiState]-adjacent reasoning in
+     * `CameraViewModel`: this is deliberately its own [StateFlow], not folded into a single UI-state
+     * data class, since collapsing a ~15fps stream of updates into one big state object would force
+     * everything reading that object to recompose on every emission.
+     */
+    private val _zebraMask = MutableStateFlow<ZebraMask?>(null)
+    val zebraMask: StateFlow<ZebraMask?> = _zebraMask.asStateFlow()
+
+    /**
+     * Guards against exceeding the preview [ImageReader]'s `maxImages` (2) — confirmed on-device this
+     * is a real, not just theoretical, risk: `renderer.start()`'s EGL/shader setup takes long enough
+     * that several frames' worth of `onImageAvailable` callbacks can fire before the render thread has
+     * processed (and therefore closed) even the first handed-off `Image`, and `acquireLatestImage()`
+     * throws `IllegalStateException` rather than silently coping once that many of *our own* acquired-
+     * but-unclosed images pile up (it *does* internally skip/release intermediate frames on its own
+     * behalf while draining to the newest one, but it has no way to reclaim an image the app itself
+     * is still holding, e.g. one already handed off but not yet drawn+closed by the render thread).
+     * Set `true` right after acquiring (before this listener returns), cleared only once the frame has
+     * genuinely finished being drawn — see [previewImageAvailableListener]. `@Volatile` since it's
+     * written from both this listener's own thread ([backgroundHandler]) and the render thread that
+     * eventually closes the frame.
+     */
+    @Volatile
+    private var previewFrameInFlight = false
+
+    /**
+     * Every preview frame arrives here (on [backgroundHandler]) as a side effect of the repeating
+     * request Camera2 is already running — unlike zebra's previous `PixelCopy`-polling design, there's
+     * no separate capture mechanism to drive: classification just piggybacks on frames that are
+     * already flowing. Skips acquiring anything at all while [previewFrameInFlight] — see that field's
+     * own doc for why this is required, not just a minor efficiency tweak — the next callback (there's
+     * always another one shortly, Camera2 delivers these continuously) picks up whatever's newest once
+     * the render thread catches up, via `acquireLatestImage()`'s own "skip to newest" behavior.
+     *
+     * Zebra classification (throttled to [ZebraThrottleMs], gated on [zebraAnalysisEnabled]) reads
+     * [image]'s luma plane directly, *before* the frame is handed off to [previewFrameListener] — both
+     * reads are safe against the same `Image` regardless of order, since [ZebraMask.fromLumaPlane]
+     * only ever uses absolute (position-independent) `ByteBuffer.get(index)` calls, never mutating the
+     * plane buffer's position.
+     *
+     * Ownership of [image] transfers to [previewFrameListener] via [previewFrameHandler] — if neither
+     * is registered (e.g. briefly during a rebind before `ui/CameraScreen`'s renderer re-registers),
+     * or if posting onto an already-shutting-down render thread fails, this closes it (and clears
+     * [previewFrameInFlight]) here instead so nothing leaks or wedges future frames open forever.
+     */
+    private val previewImageAvailableListener = ImageReader.OnImageAvailableListener { reader ->
+        if (previewFrameInFlight) return@OnImageAvailableListener
+        val image = reader.acquireLatestImage() ?: return@OnImageAvailableListener
+
+        if (zebraAnalysisEnabled) classifyZebraIfDue(image)
+
+        val listener = previewFrameListener
+        val handler = previewFrameHandler
+        if (listener != null && handler != null) {
+            previewFrameInFlight = true
+            val posted = handler.post {
+                try {
+                    listener(image)
+                } finally {
+                    previewFrameInFlight = false
+                }
+            }
+            if (!posted) {
+                image.close()
+                previewFrameInFlight = false
+            }
+        } else {
+            image.close()
+        }
+    }
+
+    /**
+     * Skips (not just throttles the *result* of, the *work* of) classification entirely if less than
+     * [ZebraThrottleMs] has passed since the last real one — preview frames can arrive at up to ~30fps,
+     * far more often than the overlay needs to visibly update. Rotation handling mirrors the deleted
+     * `PixelCopy`-era design exactly (see [analysisRotationDegrees]'s own doc for why an `ImageReader`
+     * buffer needs this at all): a 90/270 [analysisRotationDegrees] swaps width for height, so the
+     * *raw* grid requested from [ZebraMask.fromLumaPlane] is swapped accordingly too (matching the
+     * buffer's own landscape aspect, avoiding a stretched grid), then [ZebraMask.rotatedBy] rotates the
+     * finished small grid (cheap — [ZebraGridColumns]x[ZebraGridRows] cells, not the raw frame) into
+     * the shape the portrait [com.dragote.xcamera.feature.camera.ui.component.ZebraOverlay] canvas
+     * actually expects.
+     */
+    private fun classifyZebraIfDue(image: Image) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastZebraClassifyUptimeMs < ZebraThrottleMs) return
+        lastZebraClassifyUptimeMs = now
+
+        val plane = image.planes[0]
+        val quarterTurn = analysisRotationDegrees == 90 || analysisRotationDegrees == 270
+        val rawMask = ZebraMask.fromLumaPlane(
+            buffer = plane.buffer,
+            rowStride = plane.rowStride,
+            pixelStride = plane.pixelStride,
+            width = image.width,
+            height = image.height,
+            columns = if (quarterTurn) ZebraGridRows else ZebraGridColumns,
+            rows = if (quarterTurn) ZebraGridColumns else ZebraGridRows,
+        )
+        _zebraMask.value = rawMask.rotatedBy(analysisRotationDegrees)
+    }
+
+    /**
      * The activity is locked to portrait (see AndroidManifest) so the skeuomorphic UI never rotates,
      * which means there's no configuration-change signal to derive a target rotation from. This
      * listener tracks the phone's *physical* orientation via the accelerometer instead, bucketed into
@@ -226,9 +415,11 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      * multi-lens phones expose their extra lenses as physical sub-cameras of one logical camera
      * rather than as separate top-level camera IDs.
      *
-     * [surface] must already have its backing buffer sized (e.g. via [SurfaceTexture
-     * .setDefaultBufferSize]) to whatever [previewOutputSize] returned for [lens] — this function
-     * configures the capture session against the surface as handed to it, it does not resize it.
+     * [previewViewWidth]/[previewViewHeight] are the on-screen `TextureView`'s own measured pixel
+     * dimensions — this class computes/owns the actual preview [ImageReader] ([previewImageReader])
+     * internally from them (see [previewOutputSize]/[createPreviewImageReader]) rather than accepting
+     * an already-sized `Surface` the way it used to; see this class's own doc for why. Register a
+     * frame consumer via [setPreviewFrameListener] separately to actually see any pixels.
      *
      * Camera2 has no lifecycle-aware bind/unbind equivalent to CameraX's `bindToLifecycle`, so this
      * registers as a [LifecycleEventObserver] on [lifecycleOwner]'s lifecycle to open the device/
@@ -239,12 +430,15 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      */
     suspend fun bindCamera(
         lifecycleOwner: LifecycleOwner,
-        surface: Surface,
+        previewViewWidth: Int,
+        previewViewHeight: Int,
         lens: CameraLens? = null,
     ) {
         ensureBackgroundThread()
-        previewSurface = surface
+        isBound = true
         currentLens = lens
+        this.previewViewWidth = previewViewWidth
+        this.previewViewHeight = previewViewHeight
 
         val lifecycle = lifecycleOwner.lifecycle
         if (boundLifecycle !== lifecycle) {
@@ -260,14 +454,20 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         }
     }
 
-    /** Call once the preview surface backing a previous [bindCamera] call is no longer valid. */
+    /**
+     * Call once whatever [bindCamera] was backing is no longer valid (e.g. `ui/CameraScreen`'s
+     * `onSurfaceTextureDestroyed`, once its `CameraPreviewRenderer` has been stopped). Clears
+     * [isBound] (so a lifecycle event arriving mid-teardown can't resurrect the session — see
+     * [onStateChanged]) and [previewFrameHandler]/[previewFrameListener] (so no further frames get
+     * handed to a renderer that's going away), then closes the device/session/readers the same way
+     * [closeCameraAndSession] does.
+     */
     fun unbindCamera() {
         boundLifecycle?.removeObserver(this)
         boundLifecycle = null
-        previewSurface = null
-        // Close (and only then stop the background thread its callbacks run on) under cameraLock —
-        // see closeCameraAndSession's own doc for why serializing against an in-flight openCamera
-        // matters here.
+        isBound = false
+        previewFrameHandler = null
+        previewFrameListener = null
         controllerScope.launch {
             cameraLock.withLock { closeCameraAndSessionLocked() }
             stopBackgroundThread()
@@ -277,7 +477,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     override fun onStateChanged(source: LifecycleOwner, event: Lifecycle.Event) {
         when (event) {
             Lifecycle.Event.ON_START -> {
-                if (previewSurface != null) controllerScope.launch { openCamera() }
+                if (isBound) controllerScope.launch { openCamera() }
             }
             Lifecycle.Event.ON_STOP -> closeCameraAndSession()
             Lifecycle.Event.ON_DESTROY -> unbindCamera()
@@ -286,7 +486,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     }
 
     private suspend fun openCamera() = cameraLock.withLock {
-        val surface = previewSurface ?: return@withLock
+        if (!isBound) return@withLock
         closeCameraAndSessionLocked()
 
         val cameraId = resolveLogicalCameraId(currentLens) ?: return@withLock
@@ -306,28 +506,38 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         val reader = createImageReader(effectiveCharacteristics)
         imageReader = reader
 
+        val previewReader = createPreviewImageReader(effectiveCharacteristics)
+        previewImageReader = previewReader
+        analysisRotationDegrees = effectiveCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+
         val session = try {
-            createCaptureSession(device, surface, reader.surface, currentLens)
+            createCaptureSession(device, previewReader.surface, reader.surface, currentLens)
         } catch (e: CameraAccessException) {
             device.close()
             cameraDevice = null
             reader.close()
             imageReader = null
+            previewReader.close()
+            previewImageReader = null
             return@withLock
         } catch (e: IllegalStateException) {
             device.close()
             cameraDevice = null
             reader.close()
             imageReader = null
+            previewReader.close()
+            previewImageReader = null
             return@withLock
         }
         captureSession = session
-        startPreviewRepeating(device, session, surface)
+        startPreviewRepeating(device, session, previewReader.surface)
     }
 
     @Suppress("MissingPermission") // CAMERA permission is gated by ui/CameraScreen before bindCamera is ever called.
     private suspend fun openCameraDevice(cameraId: String): CameraDevice =
         suspendCancellableCoroutine { continuation ->
+            val closedSignal = CompletableDeferred<Unit>()
+            deviceClosedSignal = closedSignal
             cameraManager.openCamera(
                 cameraId,
                 object : CameraDevice.StateCallback() {
@@ -347,6 +557,12 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
                         if (continuation.isActive) {
                             continuation.resumeWithException(IllegalStateException("Camera error: $error"))
                         }
+                    }
+
+                    // See deviceClosedSignal's own doc — this is what closeCameraAndSessionLocked
+                    // actually waits on before letting the same camera ID be reopened.
+                    override fun onClosed(camera: CameraDevice) {
+                        closedSignal.complete(Unit)
                     }
                 },
                 backgroundHandler,
@@ -415,7 +631,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     private fun updatePreviewRepeating() {
         val device = cameraDevice ?: return
         val session = captureSession ?: return
-        val surface = previewSurface ?: return
+        val surface = previewImageReader?.surface ?: return
         try {
             startPreviewRepeating(device, session, surface)
         } catch (e: CameraAccessException) {
@@ -479,15 +695,32 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         controllerScope.launch { cameraLock.withLock { closeCameraAndSessionLocked() } }
     }
 
-    private fun closeCameraAndSessionLocked() {
+    /**
+     * `suspend` specifically so it can await [deviceClosedSignal] (see that field's own doc) before
+     * returning — every caller already runs inside a [cameraLock]-held suspend block ([openCamera],
+     * [unbindCamera], [closeCameraAndSession]), so this simply extends how long that lock is held
+     * rather than needing any new coordination of its own; that's the whole point, since the lock is
+     * exactly what's supposed to keep the *next* [openCamera] call from reopening the same camera ID
+     * before this one has genuinely finished releasing it. [CameraCloseTimeoutMs] is a bounded safety
+     * net, not the expected path — a device that never calls `onClosed()` shouldn't be able to
+     * deadlock every future rebind.
+     */
+    private suspend fun closeCameraAndSessionLocked() {
         captureSession?.close()
         captureSession = null
+        val hadDevice = cameraDevice != null
         cameraDevice?.close()
         cameraDevice = null
         imageReader?.close()
         imageReader = null
+        previewImageReader?.close()
+        previewImageReader = null
         _autoExposureTimeNs.value = null
         _autoIso.value = null
+        _zebraMask.value = null
+        if (hadDevice) {
+            withTimeoutOrNull(CameraCloseTimeoutMs) { deviceClosedSignal?.await() }
+        }
     }
 
     private fun ensureBackgroundThread() {
@@ -521,29 +754,77 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     }
 
     /**
-     * Picks the [android.hardware.camera2.params.StreamConfigurationMap]-supported `SurfaceTexture`
+     * The live preview's own output — see this class's own doc for why this is an `ImageReader`
+     * rather than a caller-supplied `Surface`. `maxImages = 2` mirrors [createImageReader]'s still
+     * reader; a live preview only ever wants the latest frame, so [previewImageAvailableListener]
+     * always calls `acquireLatestImage`, never queuing.
+     */
+    private fun createPreviewImageReader(characteristics: CameraCharacteristics): ImageReader {
+        val size = previewOutputSize(currentLens, previewViewWidth, previewViewHeight)
+        return ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 2).apply {
+            setOnImageAvailableListener(previewImageAvailableListener, backgroundHandler)
+        }
+    }
+
+    /**
+     * Picks the [android.hardware.camera2.params.StreamConfigurationMap]-supported `YUV_420_888`
      * preview size closest in aspect ratio to a [targetWidth]x[targetHeight] view without being
      * needlessly larger than the viewfinder actually needs (keeps sensor readout/preview frame cost
      * down). [targetWidth]/[targetHeight] are the *view's* own pixel dimensions (portrait, since the
      * activity is locked portrait); output sizes from [CameraCharacteristics] are expressed in the
      * sensor's own native pixel-array coordinate convention, which for essentially every phone's back
      * camera is landscape (a physically-rotated sensor) regardless of how the device is held — so
-     * matching is done against the width/height-swapped target. `ui/CameraScreen`'s own preview
-     * transform makes the same swap assumption on the consuming side.
+     * matching is done against the width/height-swapped target. `CameraPreviewRenderer`'s own crop
+     * transform makes the same swap assumption on the consuming side. Now internal-only —
+     * `ui/CameraScreen` no longer calls this directly (there's no `Surface` for it to size), it's used
+     * solely by [createPreviewImageReader].
      */
-    fun previewOutputSize(lens: CameraLens?, targetWidth: Int, targetHeight: Int): Size {
+    private fun previewOutputSize(lens: CameraLens?, targetWidth: Int, targetHeight: Int): Size {
         if (targetWidth <= 0 || targetHeight <= 0) return FallbackPreviewSize
         val characteristics = characteristicsFor(lens) ?: return FallbackPreviewSize
         val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return FallbackPreviewSize
-        val candidates = map.getOutputSizes(SurfaceTexture::class.java)?.toList().orEmpty()
+        val candidates = map.getOutputSizes(ImageFormat.YUV_420_888)?.toList().orEmpty()
         if (candidates.isEmpty()) return FallbackPreviewSize
 
         val targetAspect = targetWidth.toFloat() / targetHeight.toFloat()
-        val withinCap = candidates.filter { it.width <= MaxPreviewDimension && it.height <= MaxPreviewDimension }
-        return (withinCap.ifEmpty { candidates })
+        // Both bounds matter: MaxPreviewDimension keeps frame cost down, but MinPreviewDimension is
+        // just as important — without a floor, a small analysis/video-call-class size (e.g. 352x288,
+        // listed by real devices alongside genuine preview sizes) can end up numerically *closer* in
+        // aspect ratio to an odd target (e.g. an 11:9 candidate beating every real 4:3/16:9 one purely
+        // by coincidence) than any properly-sized candidate, silently picking a viewfinder resolution
+        // far too small to fill the screen without visible pixelation. Excluding anything below the
+        // floor first means aspect-closeness only ever competes among genuinely preview-sized options.
+        val inRange = candidates.filter {
+            it.width <= MaxPreviewDimension && it.height <= MaxPreviewDimension &&
+                minOf(it.width, it.height) >= MinPreviewDimension
+        }
+        return (inRange.ifEmpty { candidates })
             .minByOrNull { size -> abs(size.height.toFloat() / size.width.toFloat() - targetAspect) }
             ?: FallbackPreviewSize
     }
+
+    /**
+     * Registers (or, passing both `null`, unregisters) the render-thread consumer of every delivered
+     * preview [Image] — see [previewFrameHandler]/[previewFrameListener]'s own docs and
+     * [previewImageAvailableListener]. `ui/CameraScreen` calls this with its `CameraPreviewRenderer`'s
+     * own [handler]/[Handler]-bound `onPreviewFrame` before (or independently of) [bindCamera] —
+     * registration and binding aren't ordered relative to each other, frames simply have nowhere to go
+     * (closed immediately, see [previewImageAvailableListener]) until both are in place.
+     */
+    fun setPreviewFrameListener(handler: Handler?, listener: ((Image) -> Unit)?) {
+        previewFrameHandler = handler
+        previewFrameListener = listener
+    }
+
+    /**
+     * Pure `CameraCharacteristics.SENSOR_ORIENTATION` lookup for [lens] — `CameraPreviewRenderer`
+     * needs this to rotate raw preview frames into display orientation itself, the same reason
+     * [analysisRotationDegrees] exists for zebra (an `ImageReader` surface gets no automatic
+     * producer-side rotation the way a `TextureView`'s own on-screen `SurfaceTexture` used to). `0` if
+     * unavailable — same fallback [analysisRotationDegrees] defaults to.
+     */
+    fun previewRotationDegrees(lens: CameraLens?): Int =
+        characteristicsFor(lens)?.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
 
     /**
      * Cached in [pendingFlashMode]/[pendingManualIso]/[pendingManualShutterNs] the same way manual
@@ -657,6 +938,18 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     fun setExposureCompensation(value: Int) {
         pendingAeCompensation = value
         updatePreviewRepeating()
+    }
+
+    /**
+     * See [zebraAnalysisEnabled]'s own doc — [previewImageAvailableListener] starts/stops classifying
+     * frames immediately, no separate kick-off needed since frames are already flowing continuously.
+     * Clears [_zebraMask] on the way to disabled so a stale mask from right before the drag ended
+     * doesn't linger on screen — mirrors [closeCameraAndSessionLocked]'s own reset for the same reason.
+     */
+    fun setZebraAnalysisEnabled(enabled: Boolean) {
+        if (zebraAnalysisEnabled == enabled) return
+        zebraAnalysisEnabled = enabled
+        if (!enabled) _zebraMask.value = null
     }
 
     /**
@@ -919,8 +1212,18 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     }
 
     private companion object {
+        /** Bounded wait for [CameraDevice.StateCallback.onClosed] in [closeCameraAndSessionLocked] —
+         *  generous relative to how fast a real close normally completes, just there so a device that
+         *  never calls back can't wedge every future reopen behind an unbounded await. */
+        const val CameraCloseTimeoutMs = 1_500L
+
         /** Preview stream resolution cap — plenty for a full-screen viewfinder, keeps frame cost down. */
         const val MaxPreviewDimension = 1920
+
+        /** Preview stream resolution floor — see [previewOutputSize]'s own doc for why a floor matters
+         *  just as much as the cap. Comfortably above every non-preview (video-call/analysis-class)
+         *  size real devices tend to also list alongside genuine preview sizes. */
+        const val MinPreviewDimension = 720
 
         val FallbackPreviewSize = Size(1920, 1080)
         val FallbackStillSize = Size(1920, 1080)
@@ -941,5 +1244,13 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
          * Camera2-level state between the two requests.
          */
         const val PreviewMaxExposureTimeNs = 1_000_000_000L / 15
+
+        /** Grid dimensions [ZebraMask.fromLumaPlane] buckets the analysis frame into — matches the
+         *  reference implementation's own coarse/blocky (not per-pixel) clipping mask. */
+        const val ZebraGridColumns = 24
+        const val ZebraGridRows = 32
+
+        /** Floor between real [ZebraMask] recomputations — see [classifyZebraIfDue]. */
+        const val ZebraThrottleMs = 66L
     }
 }
