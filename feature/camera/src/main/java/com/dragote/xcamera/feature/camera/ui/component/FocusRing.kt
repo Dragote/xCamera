@@ -74,24 +74,33 @@ fun FocusRing(
         label = "focusRingAlpha",
     )
 
+    // Every absolute dp measurement below (ring thickness, tooth length/stroke, index-mark size, rim
+    // stroke) scales proportionally with diameter relative to the design reference (RingDiameter) —
+    // callers now routinely pass a diameter several times RingDiameter (see ui/CameraScreen, issue #21
+    // follow-up: the ring fills nearly the whole viewfinder), and a fixed-dp ring band/teeth would read
+    // as spindly and thin against a much bigger circle without this.
+    val scale = diameter / RingDiameter
+
     Canvas(modifier = modifier.fillMaxSize().alpha(alpha)) {
         val ringCenter = displayedCenter ?: return@Canvas
         val outerRadiusPx = diameter.toPx() / 2f
-        val ringThicknessPx = RingThickness.toPx()
-        val loupeRadiusPx = outerRadiusPx - ringThicknessPx - RingGap.toPx()
+        val ringThicknessPx = (RingThickness * scale).toPx()
+        val loupeRadiusPx = outerRadiusPx - ringThicknessPx - (RingGap * scale).toPx()
 
-        drawLoupe(ringCenter, loupeRadiusPx, loupeImage, peakingMask)
-        drawGearRing(ringCenter, outerRadiusPx, ringThicknessPx, rotationDegrees)
+        drawLoupe(ringCenter, loupeRadiusPx, loupeImage, peakingMask, scale)
+        drawGearRing(ringCenter, outerRadiusPx, ringThicknessPx, rotationDegrees, scale)
     }
 }
 
 /** Magnified live-preview crop, clipped to a circle, with the loupe-local focus-peaking highlight
- *  drawn on top of it (also clipped to the same circle — the whole point of scoping it to the loupe). */
+ *  drawn on top of it (also clipped to the same circle — the whole point of scoping it to the loupe).
+ *  [scale] is the ring's own size scale relative to its design reference — see [FocusRing]'s own doc. */
 private fun DrawScope.drawLoupe(
     center: Offset,
     radiusPx: Float,
     loupeImage: ImageBitmap?,
     peakingMask: FocusPeakingMask?,
+    scale: Float,
 ) {
     val clip = Path().apply { addOval(Rect(center, radiusPx)) }
     clipPath(clip) {
@@ -108,22 +117,22 @@ private fun DrawScope.drawLoupe(
         drawRect(Color.Black.copy(alpha = 0.15f), topLeft = center - Offset(radiusPx, radiusPx), size = Size(radiusPx * 2f, radiusPx * 2f))
 
         if (peakingMask != null && peakingMask.columns > 0 && peakingMask.rows > 0) {
-            drawPeakingHighlight(peakingMask, center, radiusPx)
+            drawPeakingHighlight(peakingMask, center, radiusPx, scale)
         }
     }
     // Loupe rim — a thin inner line separating the magnified content from the gear ring around it.
-    drawCircle(color = Color.White.copy(alpha = 0.25f), radius = radiusPx, center = center, style = Stroke(width = 1.dp.toPx()))
+    drawCircle(color = Color.White.copy(alpha = 0.25f), radius = radiusPx, center = center, style = Stroke(width = (1.dp * scale).toPx()))
 }
 
 /** One outlined rect per [FocusPeakingMask.edge] cell classified `true`, confined to the loupe's own
  *  circular bounds via the caller's `clipPath`. */
-private fun DrawScope.drawPeakingHighlight(mask: FocusPeakingMask, center: Offset, radiusPx: Float) {
+private fun DrawScope.drawPeakingHighlight(mask: FocusPeakingMask, center: Offset, radiusPx: Float, scale: Float) {
     val boxSize = radiusPx * 2f
     val cellWidth = boxSize / mask.columns
     val cellHeight = boxSize / mask.rows
     val left = center.x - radiusPx
     val top = center.y - radiusPx
-    val strokeWidth = 1.5.dp.toPx()
+    val strokeWidth = (1.5.dp * scale).toPx()
 
     for (row in 0 until mask.rows) {
         for (col in 0 until mask.columns) {
@@ -139,8 +148,16 @@ private fun DrawScope.drawPeakingHighlight(mask: FocusPeakingMask, center: Offse
 }
 
 /** The mechanical, gear-toothed ring itself — a base stroked circle plus radial "teeth" ticks that
- *  spin with [rotationDegrees], reading as a physical focus-ring being turned. */
-private fun DrawScope.drawGearRing(center: Offset, outerRadiusPx: Float, thicknessPx: Float, rotationDegrees: Float) {
+ *  spin with [rotationDegrees], reading as a physical focus-ring being turned. [scale] keeps the
+ *  teeth/index-mark/rim proportionate at whatever [outerRadiusPx] the caller is actually drawing —
+ *  see [FocusRing]'s own doc. */
+private fun DrawScope.drawGearRing(
+    center: Offset,
+    outerRadiusPx: Float,
+    thicknessPx: Float,
+    rotationDegrees: Float,
+    scale: Float,
+) {
     val midRadius = outerRadiusPx - thicknessPx / 2f
     drawCircle(
         color = RingBodyColor,
@@ -150,8 +167,8 @@ private fun DrawScope.drawGearRing(center: Offset, outerRadiusPx: Float, thickne
     )
 
     val innerRadius = outerRadiusPx - thicknessPx
-    val toothOuterRadius = outerRadiusPx + 2.dp.toPx()
-    val toothStroke = 2.dp.toPx()
+    val toothOuterRadius = outerRadiusPx + (2.dp * scale).toPx()
+    val toothStroke = (2.dp * scale).toPx()
     rotate(degrees = rotationDegrees, pivot = center) {
         for (tooth in 0 until GearTeeth) {
             val angle = (2.0 * PI * tooth / GearTeeth).toFloat()
@@ -168,15 +185,21 @@ private fun DrawScope.drawGearRing(center: Offset, outerRadiusPx: Float, thickne
 
     // Fixed (non-rotating) center indicator carets, top and bottom — an "index mark" a real focus
     // ring reads its position against, independent of how far the ring itself has spun.
-    val markLength = 6.dp.toPx()
+    val markLength = (6.dp * scale).toPx()
+    val markStroke = (2.dp * scale).toPx()
     drawLine(
         color = CameraChrome.Accent,
         start = Offset(center.x, center.y - outerRadiusPx - markLength),
-        end = Offset(center.x, center.y - outerRadiusPx + 2.dp.toPx()),
-        strokeWidth = 2.dp.toPx(),
+        end = Offset(center.x, center.y - outerRadiusPx + (2.dp * scale).toPx()),
+        strokeWidth = markStroke,
     )
 
-    drawCircle(color = Color.White.copy(alpha = 0.12f), radius = outerRadiusPx, center = center, style = Stroke(width = 1.dp.toPx()))
+    drawCircle(
+        color = Color.White.copy(alpha = 0.12f),
+        radius = outerRadiusPx,
+        center = center,
+        style = Stroke(width = (1.dp * scale).toPx()),
+    )
 }
 
 private val RingDiameter = 156.dp
@@ -209,35 +232,48 @@ private fun previewPeakingMask(): FocusPeakingMask {
     return FocusPeakingMask(columns, rows, edges)
 }
 
-@Preview(showBackground = true, widthDp = 260, heightDp = 260, backgroundColor = 0xFF0D1210)
+// Matches real usage (ui/CameraScreen, issue #21 follow-up): the ring is always centered on the
+// viewfinder itself, sized to ~92% of its shorter dimension — not the small, touch-point-centered
+// 156dp default these previews used before that change.
+private val PreviewViewfinderWidthDp = 300.dp
+private val PreviewViewfinderHeightDp = 420.dp
+private val PreviewRingDiameterDp = PreviewViewfinderWidthDp * 0.92f
+
+@Preview(showBackground = true, widthDp = 300, heightDp = 420, backgroundColor = 0xFF0D1210)
 @Composable
 private fun FocusRingWithPeakingPreview() {
     XCameraTheme {
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val center = with(density) { Offset(PreviewViewfinderWidthDp.toPx() / 2f, PreviewViewfinderHeightDp.toPx() / 2f) }
         FocusRing(
-            center = Offset(400f, 400f),
+            center = center,
             rotationDegrees = 35f,
             loupeImage = previewLoupeBitmap(),
             peakingMask = previewPeakingMask(),
+            diameter = PreviewRingDiameterDp,
             modifier = Modifier.fillMaxSize().background(Color(0xFF0D1210)),
         )
     }
 }
 
-@Preview(showBackground = true, widthDp = 260, heightDp = 260, backgroundColor = 0xFF0D1210)
+@Preview(showBackground = true, widthDp = 300, heightDp = 420, backgroundColor = 0xFF0D1210)
 @Composable
 private fun FocusRingLoadingPreview() {
     XCameraTheme {
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val center = with(density) { Offset(PreviewViewfinderWidthDp.toPx() / 2f, PreviewViewfinderHeightDp.toPx() / 2f) }
         FocusRing(
-            center = Offset(400f, 400f),
+            center = center,
             rotationDegrees = 0f,
             loupeImage = null,
             peakingMask = null,
+            diameter = PreviewRingDiameterDp,
             modifier = Modifier.fillMaxSize().background(Color(0xFF0D1210)),
         )
     }
 }
 
-@Preview(showBackground = true, widthDp = 260, heightDp = 260, backgroundColor = 0xFF0D1210)
+@Preview(showBackground = true, widthDp = 300, heightDp = 420, backgroundColor = 0xFF0D1210)
 @Composable
 private fun FocusRingHiddenPreview() {
     XCameraTheme {
@@ -246,6 +282,7 @@ private fun FocusRingHiddenPreview() {
             rotationDegrees = 0f,
             loupeImage = null,
             peakingMask = null,
+            diameter = PreviewRingDiameterDp,
             modifier = Modifier.fillMaxSize().background(Color(0xFF0D1210)),
         )
     }
