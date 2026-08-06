@@ -83,6 +83,7 @@ import com.dragote.xcamera.feature.camera.presentation.CameraViewModel
 import com.dragote.xcamera.feature.camera.ui.component.ExposingIndicator
 import com.dragote.xcamera.feature.camera.ui.component.ExposureDial
 import com.dragote.xcamera.feature.camera.ui.component.FlashLever
+import com.dragote.xcamera.feature.camera.ui.component.FocusDial
 import com.dragote.xcamera.feature.camera.ui.component.FocusRing
 import com.dragote.xcamera.feature.camera.ui.component.FocusTapIndicator
 import com.dragote.xcamera.feature.camera.ui.component.GridLever
@@ -111,9 +112,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.math.PI
-import kotlin.math.atan2
-import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 /**
@@ -237,6 +235,12 @@ private fun rememberCameraRepository(): CameraRepository {
  * `CONTROL_AE_MODE_OFF` fixes ISO and shutter speed together, there's no "ISO manual, shutter auto"
  * mode).
  *
+ * [FocusDial] (issue #21 UX rework) joins the deck row too, but only on a lens that actually reports
+ * manual-focus capability (`CameraUiState.manualFocusSupported`) — unlike the exposure dials it's not
+ * a mode-gated swap, it's simply present or absent. It's the *only* control that actually changes the
+ * manual focus distance; the viewfinder's own long-press only ever repositions the focus ring/loupe —
+ * see the focus-ring state block and `detectFocusGestures` further down for the full split.
+ *
  * The thumbnail chip shows [latestGalleryUri] (the actual last photo in the device's gallery,
  * queried once permission allows it — see [galleryReadPermission]) until a fresh capture replaces
  * it with [CameraUiState.lastSavedUri]; either way it's just a fallback chain feeding one URI into
@@ -294,21 +298,36 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     var deckTopY by remember { mutableFloatStateOf(0f) }
     var deckHeight by remember { mutableFloatStateOf(0f) }
 
-    // Manual focus ring state (issue #21, plus the on-device-QA follow-up below) — the ring's own
-    // *visual* center is always the viewfinder's own center (set in onHoldStart from previewViewSize,
-    // not the touch point), regardless of where the long-press actually happened; only the rotation
-    // gesture's angle math still tracks the real touch point (see detectFocusGestures) — see
-    // focusRingCenter's own assignment below for why. null means idle (FocusRing plays its own
-    // fade-out).
-    var focusRingCenter by remember { mutableStateOf<Offset?>(null) }
+    // Manual focus ring state (issue #21, reworked per the FocusDial UX split — see FocusDial's own
+    // doc and the deck row below) — two independent hold signals now feed one derived ring center:
+    // screenHoldPosition (a long-press directly on the viewfinder, see detectFocusGestures) is the
+    // *actual* touch point and wins whenever it's held (the more specific signal); dialHeld
+    // (FocusDial, held with no screen hold) falls back to the viewfinder's own center. The ring stays
+    // up as long as *either* is held — focusRingCenter is only null once both are released. Rotation
+    // itself (and therefore the real manual focus distance) is now driven *exclusively* by FocusDial —
+    // the viewfinder's own long-press only ever repositions the ring/loupe, it no longer adjusts focus
+    // at all (see the viewfinder's own onHoldStart/onHoldEnd below).
+    var screenHoldPosition by remember { mutableStateOf<Offset?>(null) }
+    var dialHeld by remember { mutableStateOf(false) }
+    val focusRingCenter = screenHoldPosition
+        ?: Offset(previewViewSize.width / 2f, previewViewSize.height / 2f).takeIf { dialHeld }
     var focusRingRotationDegrees by remember { mutableFloatStateOf(0f) }
     var focusLoupeBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
     var focusPeakingMask by remember { mutableStateOf<FocusPeakingMask?>(null) }
-    // Snapshotted once at hold-start (see onHoldStart below), not re-read on every rotation tick —
-    // CameraController stops emitting fresh AF-converged readings the moment the first rotation locks
-    // a manual distance (see CameraUiState.liveFocusDistanceDiopters's own doc), so this is the one
-    // correct "distance a rotation adjusts from" for the gesture's whole duration.
+    // Snapshotted once at FocusDial's own hold-start (see its onHoldStart below), not re-read on every
+    // rotation tick — CameraController stops emitting fresh AF-converged readings the moment the first
+    // rotation locks a manual distance (see CameraUiState.liveFocusDistanceDiopters's own doc), so this
+    // is the one correct "distance a rotation adjusts from" for the gesture's whole duration.
     var focusHoldStartDistance by remember { mutableFloatStateOf(0f) }
+
+    // Function-scoped (not nested inside the viewfinder's own Box like before) since both the
+    // viewfinder's long-press gesture *and* FocusDial (in the deck row further down) now read/trigger
+    // these — rememberUpdatedState is what lets a pointerInput closure that never restarts across
+    // recompositions (both gestures use a fixed Unit key, see detectFocusGestures/FocusDial's own
+    // pointerInput) still read the *current* uiState instead of whatever uiState happened to be in
+    // scope the one time that closure was originally created.
+    val latestUiState by rememberUpdatedState(uiState)
+    val focusVibrator = rememberFocusVibrator()
 
     // Tap-to-focus's own visual feedback (on-device-QA follow-up to issue #21) — independent lifecycle
     // from the hold-and-rotate ring above: appears at the tap point, stays up while
@@ -560,9 +579,7 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                     .background(CameraChrome.ViewfinderBezelGradient)
                     .padding(9.dp),
             ) {
-                val latestUiState by rememberUpdatedState(uiState)
                 val viewConfiguration = LocalViewConfiguration.current
-                val focusVibrator = rememberFocusVibrator()
 
                 Box(
                     modifier = Modifier
@@ -571,7 +588,7 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                         .background(CameraChrome.ViewfinderInsetColor)
                         .then(
                             // No gesture detector at all on a lens with no manual-focus capability —
-                            // both tap-to-focus and the hold-and-rotate ring are hidden/no-op together
+                            // both tap-to-focus and the hold-to-position ring are hidden/no-op together
                             // (issue #21's own capability gate). Keyed on manualFocusSupported alone
                             // (not the whole uiState) so an in-progress gesture never gets cancelled
                             // mid-flight by an unrelated state change — see latestUiState above for how
@@ -595,36 +612,25 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                                             focusTapPosition = position
                                             focusTapToken++
                                         },
-                                        onHoldStart = { _ ->
-                                            // Ignores the real touch point on purpose — per on-device
-                                            // QA, the ring's own *visual* center (and therefore the
-                                            // loupe crop it drives, see focusRingCenter's own doc) is
-                                            // always the viewfinder's own center, not the long-press
-                                            // location; only the rotation gesture's angle math (inside
-                                            // detectFocusGestures itself) still tracks the real touch
-                                            // point, unaffected by this.
-                                            focusRingCenter = Offset(previewViewSize.width / 2f, previewViewSize.height / 2f)
-                                            focusRingRotationDegrees = 0f
+                                        onHoldStart = { position ->
+                                            // The viewfinder's own long-press now only repositions the
+                                            // ring/loupe — it no longer adjusts focus distance at all
+                                            // (that moved to FocusDial, in the deck row below, per the
+                                            // #21 UX rework). Uses the real touch point directly —
+                                            // reversed from the prior "always centered" behavior, which
+                                            // is now only what happens when the *dial* alone is held
+                                            // (see screenHoldPosition/dialHeld's own doc above).
+                                            screenHoldPosition = position
                                             focusLoupeBitmap = null
                                             focusPeakingMask = null
-                                            focusHoldStartDistance = latestUiState.liveFocusDistanceDiopters ?: 0f
                                             // A hold gesture takes over from any still-visible tap
                                             // indicator so the two focus affordances never overlap.
                                             focusTapPosition = null
                                             focusTapVisible = false
                                             focusHaptic(focusVibrator)
                                         },
-                                        onRotate = { totalRotationRadians ->
-                                            focusRingRotationDegrees = Math.toDegrees(totalRotationRadians.toDouble()).toFloat()
-                                            val newDistance = manualFocusDistanceForRotation(
-                                                startDistanceDiopters = focusHoldStartDistance,
-                                                rotationRadians = totalRotationRadians,
-                                                maxFocusDistanceDiopters = latestUiState.maxFocusDistanceDiopters,
-                                            )
-                                            viewModel.setManualFocusDistance(newDistance)
-                                        },
                                         onHoldEnd = {
-                                            focusRingCenter = null
+                                            screenHoldPosition = null
                                             focusHaptic(focusVibrator)
                                         },
                                     )
@@ -699,6 +705,48 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                         onLensSelected = viewModel::onLensSelected,
                         modifier = Modifier.weight(1f),
                     )
+                    // Only occupies a slot when the current lens actually supports manual focus (same
+                    // capability gate the rest of #21 already uses) — mirrors ExposureOrManualDials'
+                    // own conditional-content pattern below, just at the whole-dial level rather than
+                    // swapping between two dial sets. Hold-without-touching-the-screen centers the ring
+                    // on the viewfinder (dialHeld, see its own doc above); rotating/dragging here is the
+                    // *only* thing that actually changes the focus value now — the viewfinder's own
+                    // long-press only repositions the ring.
+                    if (uiState.manualFocusSupported) {
+                        FocusDial(
+                            focusDistanceDiopters = uiState.liveFocusDistanceDiopters ?: 0f,
+                            onHoldStart = {
+                                dialHeld = true
+                                focusHoldStartDistance = latestUiState.liveFocusDistanceDiopters ?: 0f
+                                focusRingRotationDegrees = 0f
+                                // Only clear the loupe if the screen isn't already driving one of its
+                                // own — a dial-only hold starting fresh gets a clean loupe, but one
+                                // starting alongside an already-held screen shouldn't visibly blank out
+                                // the loupe the screen hold already has going.
+                                if (screenHoldPosition == null) {
+                                    focusLoupeBitmap = null
+                                    focusPeakingMask = null
+                                }
+                                focusTapPosition = null
+                                focusTapVisible = false
+                                focusHaptic(focusVibrator)
+                            },
+                            onRotate = { totalRotationRadians ->
+                                focusRingRotationDegrees = Math.toDegrees(totalRotationRadians.toDouble()).toFloat()
+                                val newDistance = manualFocusDistanceForRotation(
+                                    startDistanceDiopters = focusHoldStartDistance,
+                                    rotationRadians = totalRotationRadians,
+                                    maxFocusDistanceDiopters = latestUiState.maxFocusDistanceDiopters,
+                                )
+                                viewModel.setManualFocusDistance(newDistance)
+                            },
+                            onHoldEnd = {
+                                dialHeld = false
+                                focusHaptic(focusVibrator)
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                     ShutterButton(
                         enabled = !uiState.isCapturing,
                         onCapture = ::capture,
@@ -882,13 +930,7 @@ private fun Seam(modifier: Modifier = Modifier) {
 // compute at all anymore. CameraPreviewRenderer computes the equivalent crop/rotation transform
 // itself, as a GL matrix, from each frame's actually-delivered Image dimensions — see its own doc.
 
-/* ── Manual focus (issue #21): tap-to-focus + hold-and-rotate ring gesture ─────────────────────── */
-
-/** Radius (px) a pointer must be from the fixed hold center before its angle starts contributing to
- *  rotation — right at the center, a tiny finger jitter's angle is essentially noise (an infinitesimal
- *  radius amplifies to a huge, meaningless angular swing), so rotation only starts accumulating once
- *  the finger has genuinely moved out into a circular path around the ring's own center. */
-private const val MinRotationRadiusPx = 24f
+/* ── Manual focus (issue #21): tap-to-focus + hold-to-position ring gesture ───────────────────── */
 
 /**
  * Distinguishes a simple tap (short press, negligible movement) from a long-press-and-hold (issue
@@ -897,19 +939,16 @@ private const val MinRotationRadiusPx = 24f
  * long-press threshold elapses is neither — it's ignored outright (this screen has no pan/swipe
  * gesture over the viewfinder for this to conflict with).
  *
- * While holding, [onRotate] is called on every pointer move with the *total* signed rotation (radians,
- * positive clockwise) accumulated around the fixed hold center since the hold began — computed by
- * unwrapping the raw `atan2` angle across the +-pi wrap boundary on every step, the same "accumulate
- * deltas, not absolute angles" approach true continuous rotation gestures need (an absolute angle
- * alone can't distinguish one full turn from zero turns). [MinRotationRadiusPx] freezes accumulation
- * while the pointer is too close to the center for its angle to be meaningful.
+ * While holding, this no longer tracks rotation at all (that moved to `FocusDial`, per the #21 UX
+ * rework) — [onHoldStart] fires once with the touch point, then this just waits for release
+ * ([onHoldEnd]), consuming pointer events for the hold's whole duration so nothing else on the
+ * viewfinder can interpret them meanwhile.
  */
 private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectFocusGestures(
     viewConfigurationLongPressMs: Long,
     viewConfigurationTouchSlopPx: Float,
     onTap: (Offset) -> Unit,
     onHoldStart: (Offset) -> Unit,
-    onRotate: (totalRotationRadians: Float) -> Unit,
     onHoldEnd: () -> Unit,
 ) {
     awaitEachGesture {
@@ -938,29 +977,10 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectFo
         when {
             isLongPress -> {
                 onHoldStart(down.position)
-                var lastAngle = 0f
-                var angleInitialized = false
-                var totalRotationRadians = 0f
-
                 while (true) {
                     val event = awaitPointerEvent()
                     val change = event.changes.firstOrNull { it.id == pointer.id } ?: break
                     if (!change.pressed) break
-
-                    val dx = change.position.x - down.position.x
-                    val dy = change.position.y - down.position.y
-                    if (hypot(dx, dy) >= MinRotationRadiusPx) {
-                        val angle = atan2(dy, dx)
-                        if (angleInitialized) {
-                            var delta = angle - lastAngle
-                            if (delta > PI.toFloat()) delta -= (2f * PI.toFloat())
-                            if (delta < -PI.toFloat()) delta += (2f * PI.toFloat())
-                            totalRotationRadians += delta
-                            onRotate(totalRotationRadians)
-                        }
-                        lastAngle = angle
-                        angleInitialized = true
-                    }
                     change.consume()
                     pointer = change
                 }
