@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
+import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
@@ -50,6 +51,14 @@ class CameraViewModel @Inject constructor(
      */
     val zebraMask: StateFlow<ZebraMask?> =
         cameraRepository.observeZebraMask().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * Deliberately its own [StateFlow], not a [CameraUiState] field, for the same reason [zebraMask]
+     * is — `CONTROL_AF_STATE` can update on essentially every capture result. Drives the tap-to-focus
+     * indicator's own appear/hold/fade lifecycle in `ui/CameraScreen` (issue #21 follow-up).
+     */
+    val afConvergenceState: StateFlow<AfConvergenceState?> =
+        cameraRepository.observeAfConvergenceState().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     init {
         // Gated on manualExposurePinned, not manualModeEnabled — the latter flips the instant ModeLever

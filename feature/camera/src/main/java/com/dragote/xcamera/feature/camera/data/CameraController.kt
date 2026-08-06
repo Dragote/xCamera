@@ -33,6 +33,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
+import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.FocusRegionSizeFraction
@@ -266,6 +267,19 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     val autoFocusDistanceDiopters: StateFlow<Float?> = _autoFocusDistanceDiopters.asStateFlow()
 
     /**
+     * `CaptureResult.CONTROL_AF_STATE`, translated to the domain-facing [AfConvergenceState] via
+     * [afConvergenceStateFrom] — drives the tap-to-focus indicator's own lifecycle in `ui/CameraScreen`
+     * (appear on tap, stay visible through [AfConvergenceState.SCANNING], hold briefly once it settles
+     * into [AfConvergenceState.FOCUSED]/[AfConvergenceState.NOT_FOCUSED], then fade) rather than a
+     * fixed timer pretending to know how long AF convergence takes. Updated unconditionally on every
+     * capture result, unlike [_autoIso]/[_autoExposureTimeNs]/[_autoFocusDistanceDiopters] — there's no
+     * "pinned/manual" value this could be mistaken for, `CONTROL_AF_STATE` is Camera2's own live status
+     * regardless of AE/AF mode.
+     */
+    private val _afConvergenceState = MutableStateFlow<AfConvergenceState?>(null)
+    val afConvergenceState: StateFlow<AfConvergenceState?> = _afConvergenceState.asStateFlow()
+
+    /**
      * While manual mode is active ([pendingManualIso]/[pendingManualShutterNs] non-null), the
      * preview's repeating request carries a forced capped-manual exposure (see
      * [buildPreviewRequest]), not a genuine AE convergence value — so this must skip updating
@@ -288,7 +302,22 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
             if (pendingManualFocusDiopters == null) {
                 result.get(CaptureResult.LENS_FOCUS_DISTANCE)?.let { _autoFocusDistanceDiopters.value = it }
             }
+            _afConvergenceState.value = afConvergenceStateFrom(result.get(CaptureResult.CONTROL_AF_STATE))
         }
+    }
+
+    /**
+     * Collapses every real `CaptureResult.CONTROL_AF_STATE_*` constant into [AfConvergenceState] — see
+     * that enum's own doc for why passive/active scan states fold into one [AfConvergenceState.SCANNING]
+     * and passive/locked focused (or unfocused) states each fold into one settled value. `null` input
+     * (device doesn't report this key at all) maps to `null` output, not a guessed default.
+     */
+    private fun afConvergenceStateFrom(controlAfState: Int?): AfConvergenceState? = when (controlAfState) {
+        CaptureResult.CONTROL_AF_STATE_INACTIVE -> AfConvergenceState.INACTIVE
+        CaptureResult.CONTROL_AF_STATE_PASSIVE_SCAN, CaptureResult.CONTROL_AF_STATE_ACTIVE_SCAN -> AfConvergenceState.SCANNING
+        CaptureResult.CONTROL_AF_STATE_PASSIVE_FOCUSED, CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED -> AfConvergenceState.FOCUSED
+        CaptureResult.CONTROL_AF_STATE_PASSIVE_UNFOCUSED, CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED -> AfConvergenceState.NOT_FOCUSED
+        else -> null
     }
 
     /** Resolved by [captureStillJpeg] once the pending still capture's JPEG bytes are delivered. */
@@ -795,6 +824,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         _autoExposureTimeNs.value = null
         _autoIso.value = null
         _autoFocusDistanceDiopters.value = null
+        _afConvergenceState.value = null
         _zebraMask.value = null
         if (hadDevice) {
             withTimeoutOrNull(CameraCloseTimeoutMs) { deviceClosedSignal?.await() }

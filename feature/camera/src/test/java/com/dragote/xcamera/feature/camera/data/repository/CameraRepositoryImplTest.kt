@@ -7,6 +7,7 @@ import android.os.Handler
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.data.CameraController
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
+import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
@@ -232,5 +233,13 @@ class CameraRepositoryImplTest {
         every { cameraController.autoFocusDistanceDiopters } returns focusDistanceFlow
 
         assertEquals(focusDistanceFlow, repository.observeFocusDistance())
+    }
+
+    @Test
+    fun `observeAfConvergenceState delegates to the controller's afConvergenceState flow`() {
+        val afConvergenceStateFlow = MutableStateFlow<AfConvergenceState?>(AfConvergenceState.SCANNING)
+        every { cameraController.afConvergenceState } returns afConvergenceStateFlow
+
+        assertEquals(afConvergenceStateFlow, repository.observeAfConvergenceState())
     }
 }

@@ -3,6 +3,7 @@ package com.dragote.xcamera.feature.camera.presentation
 import android.net.Uri
 import app.cash.turbine.test
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
+import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
@@ -37,6 +38,7 @@ class CameraViewModelTest {
     private lateinit var autoExposureTimeFlow: MutableStateFlow<Long?>
     private lateinit var zebraMaskFlow: MutableStateFlow<ZebraMask?>
     private lateinit var focusDistanceFlow: MutableStateFlow<Float?>
+    private lateinit var afConvergenceStateFlow: MutableStateFlow<AfConvergenceState?>
     private lateinit var viewModel: CameraViewModel
 
     @Before
@@ -46,10 +48,12 @@ class CameraViewModelTest {
         autoExposureTimeFlow = MutableStateFlow(null)
         zebraMaskFlow = MutableStateFlow(null)
         focusDistanceFlow = MutableStateFlow(null)
+        afConvergenceStateFlow = MutableStateFlow(null)
         every { cameraRepository.observeAutoIso() } returns autoIsoFlow
         every { cameraRepository.observeAutoExposureTime() } returns autoExposureTimeFlow
         every { cameraRepository.observeZebraMask() } returns zebraMaskFlow
         every { cameraRepository.observeFocusDistance() } returns focusDistanceFlow
+        every { cameraRepository.observeAfConvergenceState() } returns afConvergenceStateFlow
         viewModel = CameraViewModel(cameraRepository)
     }
 
@@ -797,6 +801,19 @@ class CameraViewModelTest {
             val mask = ZebraMask(columns = 1, rows = 1, cells = listOf(ZebraClipping.SHADOW))
             zebraMaskFlow.value = mask
             assertEquals(mask, awaitItem())
+        }
+    }
+
+    @Test
+    fun `afConvergenceState mirrors the repository's flow`() = runTest {
+        viewModel.afConvergenceState.test {
+            assertEquals(null, awaitItem())
+
+            afConvergenceStateFlow.value = AfConvergenceState.SCANNING
+            assertEquals(AfConvergenceState.SCANNING, awaitItem())
+
+            afConvergenceStateFlow.value = AfConvergenceState.FOCUSED
+            assertEquals(AfConvergenceState.FOCUSED, awaitItem())
         }
     }
 

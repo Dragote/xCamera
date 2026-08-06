@@ -7,6 +7,7 @@ import android.os.Handler
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.data.CameraController
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
+import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
@@ -71,6 +72,8 @@ class CameraRepositoryImpl @Inject constructor(
         cameraController.setManualFocusDistance(distanceDiopters)
 
     override fun observeFocusDistance(): Flow<Float?> = cameraController.autoFocusDistanceDiopters
+
+    override fun observeAfConvergenceState(): Flow<AfConvergenceState?> = cameraController.afConvergenceState
 
     override suspend fun takePhoto(): Result<Uri, DataError.Local> = try {
         Result.Success(cameraController.takePhoto())

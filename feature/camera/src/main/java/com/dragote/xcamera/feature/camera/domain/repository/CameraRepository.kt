@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Handler
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
+import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
@@ -125,6 +126,14 @@ interface CameraRepository {
      * before the first frame lands, or on a lens with no [manualFocusCapability].
      */
     fun observeFocusDistance(): Flow<Float?>
+
+    /**
+     * Live `CONTROL_AF_STATE`, translated to [AfConvergenceState] — meant to be collected directly by
+     * whatever drives the tap-to-focus indicator's own visibility (issue #21 follow-up), not folded
+     * into `CameraUiState` for the same high-frequency-emission reason [observeZebraMask] isn't. `null`
+     * before the first frame lands, or on a device that doesn't report this key at all.
+     */
+    fun observeAfConvergenceState(): Flow<AfConvergenceState?>
 
     suspend fun takePhoto(): Result<Uri, DataError.Local>
 
