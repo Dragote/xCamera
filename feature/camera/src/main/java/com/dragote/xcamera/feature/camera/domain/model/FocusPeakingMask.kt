@@ -4,11 +4,13 @@ import kotlin.math.abs
 import kotlin.math.max
 
 /**
- * Coarse, loupe-local edge/focus-assist highlight (Pixel-style focus peaking) — computed once per
- * refreshed magnified loupe crop while a manual-focus hold gesture is in progress (issue #21), never
- * for the full viewfinder: continuous/always-on focus peaking across the whole preview is an explicit
- * non-goal (see `docs/features/camera-capture.md`). [columns]x[rows] grid, mirroring [ZebraMask]'s own
- * coarse/blocky (not per-pixel) shape and reasoning — a cell is [edge] `true` where its local luma
+ * Loupe-local edge/focus-assist highlight (Pixel-style focus peaking) — computed once per refreshed
+ * magnified loupe crop while a manual-focus hold gesture is in progress (issue #21), never for the full
+ * viewfinder: continuous/always-on focus peaking across the whole preview is an explicit non-goal (see
+ * `docs/features/camera-capture.md`). [columns]x[rows] grid — callers (see `ui/CameraScreen`'s
+ * `focusPeakingMaskFromBitmap`) size it one cell per source pixel so [FocusRing] can render it as a
+ * scaled-up bitmap overlay tracing a thin contour around sharp detail, unlike [ZebraMask]'s own
+ * deliberately coarse/blocky per-cell-rectangle rendering. A cell is [edge] `true` where its local luma
  * gradient magnitude clears the classification threshold, i.e. sharp, high-contrast detail. Camera2
  * exposes no per-region depth-of-field/PDAF confidence data, so this contrast-based proxy (sharp edges
  * are, almost by definition, in focus) is the same class of approximation real on-device focus-peaking
@@ -65,10 +67,17 @@ data class FocusPeakingMask(
                     for (y in yStart until yEnd) {
                         for (x in xStart until xEnd) {
                             val center = lumaAt(x, y)
-                            if (x + 1 < xEnd) {
+                            // Compared against the image-global neighbor, not clamped to this cell's own
+                            // xEnd/yEnd — at coarse grid resolutions those are usually the same pixel, but
+                            // at 1-pixel-per-cell resolution (the loupe's per-pixel contour use, see the
+                            // class doc) xEnd == xStart + 1, so a cell-clamped bound would never see a
+                            // neighbor at all and every cell would classify as flat. A transition is always
+                            // attributed to the cell containing its lower-x/lower-y pixel, so it's still
+                            // flagged exactly once even when it falls on a cell boundary.
+                            if (x + 1 < width) {
                                 peakContrast = max(peakContrast, abs(center - lumaAt(x + 1, y)))
                             }
-                            if (y + 1 < yEnd) {
+                            if (y + 1 < height) {
                                 peakContrast = max(peakContrast, abs(center - lumaAt(x, y + 1)))
                             }
                         }
