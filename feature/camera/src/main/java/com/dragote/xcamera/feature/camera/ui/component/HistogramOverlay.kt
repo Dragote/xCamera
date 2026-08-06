@@ -1,10 +1,15 @@
 package com.dragote.xcamera.feature.camera.ui.component
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
@@ -17,10 +22,24 @@ import kotlin.math.sqrt
 
 /**
  * Always-on tonal readout of [data] (see `CameraViewModel.histogramData`'s own doc for why this is
- * always-on, unlike [ZebraOverlay]'s dial-drag gate) — a small fixed-size corner readout rather than
- * a translucent full-viewfinder overlay, matching [ExposingIndicator]/[ViewfinderThumbnailChip]'s own
- * corner-chip convention (position-wise) rather than [ZebraOverlay]/[ViewfinderGridOverlay]'s
- * full-bleed one.
+ * always-on, unlike [ZebraOverlay]'s dial-drag gate).
+ *
+ * The Activity is portrait-locked (see AndroidManifest), so this screen's own layout never
+ * physically rotates — but the *device* still does, in the user's hand. Pinning this readout to a
+ * single fixed screen corner would mean it visually ends up bottom-left (or upside down) from the
+ * user's own point of view once they rotate the phone to landscape, even though nothing on screen
+ * actually moved. Instead this hops between the four screen corners as
+ * [rememberDeviceOrientationQuadrant] changes, landing on whichever corner is *currently* the
+ * physical top-right from the user's perspective — see [alignmentForQuadrant] for the exact corner
+ * mapping. [ViewfinderThumbnailChip] solves the same "device rotates, layout doesn't" problem for
+ * its glyph by counter-rotating the icon in place; a corner-hop reads better here since a 96x48dp
+ * non-square readout would either clip or need to swap its own width/height if it tried to rotate
+ * in place instead.
+ *
+ * The hop itself cross-fades (old corner's content fades out while the new corner's fades in)
+ * rather than sliding a position across the screen — a discrete snap would look like a glitch, and
+ * animating a diagonal slide across the viewfinder would be far more distracting than the readout
+ * itself is worth.
  *
  * Each bucket draws as a single round-capped vertical line from the baseline up to its scaled height
  * — at zero height the round cap alone still paints, so an empty bucket reads as a small dot sitting
@@ -43,49 +62,81 @@ import kotlin.math.sqrt
  * baseline dot row at zero height rather than nothing — unlike [ZebraOverlay]'s fade-out-then-vanish,
  * there's no gesture this is tied to that would make hiding it read as intentional, and the idle dot
  * row reads as "ready, no data yet" rather than a blank gap in the chrome.
+ *
+ * [modifier] should size this to the full area the readout is allowed to roam across corners of
+ * (e.g. `Modifier.fillMaxSize()` over the whole viewfinder), not to the readout's own small size —
+ * unlike this repo's other corner chips ([ExposingIndicator]/[ViewfinderThumbnailChip]), which are
+ * pre-aligned to one fixed corner by their caller, this one picks its own corner internally since
+ * that corner changes at runtime.
  */
 @Composable
 fun HistogramOverlay(data: HistogramData?, modifier: Modifier = Modifier) {
-    Box(modifier = modifier.size(width = HistogramWidth, height = HistogramHeight)) {
-        Canvas(
-            modifier = Modifier
-                .size(width = HistogramWidth, height = HistogramHeight)
-                .padding(horizontal = HorizontalInset, vertical = VerticalInset),
-        ) {
-            val bucketCount = data?.buckets?.size ?: EmptyBucketCount
-            if (bucketCount <= 0) return@Canvas
-            val maxCount = data?.maxBucketCount ?: 0
-
-            val slotWidth = size.width / bucketCount
-            val strokeWidthPx = slotWidth * BarWidthFraction
-            val baselineY = size.height - strokeWidthPx / 2
-
-            for (index in 0 until bucketCount) {
-                val count = data?.buckets?.getOrNull(index) ?: 0
-                val fraction = if (maxCount > 0) sqrt(count.toFloat() / maxCount) else 0f
-                val barHeight = (size.height - strokeWidthPx) * fraction
-                val x = slotWidth * (index + 0.5f)
-                val color = when (index) {
-                    0 -> CameraChrome.ZebraShadow
-                    bucketCount - 1 -> CameraChrome.ZebraHighlight
-                    else -> CameraChrome.HistogramMarkColor
-                }
-                drawLine(
-                    color = color,
-                    start = Offset(x, baselineY),
-                    end = Offset(x, baselineY - barHeight),
-                    strokeWidth = strokeWidthPx,
-                    cap = StrokeCap.Round,
-                )
+    val quadrant by rememberDeviceOrientationQuadrant()
+    Box(modifier = modifier.padding(CornerInset)) {
+        Crossfade(
+            targetState = quadrant,
+            modifier = Modifier.fillMaxSize(),
+            animationSpec = tween(durationMillis = 300, easing = CameraChrome.EaseStandard),
+            label = "histogramCorner",
+        ) { activeQuadrant ->
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = alignmentForQuadrant(activeQuadrant)) {
+                HistogramMarks(data = data)
             }
+        }
+    }
+}
+
+/**
+ * Panel-local corner that currently coincides with the user's physical top-right as the device sits
+ * rotated by [quadrant]° clockwise (as a fixed outside viewer would see it) from natural/portrait —
+ * derived from first principles (rotate each panel corner by [quadrant]° and see which one lands at
+ * the viewer's top-right), not just guessed: `0°`→`TopEnd` (no rotation, matches the readout's
+ * original fixed position), `90°`→`TopStart`, `180°`→`BottomStart`, `270°`→`BottomEnd`. Matches the
+ * same clockwise-quadrant convention [rememberDeviceOrientationQuadrant] and
+ * [ViewfinderThumbnailChip]'s counter-rotation already use.
+ */
+private fun alignmentForQuadrant(quadrant: Float): Alignment = when (quadrant) {
+    90f -> Alignment.TopStart
+    180f -> Alignment.BottomStart
+    270f -> Alignment.BottomEnd
+    else -> Alignment.TopEnd
+}
+
+@Composable
+private fun HistogramMarks(data: HistogramData?) {
+    Canvas(modifier = Modifier.size(width = HistogramWidth, height = HistogramHeight)) {
+        val bucketCount = data?.buckets?.size ?: EmptyBucketCount
+        if (bucketCount <= 0) return@Canvas
+        val maxCount = data?.maxBucketCount ?: 0
+
+        val slotWidth = size.width / bucketCount
+        val strokeWidthPx = slotWidth * BarWidthFraction
+        val baselineY = size.height - strokeWidthPx / 2
+
+        for (index in 0 until bucketCount) {
+            val count = data?.buckets?.getOrNull(index) ?: 0
+            val fraction = if (maxCount > 0) sqrt(count.toFloat() / maxCount) else 0f
+            val barHeight = (size.height - strokeWidthPx) * fraction
+            val x = slotWidth * (index + 0.5f)
+            val color = when (index) {
+                0 -> CameraChrome.ZebraShadow
+                bucketCount - 1 -> CameraChrome.ZebraHighlight
+                else -> CameraChrome.HistogramMarkColor
+            }
+            drawLine(
+                color = color,
+                start = Offset(x, baselineY),
+                end = Offset(x, baselineY - barHeight),
+                strokeWidth = strokeWidthPx,
+                cap = StrokeCap.Round,
+            )
         }
     }
 }
 
 private val HistogramWidth = 96.dp
 private val HistogramHeight = 48.dp
-private val HorizontalInset = 8.dp
-private val VerticalInset = 8.dp
+private val CornerInset = 12.dp
 
 /** Fraction of each bucket's slot width a bar/dot actually fills — the rest is the gap between bars,
  *  so this alone controls bar spacing rather than a fixed dp diameter that would look cramped or
@@ -97,7 +148,7 @@ private const val BarWidthFraction = 0.4f
  *  constant across the data/ui layers since a one-time idle-to-live relayout is imperceptible either way. */
 private const val EmptyBucketCount = 16
 
-@Preview(showBackground = true, backgroundColor = 0xFF0D1210)
+@Preview(showBackground = true, widthDp = 220, heightDp = 320, backgroundColor = 0xFF0D1210)
 @Composable
 private fun HistogramOverlayPreview() {
     // A rough distribution with a highlight-side spike, representative of a typical outdoor frame.
@@ -109,18 +160,14 @@ private fun HistogramOverlayPreview() {
         bell + highlightSpike
     }
     XCameraTheme {
-        Box(modifier = Modifier.padding(24.dp)) {
-            HistogramOverlay(data = HistogramData(buckets))
-        }
+        HistogramOverlay(data = HistogramData(buckets), modifier = Modifier.fillMaxSize())
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF0D1210)
+@Preview(showBackground = true, widthDp = 220, heightDp = 320, backgroundColor = 0xFF0D1210)
 @Composable
 private fun HistogramOverlayEmptyPreview() {
     XCameraTheme {
-        Box(modifier = Modifier.padding(24.dp)) {
-            HistogramOverlay(data = null)
-        }
+        HistogramOverlay(data = null, modifier = Modifier.fillMaxSize())
     }
 }

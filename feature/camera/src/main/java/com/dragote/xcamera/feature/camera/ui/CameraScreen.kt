@@ -689,7 +689,7 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                     )
                     HistogramOverlay(
                         data = histogramData,
-                        modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
+                        modifier = Modifier.fillMaxSize(),
                     )
                 }
             }
