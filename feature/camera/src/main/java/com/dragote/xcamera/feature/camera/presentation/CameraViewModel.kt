@@ -7,6 +7,7 @@ import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
+import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.model.aeCompensationSteps
@@ -86,6 +87,16 @@ class CameraViewModel @Inject constructor(
                 )
             }
         }
+
+        // Tracks continuous-AF's live converged focus distance the whole time manual focus isn't
+        // locked — see CameraUiState.liveFocusDistanceDiopters's own doc. No pinning/grace-period dance
+        // needed here (unlike the ISO/shutter collectors above) since manual focus lock is driven by an
+        // explicit hold gesture, not a mode toggle with a settle period.
+        viewModelScope.launch {
+            cameraRepository.observeFocusDistance().collect { distance ->
+                _uiState.value = _uiState.value.copy(liveFocusDistanceDiopters = distance)
+            }
+        }
     }
 
     fun setFlashMode(flashMode: FlashMode) = cameraRepository.setFlashMode(flashMode)
@@ -101,6 +112,15 @@ class CameraViewModel @Inject constructor(
     fun setExposureCompensation(value: Int) = cameraRepository.setExposureCompensation(value)
 
     fun setZebraAnalysisEnabled(enabled: Boolean) = cameraRepository.setZebraAnalysisEnabled(enabled)
+
+    fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability? =
+        cameraRepository.manualFocusCapability(lens)
+
+    fun triggerAutoFocus(displayXFraction: Float, displayYFraction: Float) =
+        cameraRepository.triggerAutoFocus(displayXFraction, displayYFraction)
+
+    fun setManualFocusDistance(distanceDiopters: Float?) =
+        cameraRepository.setManualFocusDistance(distanceDiopters)
 
     suspend fun takePhoto(): Result<Uri, DataError.Local> = cameraRepository.takePhoto()
 
@@ -186,6 +206,20 @@ class CameraViewModel @Inject constructor(
             aeCompensationStops = stops,
             aeCompensationStepEv = capability?.stepEv ?: 0f,
             selectedAeCompensationIndex = stops.indexOf(0).coerceAtLeast(0),
+        )
+    }
+
+    /**
+     * Called whenever [CameraLens.physicalCameraId]/[CameraLens.logicalCameraId]'s manual-focus
+     * capability is (re-)queried for [CameraUiState.selectedLens] — most notably right after a lens
+     * switch, mirroring [onManualIsoCapabilityChanged]'s own per-physical-lens reasoning
+     * (`LENS_INFO_MINIMUM_FOCUS_DISTANCE` can differ, or be `0` for a fixed-focus lens, even when the
+     * main lens supports full manual focus).
+     */
+    fun onManualFocusCapabilityChanged(capability: ManualFocusCapability?) {
+        _uiState.value = _uiState.value.copy(
+            manualFocusSupported = capability != null,
+            maxFocusDistanceDiopters = capability?.maxFocusDistanceDiopters ?: 0f,
         )
     }
 

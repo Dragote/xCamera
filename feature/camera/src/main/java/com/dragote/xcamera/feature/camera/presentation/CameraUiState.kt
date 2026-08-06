@@ -43,4 +43,22 @@ data class CameraUiState(
     /** EV value of one compensation step — needed to format [aeCompensationStops] entries for display. */
     val aeCompensationStepEv: Float = 0f,
     val selectedAeCompensationIndex: Int = 0,
+    /**
+     * Whether [selectedLens] reports/adjusts `LENS_FOCUS_DISTANCE` (issue #21) — gates both
+     * tap-to-focus's AF-region trigger and the hold-and-rotate manual focus ring; `false` on a
+     * fixed-focus lens (`LENS_INFO_MINIMUM_FOCUS_DISTANCE == 0`).
+     */
+    val manualFocusSupported: Boolean = false,
+    /** [selectedLens]'s own `LENS_INFO_MINIMUM_FOCUS_DISTANCE` — the closest-focus end of the
+     *  `[0, maxFocusDistanceDiopters]` diopter range the manual focus ring can dial through. `0f`
+     *  (meaningless on its own) whenever [manualFocusSupported] is `false`. */
+    val maxFocusDistanceDiopters: Float = 0f,
+    /**
+     * The most recent continuous-AF-converged focus distance (diopters), tracked live the same way
+     * [liveAutoIso]/[liveAutoExposureTimeNs] track auto-exposure — stops updating (but keeps its last
+     * value) once a manual focus hold has locked a distance, since `CameraController` itself stops
+     * emitting fresh AF-converged readings while pinned (see its own `setManualFocusDistance` doc).
+     * Read at the *start* of a hold gesture as the distance a rotation adjusts from.
+     */
+    val liveFocusDistanceDiopters: Float? = null,
 )
