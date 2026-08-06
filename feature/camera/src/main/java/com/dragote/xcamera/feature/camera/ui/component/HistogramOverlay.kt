@@ -11,9 +11,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.dragote.xcamera.feature.camera.domain.model.HistogramData
@@ -32,11 +32,19 @@ import kotlin.math.sqrt
  * once they rotate the phone) and upright-ness (the bars themselves need to counter-rotate to stay
  * gravity-aligned). This hops between the four screen corners *and* counter-rotates its content as
  * [rememberDeviceOrientationQuadrant] changes — see [alignmentForQuadrant] for the corner mapping and
- * [counterRotationDegrees] for the rotation. Rotating a non-square 96x48dp box in place would clip
- * against its own bounding box if anything clipped to it, but nothing here does (no `.clip(...)` in
- * this composable's own modifier chain), so the rotated content simply paints outside its nominal
- * layout bounds during the brief moments it's not axis-aligned — the same reason
- * [ViewfinderThumbnailChip]'s square glyph never needed to worry about this at all.
+ * [counterRotationDegrees] for the rotation.
+ *
+ * The rotation happens *inside* [HistogramMarks]'s own `Canvas` draw scope (`DrawScope.rotate`), not
+ * as a `Modifier.rotate` wrapped around an always-96x48dp-laid-out box — a `Modifier`-level rotation
+ * only transforms how the box *paints*, it doesn't change what size the layout system thinks the box
+ * is, so a 96x48dp box rotated 90° in place would still be *positioned* using its unrotated 96x48dp
+ * bounds while visually occupying a 48x96dp footprint, pushing part of it off-screen once anchored
+ * near a corner with only [CornerInset] of margin (this was a real, shipped bug: rotating in place
+ * this way clipped the readout against the screen edge in landscape). [HistogramMarks] instead
+ * *measures* itself at 48x96dp for a 90°/270° rotation to begin with — the layout system reserves
+ * the correct rotated footprint before any alignment happens — and draws the same always-"96x48dp
+ * logical space" bar chart into that reserved area via a coordinate-space rotation around its own
+ * center, so what's drawn always fits exactly inside what's laid out.
  *
  * The hop cross-fades (old corner's content fades out while the new corner's fades in, each already
  * snapped to its own upright rotation — no animated spin, unlike [ViewfinderThumbnailChip]'s smooth
@@ -83,10 +91,7 @@ fun HistogramOverlay(data: HistogramData?, modifier: Modifier = Modifier) {
             label = "histogramCorner",
         ) { activeQuadrant ->
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = alignmentForQuadrant(activeQuadrant)) {
-                HistogramMarks(
-                    data = data,
-                    modifier = Modifier.rotate(counterRotationDegrees(activeQuadrant)),
-                )
+                HistogramMarks(data = data, rotationDegrees = counterRotationDegrees(activeQuadrant))
             }
         }
     }
@@ -108,34 +113,54 @@ private fun alignmentForQuadrant(quadrant: Float): Alignment = when (quadrant) {
     else -> Alignment.TopEnd
 }
 
+/**
+ * [rotationDegrees] (one of `0f`/`90f`/`180f`/`270f`) rotates the *drawn* bar chart, not a laid-out
+ * box — this `Canvas` measures itself at [HistogramHeight]x[HistogramWidth] (swapped) for a 90°/270°
+ * rotation so the layout system reserves the actual post-rotation footprint, then draws the same
+ * always-[HistogramWidth]x[HistogramHeight]-logical-space bar chart into that reserved area via
+ * `DrawScope.rotate` around the canvas's own center — see [HistogramOverlay]'s own doc for why a
+ * `Modifier`-level rotation instead (which doesn't affect measurement) clips against the screen edge
+ * once anchored near a corner in landscape.
+ */
 @Composable
-private fun HistogramMarks(data: HistogramData?, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier.size(width = HistogramWidth, height = HistogramHeight)) {
-        val bucketCount = data?.buckets?.size ?: EmptyBucketCount
-        if (bucketCount <= 0) return@Canvas
-        val maxCount = data?.maxBucketCount ?: 0
+private fun HistogramMarks(data: HistogramData?, rotationDegrees: Float, modifier: Modifier = Modifier) {
+    val quarterTurned = rotationDegrees == 90f || rotationDegrees == 270f
+    val canvasWidth = if (quarterTurned) HistogramHeight else HistogramWidth
+    val canvasHeight = if (quarterTurned) HistogramWidth else HistogramHeight
 
-        val slotWidth = size.width / bucketCount
-        val strokeWidthPx = slotWidth * BarWidthFraction
-        val baselineY = size.height - strokeWidthPx / 2
+    Canvas(modifier = modifier.size(width = canvasWidth, height = canvasHeight)) {
+        rotate(degrees = rotationDegrees, pivot = center) {
+            val logicalWidth = HistogramWidth.toPx()
+            val logicalHeight = HistogramHeight.toPx()
+            val originX = center.x - logicalWidth / 2f
+            val originY = center.y - logicalHeight / 2f
 
-        for (index in 0 until bucketCount) {
-            val count = data?.buckets?.getOrNull(index) ?: 0
-            val fraction = if (maxCount > 0) sqrt(count.toFloat() / maxCount) else 0f
-            val barHeight = (size.height - strokeWidthPx) * fraction
-            val x = slotWidth * (index + 0.5f)
-            val color = when (index) {
-                0 -> CameraChrome.ZebraShadow
-                bucketCount - 1 -> CameraChrome.ZebraHighlight
-                else -> CameraChrome.HistogramMarkColor
+            val bucketCount = data?.buckets?.size ?: EmptyBucketCount
+            if (bucketCount <= 0) return@rotate
+            val maxCount = data?.maxBucketCount ?: 0
+
+            val slotWidth = logicalWidth / bucketCount
+            val strokeWidthPx = slotWidth * BarWidthFraction
+            val baselineY = originY + logicalHeight - strokeWidthPx / 2
+
+            for (index in 0 until bucketCount) {
+                val count = data?.buckets?.getOrNull(index) ?: 0
+                val fraction = if (maxCount > 0) sqrt(count.toFloat() / maxCount) else 0f
+                val barHeight = (logicalHeight - strokeWidthPx) * fraction
+                val x = originX + slotWidth * (index + 0.5f)
+                val color = when (index) {
+                    0 -> CameraChrome.ZebraShadow
+                    bucketCount - 1 -> CameraChrome.ZebraHighlight
+                    else -> CameraChrome.HistogramMarkColor
+                }
+                drawLine(
+                    color = color,
+                    start = Offset(x, baselineY),
+                    end = Offset(x, baselineY - barHeight),
+                    strokeWidth = strokeWidthPx,
+                    cap = StrokeCap.Round,
+                )
             }
-            drawLine(
-                color = color,
-                start = Offset(x, baselineY),
-                end = Offset(x, baselineY - barHeight),
-                strokeWidth = strokeWidthPx,
-                cap = StrokeCap.Round,
-            )
         }
     }
 }
