@@ -685,7 +685,7 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                                 Toast.makeText(context, "No gallery app found", Toast.LENGTH_SHORT).show()
                             }
                         },
-                        modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
+                        modifier = Modifier.fillMaxSize(),
                     )
                     HistogramOverlay(
                         data = histogramData,

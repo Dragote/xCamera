@@ -6,6 +6,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import kotlin.math.abs
 
@@ -47,6 +48,29 @@ fun rememberDeviceOrientationQuadrant(): State<Float> {
  *  straight to it per corner, no animation — see [rememberDeviceOrientationQuadrant]'s own doc for why
  *  each treats a quadrant change differently). */
 fun counterRotationDegrees(quadrant: Float): Float = (360f - quadrant) % 360f
+
+/**
+ * Panel-local corner that currently coincides with whichever physical corner [referenceCorner]
+ * names, as the device sits rotated by [quadrant]° clockwise (as a fixed outside viewer would see
+ * it) from natural/portrait — used to keep a corner-anchored readout ([HistogramOverlay],
+ * [ViewfinderThumbnailChip]) visually pinned to the *same physical corner from the user's own point
+ * of view* even though this screen's own layout never rotates (see AndroidManifest's portrait lock).
+ *
+ * [QuadrantCornerCycle] is [Alignment.TopEnd]/[Alignment.TopStart]/[Alignment.BottomStart]/
+ * [Alignment.BottomEnd] — derived from first principles (rotate each panel corner by 90° at a time
+ * and track which one lands at the viewer's top-right) rather than guessed. Any other reference
+ * corner's own per-quadrant sequence is just this same cycle started at a different index — a corner
+ * diagonally opposite [Alignment.TopEnd], e.g. [Alignment.BottomStart], lands two steps further
+ * along it, since a 180° phase shift is exactly two 90°-steps around a 4-element cycle.
+ */
+fun cornerForQuadrant(referenceCorner: Alignment, quadrant: Float): Alignment {
+    val referenceIndex = QuadrantCornerCycle.indexOf(referenceCorner)
+    val steps = (quadrant / 90f).toInt()
+    return QuadrantCornerCycle[(referenceIndex + steps).mod(QuadrantCornerCycle.size)]
+}
+
+private val QuadrantCornerCycle =
+    listOf(Alignment.TopEnd, Alignment.TopStart, Alignment.BottomStart, Alignment.BottomEnd)
 
 const val QUADRANT_HYSTERESIS_DEGREES = 15f
 private val QuadrantCenters = floatArrayOf(0f, 90f, 180f, 270f)

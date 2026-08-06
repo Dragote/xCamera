@@ -31,7 +31,7 @@ import kotlin.math.sqrt
  * would mean this visually ends up bottom-left, or upside down, from the user's own point of view
  * once they rotate the phone) and upright-ness (the bars themselves need to counter-rotate to stay
  * gravity-aligned). This hops between the four screen corners *and* counter-rotates its content as
- * [rememberDeviceOrientationQuadrant] changes — see [alignmentForQuadrant] for the corner mapping and
+ * [rememberDeviceOrientationQuadrant] changes — see [cornerForQuadrant] for the corner mapping and
  * [counterRotationDegrees] for the rotation.
  *
  * The rotation happens *inside* [HistogramMarks]'s own `Canvas` draw scope (`DrawScope.rotate`), not
@@ -90,27 +90,14 @@ fun HistogramOverlay(data: HistogramData?, modifier: Modifier = Modifier) {
             animationSpec = tween(durationMillis = 300, easing = CameraChrome.EaseStandard),
             label = "histogramCorner",
         ) { activeQuadrant ->
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = alignmentForQuadrant(activeQuadrant)) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = cornerForQuadrant(Alignment.TopEnd, activeQuadrant),
+            ) {
                 HistogramMarks(data = data, rotationDegrees = counterRotationDegrees(activeQuadrant))
             }
         }
     }
-}
-
-/**
- * Panel-local corner that currently coincides with the user's physical top-right as the device sits
- * rotated by [quadrant]° clockwise (as a fixed outside viewer would see it) from natural/portrait —
- * derived from first principles (rotate each panel corner by [quadrant]° and see which one lands at
- * the viewer's top-right), not just guessed: `0°`→`TopEnd` (no rotation, matches the readout's
- * original fixed position), `90°`→`TopStart`, `180°`→`BottomStart`, `270°`→`BottomEnd`. Matches the
- * same clockwise-quadrant convention [rememberDeviceOrientationQuadrant] and
- * [ViewfinderThumbnailChip]'s counter-rotation already use.
- */
-private fun alignmentForQuadrant(quadrant: Float): Alignment = when (quadrant) {
-    90f -> Alignment.TopStart
-    180f -> Alignment.BottomStart
-    270f -> Alignment.BottomEnd
-    else -> Alignment.TopEnd
 }
 
 /**

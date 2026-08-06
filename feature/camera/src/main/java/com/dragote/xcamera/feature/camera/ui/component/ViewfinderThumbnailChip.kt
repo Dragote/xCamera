@@ -5,6 +5,7 @@ import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -13,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,6 +26,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
@@ -43,15 +46,47 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Last-shot thumbnail chip in the viewfinder's bottom-left corner — the app's only gallery entry
- * point, matching the design (there's no separate header button). Shows [photoUri] (decoded to a
- * small [ImageBitmap], falling back to the decorative placeholder while loading or if it's null),
- * and counter-rotates against the phone's physical orientation so it stays visually upright even
- * though the Activity itself is portrait-locked — the same trick most camera apps use for a
- * gallery-shortcut icon.
+ * Last-shot thumbnail chip — the app's only gallery entry point, matching the design (there's no
+ * separate header button). Shows [photoUri] (decoded to a small [ImageBitmap], falling back to the
+ * decorative placeholder while loading or if it's null).
+ *
+ * Bottom-left is its *physical*, not screen-local, home: the Activity is portrait-locked (see
+ * AndroidManifest), so this hops between the four screen corners as
+ * [rememberDeviceOrientationQuadrant] changes — via the same [cornerForQuadrant]/`Crossfade` corner-hop
+ * `HistogramOverlay` uses — landing on whichever corner is *currently* the physical bottom-left from
+ * the user's own point of view, cross-fading between corners rather than sliding across the screen.
+ * On top of that, [ViewfinderThumbnailChipContent]'s own glyph additionally counter-rotates in place
+ * (smoothly, via [rememberUprightRotationDegrees]) so it stays visually upright too — unlike
+ * `HistogramOverlay`'s bars, a square 46dp chip has no footprint-swap concern from rotating in place.
+ *
+ * [modifier] should size this to the full area the chip is allowed to roam across corners of (e.g.
+ * `Modifier.fillMaxSize()` over the whole viewfinder), not to the chip's own small size — see
+ * `HistogramOverlay`'s own doc for why.
  */
 @Composable
 fun ViewfinderThumbnailChip(photoUri: Uri?, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val quadrant by rememberDeviceOrientationQuadrant()
+    Box(modifier = modifier.padding(CornerInset)) {
+        Crossfade(
+            targetState = quadrant,
+            modifier = Modifier.fillMaxSize(),
+            animationSpec = tween(durationMillis = 300, easing = CameraChrome.EaseStandard),
+            label = "thumbnailCorner",
+        ) { activeQuadrant ->
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = cornerForQuadrant(Alignment.BottomStart, activeQuadrant),
+            ) {
+                ViewfinderThumbnailChipContent(photoUri = photoUri, onClick = onClick)
+            }
+        }
+    }
+}
+
+private val CornerInset = 12.dp
+
+@Composable
+private fun ViewfinderThumbnailChipContent(photoUri: Uri?, onClick: () -> Unit) {
     val context = LocalContext.current
     val density = LocalDensity.current
     var thumbnail by remember { mutableStateOf<ImageBitmap?>(null) }
@@ -79,7 +114,7 @@ fun ViewfinderThumbnailChip(photoUri: Uri?, onClick: () -> Unit, modifier: Modif
     val rotationDegrees by rememberUprightRotationDegrees()
 
     Box(
-        modifier = modifier
+        modifier = Modifier
             .size(46.dp)
             .scale(scale)
             .graphicsLayer { rotationZ = rotationDegrees }
@@ -154,12 +189,10 @@ private fun rememberUprightRotationDegrees(): State<Float> {
     )
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF0D1210)
+@Preview(showBackground = true, widthDp = 220, heightDp = 320, backgroundColor = 0xFF0D1210)
 @Composable
 private fun ViewfinderThumbnailChipPreview() {
     XCameraTheme {
-        Box(modifier = Modifier.padding(24.dp)) {
-            ViewfinderThumbnailChip(photoUri = null, onClick = {})
-        }
+        ViewfinderThumbnailChip(photoUri = null, onClick = {}, modifier = Modifier.fillMaxSize())
     }
 }
