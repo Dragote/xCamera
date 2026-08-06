@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -33,13 +32,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.dragote.xcamera.feature.camera.domain.model.formatFocusDistance
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome.Accent
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
@@ -94,17 +88,7 @@ fun FocusDial(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        Text(
-            formatFocusDistance(focusDistanceDiopters),
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold,
-            fontSize = 13.sp,
-            color = Color(0xFFDED7C3),
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
-        )
+        DialValueText(formatFocusDistance(focusDistanceDiopters))
 
         Canvas(
             Modifier
@@ -151,18 +135,7 @@ fun FocusDial(
             }
         }
 
-        Text(
-            "FOCUS",
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 10.sp,
-            letterSpacing = 2.sp,
-            color = Color(0xFF877F6C),
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
-        )
+        DialLabelText("FOCUS")
     }
 }
 
