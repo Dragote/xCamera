@@ -2,11 +2,16 @@ package com.dragote.xcamera.feature.camera.ui
 
 import android.Manifest
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.SurfaceTexture
 import android.net.Uri
 import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.MediaStore
 import android.view.TextureView
 import android.widget.Toast
@@ -16,6 +21,8 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,11 +52,17 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -58,15 +71,21 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dragote.xcamera.feature.camera.di.CameraRepositoryEntryPoint
+import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
+import com.dragote.xcamera.feature.camera.domain.model.FocusPeakingMask
 import com.dragote.xcamera.feature.camera.domain.model.formatShutterSpeed
+import com.dragote.xcamera.feature.camera.domain.model.manualFocusDistanceForRotation
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.feature.camera.presentation.CameraUiState
 import com.dragote.xcamera.feature.camera.presentation.CameraViewModel
 import com.dragote.xcamera.feature.camera.ui.component.ExposingIndicator
 import com.dragote.xcamera.feature.camera.ui.component.ExposureDial
 import com.dragote.xcamera.feature.camera.ui.component.FlashLever
+import com.dragote.xcamera.feature.camera.ui.component.FocusDial
+import com.dragote.xcamera.feature.camera.ui.component.FocusRing
+import com.dragote.xcamera.feature.camera.ui.component.FocusTapIndicator
 import com.dragote.xcamera.feature.camera.ui.component.GridLever
 import com.dragote.xcamera.feature.camera.ui.component.IsoDial
 import com.dragote.xcamera.feature.camera.ui.component.LensDial
@@ -83,12 +102,17 @@ import com.dragote.xcamera.shared.common.domain.result.Result
 import com.dragote.xcamera.shared.designsystem.component.ErrorState
 import com.ramcosta.composedestinations.annotation.Destination
 import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.roundToInt
 
 /**
  * "Quiet window" `ui/CameraScreen`'s post-mode-switch `LaunchedEffect` waits for — [debounce] resets
@@ -101,6 +125,34 @@ private const val ManualExposurePinDelayMs = 300L
 /** Hard ceiling on the total wait, in case 3A never quite goes fully quiet (e.g. flicker) — pins on
  *  whatever the latest reading is once this elapses rather than stalling the mode switch forever. */
 private const val MaxManualPinWaitMs = 1500L
+
+/**
+ * Grace window (from the moment a tap fires) the AF-indicator lifecycle waits for
+ * [AfConvergenceState.SCANNING] to actually show up before giving up on seeing it at all — a trigger
+ * is asynchronous, so `CONTROL_AF_STATE` doesn't necessarily flip to `SCANNING` on the very next
+ * capture result; a device that converges faster than a frame (or one whose driver doesn't ever
+ * report a scan for a fast tap) just falls through this quickly rather than the indicator hanging
+ * around waiting for a scan state that isn't coming.
+ */
+private const val AfScanStartGraceMs = 250L
+
+/** How long the tap indicator stays visible once AF has genuinely left [AfConvergenceState.SCANNING]
+ *  (converged or given up) — a deliberate held beat so a fast convergence still reads as a real
+ *  "locked" moment instead of a flicker, per issue #21's own follow-up requirement. */
+private const val FocusIndicatorHoldAfterLockMs = 500L
+
+/** Safety net for the whole tap-indicator lifecycle, in case AF state never reports anything useful
+ *  at all (e.g. hardware that doesn't populate `CONTROL_AF_STATE`) — the indicator still fades out
+ *  eventually rather than lingering forever. */
+private const val MaxAfIndicatorWaitMs = 2500L
+
+/** Fraction of the viewfinder's own shorter dimension the manual focus ring's diameter occupies —
+ *  see `focusRingDiameter`'s own doc in `CameraContent`. */
+private const val FocusRingSizeFraction = 0.92f
+
+/** Fallback ring diameter for the brief window before `previewViewSize` is known — matches
+ *  `FocusRing`'s own default parameter value. */
+private val FocusRingFallbackDiameter = 156.dp
 
 private val requiredPermissions: List<String> = buildList {
     add(Manifest.permission.CAMERA)
@@ -183,6 +235,12 @@ private fun rememberCameraRepository(): CameraRepository {
  * `CONTROL_AE_MODE_OFF` fixes ISO and shutter speed together, there's no "ISO manual, shutter auto"
  * mode).
  *
+ * [FocusDial] (issue #21 UX rework) joins the deck row too, but only on a lens that actually reports
+ * manual-focus capability (`CameraUiState.manualFocusSupported`) — unlike the exposure dials it's not
+ * a mode-gated swap, it's simply present or absent. It's the *only* control that actually changes the
+ * manual focus distance; the viewfinder's own long-press only ever repositions the focus ring/loupe —
+ * see the focus-ring state block and `detectFocusGestures` further down for the full split.
+ *
  * The thumbnail chip shows [latestGalleryUri] (the actual last photo in the device's gallery,
  * queried once permission allows it — see [galleryReadPermission]) until a fresh capture replaces
  * it with [CameraUiState.lastSavedUri]; either way it's just a fallback chain feeding one URI into
@@ -239,6 +297,75 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     // showing through rather than an opaque patch sitting on top of it.
     var deckTopY by remember { mutableFloatStateOf(0f) }
     var deckHeight by remember { mutableFloatStateOf(0f) }
+
+    // Manual focus ring state (issue #21, reworked per the FocusDial UX split — see FocusDial's own
+    // doc and the deck row below) — two independent hold signals now feed one derived *loupe source*
+    // center: screenHoldPosition (a long-press directly on the viewfinder, see detectFocusGestures) is
+    // the *actual* touch point and wins whenever it's held (the more specific signal); dialHeld
+    // (FocusDial, held with no screen hold) falls back to the viewfinder's own center. The ring stays
+    // up as long as *either* is held — focusLoupeSourceCenter is only null once both are released.
+    // Rotation itself (and therefore the real manual focus distance) is now driven *exclusively* by
+    // FocusDial — the viewfinder's own long-press only ever repositions where the loupe samples from,
+    // it no longer adjusts focus at all (see the viewfinder's own onHoldStart/onHoldEnd below).
+    var screenHoldPosition by remember { mutableStateOf<Offset?>(null) }
+    var dialHeld by remember { mutableStateOf(false) }
+    val focusLoupeSourceCenter = screenHoldPosition
+        ?: Offset(previewViewSize.width / 2f, previewViewSize.height / 2f).takeIf { dialHeld }
+    // The ring itself, however, always *renders* dead-center on the viewfinder regardless of where the
+    // loupe is actually sampling from (on-device-QA follow-up: a ring that visually jumps to the touch
+    // point read as broken/inconsistent) — only its content (focusLoupeBitmap/focusPeakingMask, cropped
+    // around focusLoupeSourceCenter below) reflects the touch point; the ring's own position never does.
+    val focusRingDisplayCenter =
+        Offset(previewViewSize.width / 2f, previewViewSize.height / 2f).takeIf { focusLoupeSourceCenter != null }
+    var focusRingRotationDegrees by remember { mutableFloatStateOf(0f) }
+    var focusLoupeBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    var focusPeakingMask by remember { mutableStateOf<FocusPeakingMask?>(null) }
+    // Snapshotted once at FocusDial's own hold-start (see its onHoldStart below), not re-read on every
+    // rotation tick — CameraController stops emitting fresh AF-converged readings the moment the first
+    // rotation locks a manual distance (see CameraUiState.liveFocusDistanceDiopters's own doc), so this
+    // is the one correct "distance a rotation adjusts from" for the gesture's whole duration.
+    var focusHoldStartDistance by remember { mutableFloatStateOf(0f) }
+
+    // Function-scoped (not nested inside the viewfinder's own Box like before) since both the
+    // viewfinder's long-press gesture *and* FocusDial (in the deck row further down) now read/trigger
+    // these — rememberUpdatedState is what lets a pointerInput closure that never restarts across
+    // recompositions (both gestures use a fixed Unit key, see detectFocusGestures/FocusDial's own
+    // pointerInput) still read the *current* uiState instead of whatever uiState happened to be in
+    // scope the one time that closure was originally created.
+    val latestUiState by rememberUpdatedState(uiState)
+    val focusVibrator = rememberFocusVibrator()
+
+    // Tap-to-focus's own visual feedback (on-device-QA follow-up to issue #21) — independent lifecycle
+    // from the hold-and-rotate ring above: appears at the tap point, stays up while
+    // CameraViewModel.afConvergenceState reports SCANNING, then fades a beat after it settles — see
+    // the LaunchedEffect(focusTapToken) below.
+    var focusTapPosition by remember { mutableStateOf<Offset?>(null) }
+    var focusTapVisible by remember { mutableStateOf(false) }
+    // A structural-equality Offset alone can't be relied on to restart a LaunchedEffect on a repeat
+    // tap at the exact same pixel (Compose skips the restart if the new key `equals()` the old one) —
+    // this increments on every real tap regardless of position, so it's always a genuinely new key.
+    var focusTapToken by remember { mutableStateOf(0) }
+
+    // Ring diameter occupies ~92% of the viewfinder's own shorter dimension (on-device-QA follow-up
+    // to issue #21 — the ring used to be a small, fixed 156dp regardless of viewfinder size, which
+    // read as too small once it was also recentered to the viewfinder's own middle, see
+    // focusRingDisplayCenter's own doc above). Falls back to FocusRing's own default before the TextureView
+    // has been laid out at least once (previewViewSize still zero) — never actually visible that
+    // early, since there's nothing to long-press yet, just keeps this expression total.
+    val density = LocalDensity.current
+    val minViewfinderDimensionPx = minOf(previewViewSize.width, previewViewSize.height)
+    val focusRingDiameter = if (minViewfinderDimensionPx > 0) {
+        with(density) { (minViewfinderDimensionPx * FocusRingSizeFraction).toDp() }
+    } else {
+        FocusRingFallbackDiameter
+    }
+
+    // Scales the loupe crop radius by the same ratio FocusRing itself scales its ring band/teeth by
+    // (relative to FocusRingReferenceDiameter, the size LoupeCropRadiusPx was originally tuned
+    // against) — otherwise the same small crop gets stretched over a much bigger loupe circle and the
+    // magnified image turns to mush. Dp/Dp division yields a plain Float scale factor.
+    val focusRingScale = focusRingDiameter / FocusRingReferenceDiameter
+    val loupeCropRadiusPx = (LoupeCropRadiusPx * focusRingScale).roundToInt().coerceAtLeast(LoupeCropRadiusPx)
 
     DisposableEffect(viewModel) {
         onDispose {
@@ -314,6 +441,7 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     LaunchedEffect(uiState.selectedLens) {
         viewModel.onManualIsoCapabilityChanged(viewModel.manualIsoCapability(uiState.selectedLens))
         viewModel.onAeCompensationCapabilityChanged(viewModel.aeCompensationCapability(uiState.selectedLens))
+        viewModel.onManualFocusCapabilityChanged(viewModel.manualFocusCapability(uiState.selectedLens))
     }
 
     // Manual mode's *visible* dials appear the instant ModeLever is tapped (manualModeEnabled), but
@@ -382,6 +510,50 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
         }
     }
 
+    // Periodically refreshes the manual-focus ring's loupe crop + focus-peaking highlight (issue #21)
+    // for as long as the hold gesture is active — mirrors the zebra overlay's own "only pay this cost
+    // while actually engaged" pattern. TextureView.getBitmap() snapshots exactly what's currently drawn
+    // onto its own SurfaceTexture, which CameraPreviewRenderer draws the live preview into via GLES, so
+    // this reflects real, current preview content rather than a separate capture path. Runs on the main
+    // thread (a View method) but the actual crop + luma/edge-detection work is pushed onto
+    // Dispatchers.Default so it doesn't block composition/input while the ring is held.
+    LaunchedEffect(focusLoupeSourceCenter != null) {
+        val center = focusLoupeSourceCenter ?: return@LaunchedEffect
+        while (isActive) {
+            val fullFrame = runCatching { textureView.getBitmap() }.getOrNull()
+            if (fullFrame != null) {
+                val crop = withContext(Dispatchers.Default) { cropLoupeBitmap(fullFrame, center, loupeCropRadiusPx) }
+                if (crop != null) {
+                    focusLoupeBitmap = crop.asImageBitmap()
+                    focusPeakingMask = withContext(Dispatchers.Default) { focusPeakingMaskFromBitmap(crop) }
+                }
+            }
+            delay(LoupeRefreshIntervalMs)
+        }
+    }
+
+    // Tap-to-focus indicator lifecycle (on-device-QA follow-up to issue #21) — restarts fresh on every
+    // real tap via focusTapToken (see its own doc for why a plain Offset key isn't enough). Bounded
+    // end-to-end by MaxAfIndicatorWaitMs so hardware that never reports CONTROL_AF_STATE meaningfully
+    // still fades the indicator out eventually rather than leaving it stuck on screen.
+    LaunchedEffect(focusTapToken) {
+        if (focusTapToken == 0) return@LaunchedEffect
+        focusTapVisible = true
+        withTimeoutOrNull(MaxAfIndicatorWaitMs) {
+            // First wait (briefly) for AF to actually start scanning in response to the trigger — the
+            // trigger is async, so the very next capture result can still reflect a stale pre-tap
+            // state; a device that converges faster than a frame (or never reports a scan at all)
+            // just falls through this after a short grace window instead of hanging on it.
+            withTimeoutOrNull(AfScanStartGraceMs) {
+                viewModel.afConvergenceState.filter { it == AfConvergenceState.SCANNING }.first()
+            }
+            // Then wait for scanning to actually finish (converged or given up).
+            viewModel.afConvergenceState.filter { it != AfConvergenceState.SCANNING }.first()
+        }
+        delay(FocusIndicatorHoldAfterLockMs)
+        focusTapVisible = false
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(CameraChrome.BodyGradient).grainTexture(alpha = 0.35f)) {
         Column(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)) {
@@ -413,15 +585,83 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                     .background(CameraChrome.ViewfinderBezelGradient)
                     .padding(9.dp),
             ) {
+                val viewConfiguration = LocalViewConfiguration.current
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .clip(RoundedCornerShape(16.dp))
-                        .background(CameraChrome.ViewfinderInsetColor),
+                        .background(CameraChrome.ViewfinderInsetColor)
+                        .then(
+                            // No gesture detector at all on a lens with no manual-focus capability —
+                            // both tap-to-focus and the hold-to-position ring are hidden/no-op together
+                            // (issue #21's own capability gate). Keyed on manualFocusSupported alone
+                            // (not the whole uiState) so an in-progress gesture never gets cancelled
+                            // mid-flight by an unrelated state change — see latestUiState above for how
+                            // the gesture still reads fresh values without restarting on every change.
+                            if (uiState.manualFocusSupported) {
+                                Modifier.pointerInput(Unit) {
+                                    detectFocusGestures(
+                                        viewConfigurationLongPressMs = viewConfiguration.longPressTimeoutMillis,
+                                        viewConfigurationTouchSlopPx = viewConfiguration.touchSlop,
+                                        onTap = { position ->
+                                            if (size.width <= 0 || size.height <= 0) return@detectFocusGestures
+                                            viewModel.triggerAutoFocus(
+                                                displayXFraction = (position.x / size.width).coerceIn(0f, 1f),
+                                                displayYFraction = (position.y / size.height).coerceIn(0f, 1f),
+                                            )
+                                            // A fresh Offset value even for a repeat tap at the exact
+                                            // same pixel isn't enough on its own to restart a
+                                            // LaunchedEffect keyed on structural equality — see
+                                            // focusTapToken's own doc for why that's tracked
+                                            // separately.
+                                            focusTapPosition = position
+                                            focusTapToken++
+                                        },
+                                        onHoldStart = { position ->
+                                            // The viewfinder's own long-press now only repositions the
+                                            // ring/loupe — it no longer adjusts focus distance at all
+                                            // (that moved to FocusDial, in the deck row below, per the
+                                            // #21 UX rework). Uses the real touch point directly —
+                                            // reversed from the prior "always centered" behavior, which
+                                            // is now only what happens when the *dial* alone is held
+                                            // (see screenHoldPosition/dialHeld's own doc above).
+                                            screenHoldPosition = position
+                                            focusLoupeBitmap = null
+                                            focusPeakingMask = null
+                                            // A hold gesture takes over from any still-visible tap
+                                            // indicator so the two focus affordances never overlap.
+                                            focusTapPosition = null
+                                            focusTapVisible = false
+                                            focusHaptic(focusVibrator)
+                                        },
+                                        onHoldEnd = {
+                                            screenHoldPosition = null
+                                            focusHaptic(focusVibrator)
+                                        },
+                                    )
+                                }
+                            } else {
+                                Modifier
+                            },
+                        ),
                 ) {
                     AndroidView(factory = { textureView }, modifier = Modifier.fillMaxSize())
                     ViewfinderGridOverlay(visible = gridEnabled, modifier = Modifier.fillMaxSize())
                     ZebraOverlay(mask = zebraMask, modifier = Modifier.fillMaxSize())
+                    FocusTapIndicator(
+                        position = focusTapPosition,
+                        visible = focusTapVisible,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    FocusRing(
+                        center = focusRingDisplayCenter,
+                        rotationDegrees = focusRingRotationDegrees,
+                        loupeImage = focusLoupeBitmap,
+                        peakingMask = focusPeakingMask,
+                        diameter = focusRingDiameter,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                     ExposingIndicator(
                         visible = uiState.isCapturing,
                         durationLabel = if (uiState.manualModeEnabled) {
@@ -471,6 +711,48 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                         onLensSelected = viewModel::onLensSelected,
                         modifier = Modifier.weight(1f),
                     )
+                    // Only occupies a slot when the current lens actually supports manual focus (same
+                    // capability gate the rest of #21 already uses) — mirrors ExposureOrManualDials'
+                    // own conditional-content pattern below, just at the whole-dial level rather than
+                    // swapping between two dial sets. Hold-without-touching-the-screen centers the ring
+                    // on the viewfinder (dialHeld, see its own doc above); rotating/dragging here is the
+                    // *only* thing that actually changes the focus value now — the viewfinder's own
+                    // long-press only repositions the ring.
+                    if (uiState.manualFocusSupported) {
+                        FocusDial(
+                            focusDistanceDiopters = uiState.liveFocusDistanceDiopters ?: 0f,
+                            onHoldStart = {
+                                dialHeld = true
+                                focusHoldStartDistance = latestUiState.liveFocusDistanceDiopters ?: 0f
+                                focusRingRotationDegrees = 0f
+                                // Only clear the loupe if the screen isn't already driving one of its
+                                // own — a dial-only hold starting fresh gets a clean loupe, but one
+                                // starting alongside an already-held screen shouldn't visibly blank out
+                                // the loupe the screen hold already has going.
+                                if (screenHoldPosition == null) {
+                                    focusLoupeBitmap = null
+                                    focusPeakingMask = null
+                                }
+                                focusTapPosition = null
+                                focusTapVisible = false
+                                focusHaptic(focusVibrator)
+                            },
+                            onRotate = { totalRotationRadians ->
+                                focusRingRotationDegrees = Math.toDegrees(totalRotationRadians.toDouble()).toFloat()
+                                val newDistance = manualFocusDistanceForRotation(
+                                    startDistanceDiopters = focusHoldStartDistance,
+                                    rotationRadians = totalRotationRadians,
+                                    maxFocusDistanceDiopters = latestUiState.maxFocusDistanceDiopters,
+                                )
+                                viewModel.setManualFocusDistance(newDistance)
+                            },
+                            onHoldEnd = {
+                                dialHeld = false
+                                focusHaptic(focusVibrator)
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                     ShutterButton(
                         enabled = !uiState.isCapturing,
                         onCapture = ::capture,
@@ -653,3 +935,177 @@ private fun Seam(modifier: Modifier = Modifier) {
 // SurfaceTexture-backed Surface Camera2 writes into directly, so there's no Matrix for this file to
 // compute at all anymore. CameraPreviewRenderer computes the equivalent crop/rotation transform
 // itself, as a GL matrix, from each frame's actually-delivered Image dimensions — see its own doc.
+
+/* ── Manual focus (issue #21): tap-to-focus + hold-to-position ring gesture ───────────────────── */
+
+/**
+ * Distinguishes a simple tap (short press, negligible movement) from a long-press-and-hold (issue
+ * #21's manual focus ring) on the same gesture, mirroring `DialWheel`'s own `awaitEachGesture` +
+ * `awaitFirstDown` structure. A drag that moves past [viewConfigurationTouchSlopPx] before the
+ * long-press threshold elapses is neither — it's ignored outright (this screen has no pan/swipe
+ * gesture over the viewfinder for this to conflict with).
+ *
+ * While holding, this no longer tracks rotation at all (that moved to `FocusDial`, per the #21 UX
+ * rework) — [onHoldStart] fires once with the touch point, then this just waits for release
+ * ([onHoldEnd]), consuming pointer events for the hold's whole duration so nothing else on the
+ * viewfinder can interpret them meanwhile.
+ */
+private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectFocusGestures(
+    viewConfigurationLongPressMs: Long,
+    viewConfigurationTouchSlopPx: Float,
+    onTap: (Offset) -> Unit,
+    onHoldStart: (Offset) -> Unit,
+    onHoldEnd: () -> Unit,
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        val downTimeMs = System.currentTimeMillis()
+        var pointer = down
+        var moved = false
+        var isLongPress = false
+
+        while (true) {
+            val event = awaitPointerEvent()
+            val change = event.changes.firstOrNull { it.id == pointer.id } ?: break
+            if (!change.pressed) {
+                pointer = change
+                break
+            }
+            if ((change.position - down.position).getDistance() > viewConfigurationTouchSlopPx) moved = true
+            if (!moved && System.currentTimeMillis() - downTimeMs >= viewConfigurationLongPressMs) {
+                isLongPress = true
+                pointer = change
+                break
+            }
+            pointer = change
+        }
+
+        when {
+            isLongPress -> {
+                onHoldStart(down.position)
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull { it.id == pointer.id } ?: break
+                    if (!change.pressed) break
+                    change.consume()
+                    pointer = change
+                }
+                onHoldEnd()
+            }
+            !moved && pointer.pressed.not() -> onTap(down.position)
+            else -> Unit // moved past touch slop without reaching the long-press threshold — ignored.
+        }
+    }
+}
+
+/**
+ * Bypasses `View.performHapticFeedback` the same way `DialWheel`'s own tick haptic does (see its own
+ * doc for why a plain `vibrator.vibrate(effect)` alone isn't enough on modern Android) — duplicated
+ * here rather than shared, per this module's "duplicate a small helper until a second feature needs
+ * it, then extract" convention (this is the second occurrence; a future third should factor a shared
+ * `shared:common`/`shared:designsystem` haptics helper instead of a third copy). Falls back to a plain
+ * `createOneShot` below API 29/33, degrading gracefully rather than assuming iPhone-level tactile
+ * fidelity — see this repo's own camera-engineer haptics guidance.
+ */
+@Composable
+private fun rememberFocusVibrator(): Vibrator {
+    val context = LocalContext.current
+    return remember(context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val manager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            manager.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        }
+    }
+}
+
+private fun focusHaptic(vibrator: Vibrator) {
+    if (!vibrator.hasVibrator()) return
+    val effect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
+    } else {
+        VibrationEffect.createOneShot(12L, VibrationEffect.DEFAULT_AMPLITUDE)
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val attributes = android.os.VibrationAttributes.Builder()
+            .setUsage(android.os.VibrationAttributes.USAGE_HARDWARE_FEEDBACK)
+            .build()
+        vibrator.vibrate(effect, attributes)
+    } else {
+        vibrator.vibrate(effect)
+    }
+}
+
+/** How often the loupe crop + focus-peaking mask refresh while the manual focus ring is held — mirrors
+ *  the zebra overlay's own ~66ms throttle (see `CameraController.ZebraThrottleMs`'s own doc), slightly
+ *  looser since this involves a full `TextureView.getBitmap()` readback, not just an already-in-flight
+ *  frame's luma plane. */
+private const val LoupeRefreshIntervalMs = 80L
+
+/**
+ * Base half-width/height (px, in the *displayed* `TextureView`'s own pixel space) of the square crop
+ * taken around the hold center for the loupe, at [FocusRingReferenceDiameter] — deliberately a
+ * *view-pixel*-sized crop, not pre-downscaled, since [FocusRing] draws it magnified via
+ * `Canvas.drawImage`'s own dst-size scaling: cropping small and then scaling up (rather than cropping
+ * already-downscaled content) is what actually shows finer detail than the naked eye sees in the
+ * un-magnified viewfinder. Scaled up alongside the ring's own much-larger-than-default diameter (see
+ * `focusRingDiameter`'s own doc in `CameraContent`) so the loupe's magnification factor — not just its
+ * on-screen size — stays roughly constant instead of the same small crop getting stretched over a much
+ * bigger circle and turning to mush.
+ */
+private const val LoupeCropRadiusPx = 120
+
+/** Must track [FocusRing]'s own (private) `RingDiameter` reference — the value [LoupeCropRadiusPx] was
+ *  tuned against — so `focusRingScale` in `CameraContent` scales the loupe crop by the same ratio
+ *  [FocusRing] itself scales its ring band/teeth by. */
+private val FocusRingReferenceDiameter = 156.dp
+
+/** [FocusPeakingMask] grid resolution for the loupe crop — coarse enough to read as a handful of
+ *  distinct highlighted regions rather than visual noise, matching [FocusRing]'s own drawn cell size. */
+private const val FocusPeakingGridColumns = 10
+private const val FocusPeakingGridRows = 10
+
+/**
+ * Crops a [radiusPx]-radius square out of [source] (a full [TextureView.getBitmap] snapshot) centered
+ * on [center], clamped so the crop never runs off the source bitmap's own edges (which would otherwise
+ * throw). Returns `null` if [source] is too small to crop from at all.
+ */
+private fun cropLoupeBitmap(source: Bitmap, center: Offset, radiusPx: Int): Bitmap? {
+    val diameter = radiusPx * 2
+    if (source.width < 1 || source.height < 1) return null
+    val maxLeft = (source.width - diameter).coerceAtLeast(0)
+    val maxTop = (source.height - diameter).coerceAtLeast(0)
+    val left = (center.x - radiusPx).toInt().coerceIn(0, maxLeft)
+    val top = (center.y - radiusPx).toInt().coerceIn(0, maxTop)
+    val width = diameter.coerceAtMost(source.width - left)
+    val height = diameter.coerceAtMost(source.height - top)
+    if (width <= 0 || height <= 0) return null
+    return try {
+        Bitmap.createBitmap(source, left, top, width, height)
+    } catch (e: IllegalArgumentException) {
+        null
+    }
+}
+
+/**
+ * Converts [crop]'s own ARGB pixels to a plain 0..255 luma [IntArray] (standard Rec. 601 luma weights)
+ * and feeds it through the pure, unit-tested [FocusPeakingMask.fromLuma] — this glue function itself
+ * is Android-`Bitmap`-typed and so isn't independently unit-tested (per this module's hardware/Android-
+ * type-boundary testing convention), but the actual edge-classification math it delegates to is.
+ */
+private fun focusPeakingMaskFromBitmap(crop: Bitmap): FocusPeakingMask {
+    val width = crop.width
+    val height = crop.height
+    val pixels = IntArray(width * height)
+    crop.getPixels(pixels, 0, width, 0, 0, width, height)
+    val luma = IntArray(width * height) { i ->
+        val pixel = pixels[i]
+        val r = (pixel shr 16) and 0xFF
+        val g = (pixel shr 8) and 0xFF
+        val b = pixel and 0xFF
+        (r * 299 + g * 587 + b * 114) / 1000
+    }
+    return FocusPeakingMask.fromLuma(luma, width, height, columns = FocusPeakingGridColumns, rows = FocusPeakingGridRows)
+}

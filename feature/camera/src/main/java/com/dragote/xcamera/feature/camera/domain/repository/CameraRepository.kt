@@ -5,8 +5,10 @@ import android.net.Uri
 import android.os.Handler
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
+import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
+import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.shared.common.domain.result.DataError
@@ -108,6 +110,30 @@ interface CameraRepository {
      * show.
      */
     fun observeZebraMask(): Flow<ZebraMask?>
+
+    fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability?
+
+    /** Tap-to-focus (issue #21) — see `CameraController.triggerAutoFocus`'s own doc. */
+    fun triggerAutoFocus(displayXFraction: Float, displayYFraction: Float)
+
+    /** Hold-and-rotate manual focus ring (issue #21) — see `CameraController.setManualFocusDistance`'s
+     *  own doc. */
+    fun setManualFocusDistance(distanceDiopters: Float?)
+
+    /**
+     * Continuously reflects continuous-AF's live converged focus distance (diopters) for as long as
+     * manual focus isn't locked — mirrors [observeAutoIso]/[observeAutoExposureTime]. Emits `null`
+     * before the first frame lands, or on a lens with no [manualFocusCapability].
+     */
+    fun observeFocusDistance(): Flow<Float?>
+
+    /**
+     * Live `CONTROL_AF_STATE`, translated to [AfConvergenceState] — meant to be collected directly by
+     * whatever drives the tap-to-focus indicator's own visibility (issue #21 follow-up), not folded
+     * into `CameraUiState` for the same high-frequency-emission reason [observeZebraMask] isn't. `null`
+     * before the first frame lands, or on a device that doesn't report this key at all.
+     */
+    fun observeAfConvergenceState(): Flow<AfConvergenceState?>
 
     suspend fun takePhoto(): Result<Uri, DataError.Local>
 

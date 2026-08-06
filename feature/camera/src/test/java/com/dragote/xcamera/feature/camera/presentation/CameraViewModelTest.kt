@@ -3,9 +3,11 @@ package com.dragote.xcamera.feature.camera.presentation
 import android.net.Uri
 import app.cash.turbine.test
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
+import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
+import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraClipping
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
@@ -35,6 +37,8 @@ class CameraViewModelTest {
     private lateinit var autoIsoFlow: MutableStateFlow<Int?>
     private lateinit var autoExposureTimeFlow: MutableStateFlow<Long?>
     private lateinit var zebraMaskFlow: MutableStateFlow<ZebraMask?>
+    private lateinit var focusDistanceFlow: MutableStateFlow<Float?>
+    private lateinit var afConvergenceStateFlow: MutableStateFlow<AfConvergenceState?>
     private lateinit var viewModel: CameraViewModel
 
     @Before
@@ -43,9 +47,13 @@ class CameraViewModelTest {
         autoIsoFlow = MutableStateFlow(null)
         autoExposureTimeFlow = MutableStateFlow(null)
         zebraMaskFlow = MutableStateFlow(null)
+        focusDistanceFlow = MutableStateFlow(null)
+        afConvergenceStateFlow = MutableStateFlow(null)
         every { cameraRepository.observeAutoIso() } returns autoIsoFlow
         every { cameraRepository.observeAutoExposureTime() } returns autoExposureTimeFlow
         every { cameraRepository.observeZebraMask() } returns zebraMaskFlow
+        every { cameraRepository.observeFocusDistance() } returns focusDistanceFlow
+        every { cameraRepository.observeAfConvergenceState() } returns afConvergenceStateFlow
         viewModel = CameraViewModel(cameraRepository)
     }
 
@@ -793,6 +801,91 @@ class CameraViewModelTest {
             val mask = ZebraMask(columns = 1, rows = 1, cells = listOf(ZebraClipping.SHADOW))
             zebraMaskFlow.value = mask
             assertEquals(mask, awaitItem())
+        }
+    }
+
+    @Test
+    fun `afConvergenceState mirrors the repository's flow`() = runTest {
+        viewModel.afConvergenceState.test {
+            assertEquals(null, awaitItem())
+
+            afConvergenceStateFlow.value = AfConvergenceState.SCANNING
+            assertEquals(AfConvergenceState.SCANNING, awaitItem())
+
+            afConvergenceStateFlow.value = AfConvergenceState.FOCUSED
+            assertEquals(AfConvergenceState.FOCUSED, awaitItem())
+        }
+    }
+
+    @Test
+    fun `manualFocusCapability delegates to the repository and returns its result`() {
+        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val capability = ManualFocusCapability(maxFocusDistanceDiopters = 10f)
+        every { cameraRepository.manualFocusCapability(lens) } returns capability
+
+        assertEquals(capability, viewModel.manualFocusCapability(lens))
+        verify { cameraRepository.manualFocusCapability(lens) }
+    }
+
+    @Test
+    fun `triggerAutoFocus delegates to the repository`() {
+        every { cameraRepository.triggerAutoFocus(0.3f, 0.6f) } returns Unit
+
+        viewModel.triggerAutoFocus(0.3f, 0.6f)
+
+        verify { cameraRepository.triggerAutoFocus(0.3f, 0.6f) }
+    }
+
+    @Test
+    fun `setManualFocusDistance delegates to the repository`() {
+        every { cameraRepository.setManualFocusDistance(2.5f) } returns Unit
+
+        viewModel.setManualFocusDistance(2.5f)
+
+        verify { cameraRepository.setManualFocusDistance(2.5f) }
+    }
+
+    @Test
+    fun `onManualFocusCapabilityChanged reflects a supported lens`() = runTest {
+        val capability = ManualFocusCapability(maxFocusDistanceDiopters = 6.5f)
+
+        viewModel.uiState.test {
+            awaitItem() // initial
+
+            viewModel.onManualFocusCapabilityChanged(capability)
+            val updated = awaitItem()
+            assertTrue(updated.manualFocusSupported)
+            assertEquals(6.5f, updated.maxFocusDistanceDiopters)
+        }
+    }
+
+    @Test
+    fun `onManualFocusCapabilityChanged with no capability hides the feature`() = runTest {
+        val capability = ManualFocusCapability(maxFocusDistanceDiopters = 6.5f)
+
+        viewModel.uiState.test {
+            awaitItem() // initial
+
+            viewModel.onManualFocusCapabilityChanged(capability)
+            assertTrue(awaitItem().manualFocusSupported)
+
+            viewModel.onManualFocusCapabilityChanged(null)
+            val updated = awaitItem()
+            assertFalse(updated.manualFocusSupported)
+            assertEquals(0f, updated.maxFocusDistanceDiopters)
+        }
+    }
+
+    @Test
+    fun `liveFocusDistanceDiopters tracks the repository's focus distance flow`() = runTest {
+        viewModel.uiState.test {
+            awaitItem() // initial
+
+            focusDistanceFlow.value = 3.2f
+            assertEquals(3.2f, awaitItem().liveFocusDistanceDiopters)
+
+            focusDistanceFlow.value = 1.1f
+            assertEquals(1.1f, awaitItem().liveFocusDistanceDiopters)
         }
     }
 }

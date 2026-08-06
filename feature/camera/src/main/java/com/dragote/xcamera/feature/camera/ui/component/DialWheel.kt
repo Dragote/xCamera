@@ -465,8 +465,10 @@ private fun tickHaptic(vibrator: Vibrator) {
 }
 
 /** Side carets pointing at the centerline — always lit, since the barrel is parked on a real detent
- *  whenever a click isn't actively mid-jump. */
-private fun DrawScope.drawCenterCarets(accent: Color) {
+ *  whenever a click isn't actively mid-jump. `internal` (not `private`) so `FocusDial` — a different
+ *  gesture model over the same barrel/well visual family — can reuse it too, mirroring [drawWell]/
+ *  [drawBarrel]'s own visibility. */
+internal fun DrawScope.drawCenterCarets(accent: Color) {
     val cy = size.height / 2f
     val w = 5.dp.toPx()
     val h = 9.dp.toPx()
