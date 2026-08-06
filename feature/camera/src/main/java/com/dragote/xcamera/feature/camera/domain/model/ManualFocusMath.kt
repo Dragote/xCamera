@@ -1,6 +1,7 @@
 package com.dragote.xcamera.feature.camera.domain.model
 
 import kotlin.math.PI
+import kotlin.math.roundToInt
 
 /**
  * Maps a tap/hold point expressed as a fraction (`0f..1f`, top-left origin) of the *displayed*,
@@ -59,3 +60,28 @@ fun manualFocusDistanceForRotation(
 }
 
 private val FullRangeRotationRadians = (2.0 * PI * 1.5).toFloat()
+
+/**
+ * Formats a manual focus distance (diopters, `LENS_FOCUS_DISTANCE`'s own unit) as an approximate
+ * physical distance for `FocusDial`'s value readout — `1/diopters` gives meters exactly (diopters is
+ * literally the reciprocal of focus distance in meters), so this doesn't need physical calibration
+ * data beyond that identity. `0f` (optical infinity — Camera2's own convention for
+ * `LENS_FOCUS_DISTANCE == 0`) reads as the infinity symbol rather than a divide-by-zero. Sub-meter
+ * distances switch to whole centimeters (e.g. "35cm") since "0.4m" reads less naturally than "40cm"
+ * for macro-range distances; meter-plus distances show one decimal (e.g. "1.2m") — neither needs more
+ * precision than that for a live dial readout, and [manualFocusDistanceForRotation] itself only
+ * approximates the lens's true focus curve to begin with. Deliberately avoids locale-sensitive
+ * `String.format`/`%.1f` (which can render a comma decimal separator on some locales) in favor of
+ * plain integer arithmetic, matching [formatShutterSpeed]'s own approach.
+ */
+fun formatFocusDistance(diopters: Float): String {
+    if (diopters <= 0f) return "∞"
+    val meters = 1f / diopters
+    return if (meters >= 1f) {
+        val tenths = (meters * 10f).roundToInt()
+        "${tenths / 10}.${tenths % 10}m"
+    } else {
+        val centimeters = (meters * 100f).roundToInt().coerceAtLeast(1)
+        "${centimeters}cm"
+    }
+}

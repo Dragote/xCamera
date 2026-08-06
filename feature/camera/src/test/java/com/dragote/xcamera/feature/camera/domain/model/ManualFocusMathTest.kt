@@ -133,4 +133,34 @@ class ManualFocusMathTest {
         )
         assertEquals(0f, distance, Epsilon)
     }
+
+    @Test
+    fun `formatFocusDistance at zero diopters is optical infinity`() {
+        assertEquals("∞", formatFocusDistance(0f))
+    }
+
+    @Test
+    fun `formatFocusDistance below zero diopters is also optical infinity`() {
+        assertEquals("∞", formatFocusDistance(-1f))
+    }
+
+    @Test
+    fun `formatFocusDistance at 0_5 diopters is 2_0m`() {
+        assertEquals("2.0m", formatFocusDistance(0.5f))
+    }
+
+    @Test
+    fun `formatFocusDistance at 1 diopter is 1_0m`() {
+        assertEquals("1.0m", formatFocusDistance(1f))
+    }
+
+    @Test
+    fun `formatFocusDistance at 2 diopters (sub-meter) switches to centimeters`() {
+        assertEquals("50cm", formatFocusDistance(2f))
+    }
+
+    @Test
+    fun `formatFocusDistance at 10 diopters is 10cm`() {
+        assertEquals("10cm", formatFocusDistance(10f))
+    }
 }
