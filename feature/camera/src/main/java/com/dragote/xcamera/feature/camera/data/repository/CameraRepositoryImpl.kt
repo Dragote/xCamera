@@ -10,6 +10,7 @@ import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
+import com.dragote.xcamera.feature.camera.domain.model.HistogramData
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
@@ -61,6 +62,8 @@ class CameraRepositoryImpl @Inject constructor(
     override fun setZebraAnalysisEnabled(enabled: Boolean) = cameraController.setZebraAnalysisEnabled(enabled)
 
     override fun observeZebraMask(): Flow<ZebraMask?> = cameraController.zebraMask
+
+    override fun observeHistogramData(): Flow<HistogramData?> = cameraController.histogramData
 
     override fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability? =
         cameraController.manualFocusCapability(lens)

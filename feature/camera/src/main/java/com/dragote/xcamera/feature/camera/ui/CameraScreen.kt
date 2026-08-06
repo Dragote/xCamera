@@ -87,6 +87,7 @@ import com.dragote.xcamera.feature.camera.ui.component.FocusDial
 import com.dragote.xcamera.feature.camera.ui.component.FocusRing
 import com.dragote.xcamera.feature.camera.ui.component.FocusTapIndicator
 import com.dragote.xcamera.feature.camera.ui.component.GridLever
+import com.dragote.xcamera.feature.camera.ui.component.HistogramOverlay
 import com.dragote.xcamera.feature.camera.ui.component.IsoDial
 import com.dragote.xcamera.feature.camera.ui.component.LensDial
 import com.dragote.xcamera.feature.camera.ui.component.ModeLever
@@ -254,6 +255,7 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
     val coroutineScope = rememberCoroutineScope()
     val cameraRepository = rememberCameraRepository()
     val zebraMask by viewModel.zebraMask.collectAsStateWithLifecycle()
+    val histogramData by viewModel.histogramData.collectAsStateWithLifecycle()
 
     // The live preview no longer goes through a raw Camera2-owned Surface at all — CameraController
     // owns its own preview ImageReader internally (see its own doc for why) and hands each delivered
@@ -684,6 +686,10 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                             }
                         },
                         modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
+                    )
+                    HistogramOverlay(
+                        data = histogramData,
+                        modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
                     )
                 }
             }
