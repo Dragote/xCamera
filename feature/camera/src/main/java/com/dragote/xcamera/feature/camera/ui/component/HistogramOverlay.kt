@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.tooling.preview.Preview
@@ -25,20 +26,22 @@ import kotlin.math.sqrt
  * always-on, unlike [ZebraOverlay]'s dial-drag gate).
  *
  * The Activity is portrait-locked (see AndroidManifest), so this screen's own layout never
- * physically rotates — but the *device* still does, in the user's hand. Pinning this readout to a
- * single fixed screen corner would mean it visually ends up bottom-left (or upside down) from the
- * user's own point of view once they rotate the phone to landscape, even though nothing on screen
- * actually moved. Instead this hops between the four screen corners as
- * [rememberDeviceOrientationQuadrant] changes, landing on whichever corner is *currently* the
- * physical top-right from the user's perspective — see [alignmentForQuadrant] for the exact corner
- * mapping. [ViewfinderThumbnailChip] solves the same "device rotates, layout doesn't" problem for
- * its glyph by counter-rotating the icon in place; a corner-hop reads better here since a 96x48dp
- * non-square readout would either clip or need to swap its own width/height if it tried to rotate
- * in place instead.
+ * physically rotates — but the *device* still does, in the user's hand. Two things need to react to
+ * that, same as [ViewfinderThumbnailChip]'s glyph: position (pinning to a single fixed screen corner
+ * would mean this visually ends up bottom-left, or upside down, from the user's own point of view
+ * once they rotate the phone) and upright-ness (the bars themselves need to counter-rotate to stay
+ * gravity-aligned). This hops between the four screen corners *and* counter-rotates its content as
+ * [rememberDeviceOrientationQuadrant] changes — see [alignmentForQuadrant] for the corner mapping and
+ * [counterRotationDegrees] for the rotation. Rotating a non-square 96x48dp box in place would clip
+ * against its own bounding box if anything clipped to it, but nothing here does (no `.clip(...)` in
+ * this composable's own modifier chain), so the rotated content simply paints outside its nominal
+ * layout bounds during the brief moments it's not axis-aligned — the same reason
+ * [ViewfinderThumbnailChip]'s square glyph never needed to worry about this at all.
  *
- * The hop itself cross-fades (old corner's content fades out while the new corner's fades in)
- * rather than sliding a position across the screen — a discrete snap would look like a glitch, and
- * animating a diagonal slide across the viewfinder would be far more distracting than the readout
+ * The hop cross-fades (old corner's content fades out while the new corner's fades in, each already
+ * snapped to its own upright rotation — no animated spin, unlike [ViewfinderThumbnailChip]'s smooth
+ * tween) rather than sliding a position across the screen — a discrete snap would look like a glitch,
+ * and animating a diagonal slide across the viewfinder would be far more distracting than the readout
  * itself is worth.
  *
  * Each bucket draws as a single round-capped vertical line from the baseline up to its scaled height
@@ -80,7 +83,10 @@ fun HistogramOverlay(data: HistogramData?, modifier: Modifier = Modifier) {
             label = "histogramCorner",
         ) { activeQuadrant ->
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = alignmentForQuadrant(activeQuadrant)) {
-                HistogramMarks(data = data)
+                HistogramMarks(
+                    data = data,
+                    modifier = Modifier.rotate(counterRotationDegrees(activeQuadrant)),
+                )
             }
         }
     }
@@ -103,8 +109,8 @@ private fun alignmentForQuadrant(quadrant: Float): Alignment = when (quadrant) {
 }
 
 @Composable
-private fun HistogramMarks(data: HistogramData?) {
-    Canvas(modifier = Modifier.size(width = HistogramWidth, height = HistogramHeight)) {
+private fun HistogramMarks(data: HistogramData?, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier.size(width = HistogramWidth, height = HistogramHeight)) {
         val bucketCount = data?.buckets?.size ?: EmptyBucketCount
         if (bucketCount <= 0) return@Canvas
         val maxCount = data?.maxBucketCount ?: 0

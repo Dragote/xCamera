@@ -141,7 +141,7 @@ private fun rememberUprightRotationDegrees(): State<Float> {
     val unwrapped = remember { mutableFloatStateOf(0f) }
 
     LaunchedEffect(quadrant) {
-        val bucket = (360f - quadrant) % 360f
+        val bucket = counterRotationDegrees(quadrant)
         val current = unwrapped.floatValue
         val shortestDelta = ((bucket - current) % 360f + 540f) % 360f - 180f
         unwrapped.floatValue = current + shortestDelta

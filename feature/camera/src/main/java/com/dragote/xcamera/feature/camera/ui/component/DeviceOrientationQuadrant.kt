@@ -41,6 +41,13 @@ fun rememberDeviceOrientationQuadrant(): State<Float> {
     return quadrant
 }
 
+/** Clockwise on-screen rotation that visually counters a physical device rotation of [quadrant]°, so
+ *  content drawn with this rotation applied stays upright to a viewer whose own head hasn't moved.
+ *  Shared by [ViewfinderThumbnailChip] (animates smoothly through this) and `HistogramOverlay` (snaps
+ *  straight to it per corner, no animation — see [rememberDeviceOrientationQuadrant]'s own doc for why
+ *  each treats a quadrant change differently). */
+fun counterRotationDegrees(quadrant: Float): Float = (360f - quadrant) % 360f
+
 const val QUADRANT_HYSTERESIS_DEGREES = 15f
 private val QuadrantCenters = floatArrayOf(0f, 90f, 180f, 270f)
 
