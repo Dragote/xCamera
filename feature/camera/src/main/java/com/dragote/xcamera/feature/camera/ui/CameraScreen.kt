@@ -1000,11 +1000,14 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectFo
 
 /**
  * Bypasses `View.performHapticFeedback` the same way `DialWheel`'s own tick haptic does (see its own
- * doc for why a plain `vibrator.vibrate(effect)` alone isn't enough on modern Android) — duplicated
- * here rather than shared, per this module's "duplicate a small helper until a second feature needs
- * it, then extract" convention (this is the second occurrence; a future third should factor a shared
- * `shared:common`/`shared:designsystem` haptics helper instead of a third copy). Falls back to a plain
- * `createOneShot` below API 29/33, degrading gracefully rather than assuming iPhone-level tactile
+ * doc for why a plain `vibrator.vibrate(effect)` alone isn't enough on modern Android) — still a
+ * duplicate of that logic, not shared. This project's duplication convention (see root `CLAUDE.md`) was
+ * tightened to "abstract at the *second* occurrence" after `ui/component/DialText.kt` got extracted from
+ * exactly this kind of copy (issue #25) — this pair (`DialWheel`'s `rememberDialVibrator`/`tickHaptic`
+ * and this `rememberFocusVibrator`/`focusHaptic`) is already at that second occurrence and is due for the
+ * same treatment (a `shared:designsystem` haptics helper), just not yet done — flagging here rather than
+ * silently leaving it as if the old "wait for a third copy" reasoning still applied. Falls back to a
+ * plain `createOneShot` below API 29/33, degrading gracefully rather than assuming iPhone-level tactile
  * fidelity — see this repo's own camera-engineer haptics guidance.
  */
 @Composable

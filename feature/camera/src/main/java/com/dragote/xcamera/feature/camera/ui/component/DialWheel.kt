@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -59,13 +58,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome.Accent
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
@@ -181,17 +175,7 @@ fun DialWheel(
         // layout) means neither has to fight the other for width: each is the sole occupant of its own
         // full-width line, so a long value like "1/125" never gets squeezed down to nothing the way it
         // did sharing a row with "SHUTTER".
-        Text(
-            values[index.coerceIn(0, maxIndex)],
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold,
-            fontSize = 13.sp,
-            color = Color(0xFFDED7C3).copy(alpha = textAlpha),
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
-        )
+        DialValueText(values[index.coerceIn(0, maxIndex)], alpha = textAlpha)
 
         Canvas(
             Modifier
@@ -328,18 +312,7 @@ fun DialWheel(
             }
         }
 
-        Text(
-            label,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 10.sp,
-            letterSpacing = 2.sp,
-            color = Color(0xFF877F6C).copy(alpha = textAlpha),
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
-        )
+        DialLabelText(label, alpha = textAlpha)
     }
 }
 
