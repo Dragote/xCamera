@@ -295,10 +295,14 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     val autoExposureTimeNs: StateFlow<Long?> = _autoExposureTimeNs.asStateFlow()
 
     /**
-     * Mirrors [autoIso]/[autoExposureTimeNs] for `LENS_FOCUS_DISTANCE` — the most recent
-     * continuous-AF-converged focus distance (diopters), continuously observed rather than a one-shot
-     * pull. Read synchronously by `CameraViewModel`'s own tracking the same way, and used by
-     * `ui/component/FocusRing`'s hold gesture as the starting point a rotation adjusts *from* (see
+     * Mirrors [autoIso]/[autoExposureTimeNs] in shape (a continuously observed `StateFlow`, not a
+     * one-shot pull) for `LENS_FOCUS_DISTANCE`, but *not* in update policy — unlike those two, this is
+     * updated unconditionally regardless of [pendingManualFocusDiopters] (see [previewCaptureCallback]'s
+     * own doc for why the ISO/shutter reasoning for gating doesn't transfer here). Reflects the most
+     * recent continuous-AF-converged distance while unlocked, and the actual current lens position while
+     * a manual hold has it locked — either way, always Camera2's real current reading. Read synchronously
+     * by `CameraViewModel`'s own tracking the same way, and used by `ui/component/FocusDial`'s hold
+     * gesture as the starting point a rotation adjusts *from* (see
      * [manualFocusDistanceForRotation][com.dragote.xcamera.feature.camera.domain.model.manualFocusDistanceForRotation]).
      */
     private val _autoFocusDistanceDiopters = MutableStateFlow<Float?>(null)
@@ -323,9 +327,13 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      * [buildPreviewRequest]), not a genuine AE convergence value — so this must skip updating
      * [_autoIso]/[_autoExposureTimeNs] in that case, exactly as it did before live manual preview
      * feedback was reintroduced, otherwise the ISO/shutter dials' live auto-tracking would both get
-     * fed a bogus "auto" value that's actually just whatever the preview cap forced. AF and AE are
-     * independent axes (issue #21) — [pendingManualFocusDiopters] gates [_autoFocusDistanceDiopters]
-     * on its own, regardless of whichever exposure mode is active.
+     * fed a bogus "auto" value that's actually just whatever the preview cap forced. AF is a separate
+     * axis (issue #21) and deliberately does *not* get the same gating: [applyFocusSettings] applies
+     * [pendingManualFocusDiopters] to the preview request verbatim, with no preview-only cap/rescale the
+     * way manual exposure gets, so [_autoFocusDistanceDiopters] stays accurate either way and is updated
+     * unconditionally below — gating it the same way ISO/shutter are would just freeze
+     * `ui/component/FocusDial`'s own value readout the instant a manual hold began, which is exactly the
+     * bug on-device testing caught (see `docs/features/camera-capture.md`).
      */
     private val previewCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureCompleted(
@@ -337,9 +345,13 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
                 result.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { _autoExposureTimeNs.value = it }
                 result.get(CaptureResult.SENSOR_SENSITIVITY)?.let { _autoIso.value = it }
             }
-            if (pendingManualFocusDiopters == null) {
-                result.get(CaptureResult.LENS_FOCUS_DISTANCE)?.let { _autoFocusDistanceDiopters.value = it }
-            }
+            // Unlike the ISO/shutter guard above, this stays unconditional: applyFocusSettings applies
+            // pendingManualFocusDiopters to the preview request verbatim (no preview-only cap/rescale
+            // the way manual exposure gets), so the result's LENS_FOCUS_DISTANCE is always the real,
+            // accurate current lens position — mirroring it unconditionally is what lets FocusDial's own
+            // value readout actually move while it's being dragged, instead of freezing at whatever the
+            // last auto-converged reading was the instant a manual hold began.
+            result.get(CaptureResult.LENS_FOCUS_DISTANCE)?.let { _autoFocusDistanceDiopters.value = it }
             val convergence = afConvergenceStateFrom(result.get(CaptureResult.CONTROL_AF_STATE))
             _afConvergenceState.value = convergence
             // See pendingAfModeAuto's own doc — once the triggered scan actually settles, revert the
