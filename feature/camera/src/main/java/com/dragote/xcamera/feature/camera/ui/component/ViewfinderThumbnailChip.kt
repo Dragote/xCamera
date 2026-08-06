@@ -20,9 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -55,9 +53,12 @@ import kotlinx.coroutines.withContext
  * [rememberDeviceOrientationQuadrant] changes — via the same [cornerForQuadrant]/`Crossfade` corner-hop
  * `HistogramOverlay` uses — landing on whichever corner is *currently* the physical bottom-left from
  * the user's own point of view, cross-fading between corners rather than sliding across the screen.
- * On top of that, [ViewfinderThumbnailChipContent]'s own glyph additionally counter-rotates in place
- * (smoothly, via [rememberUprightRotationDegrees]) so it stays visually upright too — unlike
- * `HistogramOverlay`'s bars, a square 46dp chip has no footprint-swap concern from rotating in place.
+ * On top of that, [ViewfinderThumbnailChipContent]'s own glyph counter-rotates to
+ * [counterRotationDegrees] so it stays visually upright too — snapped straight to it, same as
+ * `HistogramOverlay`'s bars, not smoothly animated: the corner-hop's own cross-fade already masks the
+ * transition, so a separately-animated spin underneath it would just be a second, redundant motion
+ * competing with the fade instead of reading as one clean change. Unlike `HistogramOverlay`'s bars, a
+ * square 46dp chip has no footprint-swap concern from rotating in place.
  *
  * [modifier] should size this to the full area the chip is allowed to roam across corners of (e.g.
  * `Modifier.fillMaxSize()` over the whole viewfinder), not to the chip's own small size — see
@@ -77,7 +78,11 @@ fun ViewfinderThumbnailChip(photoUri: Uri?, onClick: () -> Unit, modifier: Modif
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = cornerForQuadrant(Alignment.BottomStart, activeQuadrant),
             ) {
-                ViewfinderThumbnailChipContent(photoUri = photoUri, onClick = onClick)
+                ViewfinderThumbnailChipContent(
+                    photoUri = photoUri,
+                    onClick = onClick,
+                    rotationDegrees = counterRotationDegrees(activeQuadrant),
+                )
             }
         }
     }
@@ -86,7 +91,7 @@ fun ViewfinderThumbnailChip(photoUri: Uri?, onClick: () -> Unit, modifier: Modif
 private val CornerInset = 12.dp
 
 @Composable
-private fun ViewfinderThumbnailChipContent(photoUri: Uri?, onClick: () -> Unit) {
+private fun ViewfinderThumbnailChipContent(photoUri: Uri?, onClick: () -> Unit, rotationDegrees: Float) {
     val context = LocalContext.current
     val density = LocalDensity.current
     var thumbnail by remember { mutableStateOf<ImageBitmap?>(null) }
@@ -111,7 +116,6 @@ private fun ViewfinderThumbnailChipContent(photoUri: Uri?, onClick: () -> Unit) 
     }
 
     val scale by animateFloatAsState(targetValue = if (pressed) 0.92f else 1f, label = "thumbnailChipScale")
-    val rotationDegrees by rememberUprightRotationDegrees()
 
     Box(
         modifier = Modifier
@@ -161,33 +165,6 @@ private suspend fun decodeThumbnail(context: Context, uri: Uri, targetPx: Int): 
             null
         }
     }
-
-/**
- * A smoothly-animated rotation (degrees) that counters the phone's physical orientation, bucketed
- * to the same 90°-quadrant thresholds [CameraController][com.dragote.xcamera.feature.camera.data.CameraController]
- * uses for the captured photo's own EXIF rotation — so the thumbnail's "upright" matches whatever
- * orientation a photo taken at that same moment would be saved with. Tracks an *unwrapped* angle
- * (not clamped to 0-359) and always steps by the shortest signed delta between buckets, so e.g.
- * 270°→0° animates as a -90° turn rather than spinning the long way around through 180°.
- */
-@Composable
-private fun rememberUprightRotationDegrees(): State<Float> {
-    val quadrant by rememberDeviceOrientationQuadrant()
-    val unwrapped = remember { mutableFloatStateOf(0f) }
-
-    LaunchedEffect(quadrant) {
-        val bucket = counterRotationDegrees(quadrant)
-        val current = unwrapped.floatValue
-        val shortestDelta = ((bucket - current) % 360f + 540f) % 360f - 180f
-        unwrapped.floatValue = current + shortestDelta
-    }
-
-    return animateFloatAsState(
-        targetValue = unwrapped.floatValue,
-        animationSpec = tween(durationMillis = 300, easing = CameraChrome.EaseStandard),
-        label = "thumbnailUprightRotation",
-    )
-}
 
 @Preview(showBackground = true, widthDp = 220, heightDp = 320, backgroundColor = 0xFF0D1210)
 @Composable
