@@ -10,12 +10,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.dragote.xcamera.feature.camera.domain.model.HistogramData
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
+import com.dragote.xcamera.feature.camera.ui.theme.embossedShadow
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 import kotlin.math.sqrt
 
@@ -25,45 +25,62 @@ import kotlin.math.sqrt
  * than a translucent full-viewfinder overlay, matching [ExposingIndicator]/[ViewfinderThumbnailChip]'s
  * own corner-chip convention rather than [ZebraOverlay]/[ViewfinderGridOverlay]'s full-bleed one.
  *
- * Bar heights are `sqrt(count / maxBucketCount)`-scaled, not linear — a raw linear scale lets one
- * tall spike (extremely common in a real histogram, e.g. a large flat-colored sky or wall) dwarf
- * every other bucket down to invisibility, which defeats the point of a tonal-distribution readout;
- * the square-root compresses that dominance while still preserving the tallest-bucket-is-tallest
- * ordering. Bar color is a horizontal gradient from [CameraChrome.ZebraShadow] (dark/shadow end, at
- * bucket 0) to [CameraChrome.ZebraHighlight] (light/highlight end, at the last bucket) — the same two
- * colors [ZebraOverlay] already uses for shadow/highlight clipping, so a shadow-clipped or
- * highlight-clipped tail of the histogram visually matches whatever [ZebraOverlay] would be striping
- * at the same time.
+ * Each bucket draws as a single round-capped vertical line from the baseline up to its scaled height
+ * — at zero height the round cap alone still paints, so an empty bucket reads as a small dot sitting
+ * on the baseline and a populated one reads as a dot-capped bar, both in one `drawLine` call. Bar/dot
+ * height is `sqrt(count / maxBucketCount)`-scaled, not linear — a raw linear scale lets one tall spike
+ * (extremely common in a real histogram, e.g. a large flat-colored sky or wall) dwarf every other
+ * bucket down to invisibility, which defeats the point of a tonal-distribution readout; the
+ * square-root compresses that dominance while still preserving the tallest-bucket-is-tallest ordering.
  *
- * [data] going `null` (no frame classified yet, e.g. right after a fresh camera bind) draws an empty
- * box rather than hiding entirely — unlike [ZebraOverlay]'s fade-out-then-vanish (there's no gesture
- * this is tied to that would make hiding it read as intentional), the box itself is a permanent
- * fixture of the viewfinder chrome.
+ * Every mark is [CameraChrome.HistogramMarkColor] (near-white) except the very first (darkest) and
+ * very last (brightest) bucket, which use [CameraChrome.ZebraShadow]/[CameraChrome.ZebraHighlight] —
+ * the same two colors [ZebraOverlay] uses for shadow/highlight clipping — to flag the absolute
+ * shadow/highlight ends of the tonal range rather than tinting the whole distribution.
+ *
+ * [data] going `null` (no frame classified yet, e.g. right after a fresh camera bind) still draws the
+ * baseline dot row at zero height rather than an empty box — unlike [ZebraOverlay]'s fade-out-then-
+ * vanish, there's no gesture this is tied to that would make hiding it read as intentional, and the
+ * idle dot row reads as "ready, no data yet" rather than a blank gap in the chrome.
  */
 @Composable
 fun HistogramOverlay(data: HistogramData?, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .size(width = HistogramWidth, height = HistogramHeight)
-            .clip(RoundedCornerShape(8.dp))
-            .background(CameraChrome.HistogramBackground),
+            .clip(RoundedCornerShape(CornerRadius))
+            .background(CameraChrome.HistogramTrackColor)
+            .embossedShadow(),
     ) {
-        Canvas(modifier = Modifier.size(width = HistogramWidth, height = HistogramHeight)) {
-            val buckets = data?.buckets.orEmpty()
-            if (buckets.isEmpty()) return@Canvas
+        Canvas(
+            modifier = Modifier
+                .size(width = HistogramWidth, height = HistogramHeight)
+                .padding(horizontal = HorizontalInset, vertical = VerticalInset),
+        ) {
+            val bucketCount = data?.buckets?.size ?: EmptyBucketCount
+            if (bucketCount <= 0) return@Canvas
             val maxCount = data?.maxBucketCount ?: 0
-            if (maxCount <= 0) return@Canvas
 
-            val barWidth = size.width / buckets.size
-            for (index in buckets.indices) {
-                val fraction = sqrt(buckets[index].toFloat() / maxCount)
-                val barHeight = size.height * fraction
-                val t = if (buckets.size > 1) index.toFloat() / (buckets.size - 1) else 0f
-                val color = lerp(CameraChrome.ZebraShadow, CameraChrome.ZebraHighlight, t)
-                drawRect(
+            val slotWidth = size.width / bucketCount
+            val strokeWidthPx = DotDiameter.toPx().coerceAtMost(slotWidth)
+            val baselineY = size.height - strokeWidthPx / 2
+
+            for (index in 0 until bucketCount) {
+                val count = data?.buckets?.getOrNull(index) ?: 0
+                val fraction = if (maxCount > 0) sqrt(count.toFloat() / maxCount) else 0f
+                val barHeight = (size.height - strokeWidthPx) * fraction
+                val x = slotWidth * (index + 0.5f)
+                val color = when (index) {
+                    0 -> CameraChrome.ZebraShadow
+                    bucketCount - 1 -> CameraChrome.ZebraHighlight
+                    else -> CameraChrome.HistogramMarkColor
+                }
+                drawLine(
                     color = color,
-                    topLeft = Offset(x = index * barWidth, y = size.height - barHeight),
-                    size = Size(width = barWidth, height = barHeight),
+                    start = Offset(x, baselineY),
+                    end = Offset(x, baselineY - barHeight),
+                    strokeWidth = strokeWidthPx,
+                    cap = StrokeCap.Round,
                 )
             }
         }
@@ -72,16 +89,25 @@ fun HistogramOverlay(data: HistogramData?, modifier: Modifier = Modifier) {
 
 private val HistogramWidth = 96.dp
 private val HistogramHeight = 48.dp
+private val CornerRadius = 14.dp
+private val HorizontalInset = 8.dp
+private val VerticalInset = 8.dp
+private val DotDiameter = 4.dp
+
+/** Bucket count for the idle (no data yet) baseline row — matches `CameraController.HistogramBucketCount`
+ *  so the dot spacing doesn't visibly shift once the first real frame lands; not shared as a literal
+ *  constant across the data/ui layers since a one-time idle-to-live relayout is imperceptible either way. */
+private const val EmptyBucketCount = 20
 
 @Preview(showBackground = true, backgroundColor = 0xFF0D1210)
 @Composable
 private fun HistogramOverlayPreview() {
-    // A rough bell-ish shape with a highlight-side spike, representative of a typical outdoor frame.
-    val bucketCount = 64
+    // A rough distribution with a highlight-side spike, representative of a typical outdoor frame.
+    val bucketCount = 20
     val buckets = List(bucketCount) { i ->
         val mid = bucketCount / 2
-        val bell = (40 - kotlin.math.abs(i - mid)).coerceAtLeast(0)
-        val highlightSpike = if (i > bucketCount - 6) 60 else 0
+        val bell = (10 - kotlin.math.abs(i - mid)).coerceAtLeast(0)
+        val highlightSpike = if (i == bucketCount - 3) 40 else if (i == bucketCount - 2) 15 else 0
         bell + highlightSpike
     }
     XCameraTheme {

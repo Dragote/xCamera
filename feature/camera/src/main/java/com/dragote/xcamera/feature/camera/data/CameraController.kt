@@ -544,6 +544,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
             pixelStride = plane.pixelStride,
             width = image.width,
             height = image.height,
+            bucketCount = HistogramBucketCount,
         )
     }
 
@@ -1590,6 +1591,12 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
          *  than [ZebraThrottleMs] (10fps vs. 15fps) since this runs for the entire preview lifetime
          *  rather than only during a dial-drag burst. */
         const val HistogramThrottleMs = 100L
+
+        /** Bucket count for [HistogramData.fromLumaPlane] — deliberately coarse (not the domain
+         *  default of 64) to match `HistogramOverlay`'s dot-per-bucket rendering, where each bucket
+         *  gets its own visibly distinct baseline dot rather than blurring into a dense continuous
+         *  bar chart. */
+        const val HistogramBucketCount = 20
 
         /** Bounded safety net for [pendingAfModeAuto] — see that field's own doc. Generous relative to
          *  how fast a triggered AF scan actually settles on-device (observed well under a second on a

@@ -103,11 +103,17 @@ object CameraChrome {
     val ValueColor = Color(0xFFDED7C3)
     val GrooveColor = Color.White
 
-    /** Warm near-white background for the histogram readout — brighter/flatter than [ValueColor]'s
-     *  warm off-white so the [ZebraShadow]-to-[ZebraHighlight] bar gradient reads clearly against it,
-     *  while still keeping the same warm (not clinical pure-white) chrome undertone as the rest of the
-     *  skeuomorphic body. */
-    val HistogramBackground = Color(0xFFF2EEE4)
+    /** Warm taupe track fill for the histogram readout's body — matches the recessed-trough tone of
+     *  the app's other skeuomorphic tracks (see [DialTroughGradient]) rather than a plain flat panel,
+     *  meant to be combined with [embossedShadow] for the same subtle top-highlight/bottom-shadow
+     *  bezel every other raised/recessed chrome element uses. */
+    val HistogramTrackColor = Color(0xFFB6ABA5)
+
+    /** Near-white for the histogram's baseline dots/bars themselves — distinct from [ValueColor]'s
+     *  warmer off-white so the marks read clearly against [HistogramTrackColor]. Only the first
+     *  (darkest) and last (brightest) bucket use [ZebraShadow]/[ZebraHighlight] instead, marking the
+     *  shadow/highlight ends of the tonal range with the same color language [ZebraOverlay] uses. */
+    val HistogramMarkColor = Color(0xFFF7F4EF)
 
     fun trackOnGradient(accent: Color = Accent): Brush = Brush.verticalGradient(
         0f to lerp(accent, Color.Black, 0.3f),
