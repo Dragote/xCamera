@@ -1049,7 +1049,7 @@ private const val LoupeRefreshIntervalMs = 80L
  * on-screen size — stays roughly constant instead of the same small crop getting stretched over a much
  * bigger circle and turning to mush.
  */
-private const val LoupeCropRadiusPx = 70
+private const val LoupeCropRadiusPx = 110
 
 /** Must track [FocusRing]'s own (private) `RingDiameter` reference — the value [LoupeCropRadiusPx] was
  *  tuned against — so `focusRingScale` in `CameraContent` scales the loupe crop by the same ratio
