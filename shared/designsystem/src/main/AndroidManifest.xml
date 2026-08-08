@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- HapticTick's click-tick haptic goes through Vibrator directly (see haptics/HapticTick.kt),
+         not View.performHapticFeedback, so it isn't gated by the system's "Touch feedback" toggle. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+</manifest>

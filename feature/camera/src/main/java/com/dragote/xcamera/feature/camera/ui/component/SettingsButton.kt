@@ -33,7 +33,7 @@ import com.dragote.xcamera.shared.designsystem.theme.recessedTrackShadow
 /**
  * A static navigation button matching FLASH/GRID/MODE's own chrome ([LeverTrackWidth]/
  * [LeverTrackHeight] track, [CameraChrome.leverLabelStyle] label), but deliberately not built on
- * [CameraLever]/[LeverBody] — those are genuine two-state toggles with a sliding knob, and this has
+ * `LeverSwitch`/`LeverBody` — those are genuine two-state toggles with a sliding knob, and this has
  * no checked state to fake. Opens `feature:settings`'s screen (see the route this is wired to in
  * `ui/CameraScreen`).
  */

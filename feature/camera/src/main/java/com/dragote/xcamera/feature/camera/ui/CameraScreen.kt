@@ -9,9 +9,6 @@ import android.graphics.Bitmap
 import android.graphics.SurfaceTexture
 import android.net.Uri
 import android.os.Build
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import android.provider.MediaStore
 import android.view.TextureView
 import android.widget.Toast
@@ -102,6 +99,8 @@ import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.feature.camera.ui.theme.grainTexture
 import com.dragote.xcamera.shared.common.domain.result.Result
 import com.dragote.xcamera.shared.designsystem.component.ErrorState
+import com.dragote.xcamera.shared.designsystem.haptics.hapticTick
+import com.dragote.xcamera.shared.designsystem.haptics.rememberHapticTickVibrator
 import com.dragote.xcamera.shared.navigation.SettingsRoutes
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -340,7 +339,7 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     // pointerInput) still read the *current* uiState instead of whatever uiState happened to be in
     // scope the one time that closure was originally created.
     val latestUiState by rememberUpdatedState(uiState)
-    val focusVibrator = rememberFocusVibrator()
+    val focusVibrator = rememberHapticTickVibrator()
 
     // Tap-to-focus's own visual feedback (on-device-QA follow-up to issue #21) — independent lifecycle
     // from the hold-and-rotate ring above: appears at the tap point, stays up while
@@ -642,11 +641,11 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                                             // indicator so the two focus affordances never overlap.
                                             focusTapPosition = null
                                             focusTapVisible = false
-                                            focusHaptic(focusVibrator)
+                                            focusVibrator.hapticTick()
                                         },
                                         onHoldEnd = {
                                             screenHoldPosition = null
-                                            focusHaptic(focusVibrator)
+                                            focusVibrator.hapticTick()
                                         },
                                     )
                                 }
@@ -753,7 +752,7 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                                 }
                                 focusTapPosition = null
                                 focusTapVisible = false
-                                focusHaptic(focusVibrator)
+                                focusVibrator.hapticTick()
                             },
                             onRotate = { totalRotationRadians ->
                                 focusRingRotationDegrees = Math.toDegrees(totalRotationRadians.toDouble()).toFloat()
@@ -766,7 +765,7 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                             },
                             onHoldEnd = {
                                 dialHeld = false
-                                focusHaptic(focusVibrator)
+                                focusVibrator.hapticTick()
                             },
                             modifier = Modifier.weight(1f),
                         )
@@ -1013,49 +1012,6 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectFo
             !moved && pointer.pressed.not() -> onTap(down.position)
             else -> Unit // moved past touch slop without reaching the long-press threshold — ignored.
         }
-    }
-}
-
-/**
- * Bypasses `View.performHapticFeedback` the same way `DialWheel`'s own tick haptic does (see its own
- * doc for why a plain `vibrator.vibrate(effect)` alone isn't enough on modern Android) — still a
- * duplicate of that logic, not shared. This project's duplication convention (see root `CLAUDE.md`) was
- * tightened to "abstract at the *second* occurrence" after `ui/component/DialText.kt` got extracted from
- * exactly this kind of copy (issue #25) — this pair (`DialWheel`'s `rememberDialVibrator`/`tickHaptic`
- * and this `rememberFocusVibrator`/`focusHaptic`) is already at that second occurrence and is due for the
- * same treatment (a `shared:designsystem` haptics helper), just not yet done — flagging here rather than
- * silently leaving it as if the old "wait for a third copy" reasoning still applied. Falls back to a
- * plain `createOneShot` below API 29/33, degrading gracefully rather than assuming iPhone-level tactile
- * fidelity — see this repo's own camera-engineer haptics guidance.
- */
-@Composable
-private fun rememberFocusVibrator(): Vibrator {
-    val context = LocalContext.current
-    return remember(context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val manager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-            manager.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-        }
-    }
-}
-
-private fun focusHaptic(vibrator: Vibrator) {
-    if (!vibrator.hasVibrator()) return
-    val effect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
-    } else {
-        VibrationEffect.createOneShot(12L, VibrationEffect.DEFAULT_AMPLITUDE)
-    }
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        val attributes = android.os.VibrationAttributes.Builder()
-            .setUsage(android.os.VibrationAttributes.USAGE_HARDWARE_FEEDBACK)
-            .build()
-        vibrator.vibrate(effect, attributes)
-    } else {
-        vibrator.vibrate(effect)
     }
 }
 

@@ -26,7 +26,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dragote.xcamera.feature.settings.presentation.SettingsUiState
 import com.dragote.xcamera.feature.settings.presentation.SettingsViewModel
-import com.dragote.xcamera.shared.designsystem.component.CameraLever
+import com.dragote.xcamera.shared.designsystem.component.LeverSwitch
 import com.dragote.xcamera.shared.designsystem.component.LeverGlyph
 import com.dragote.xcamera.shared.designsystem.component.LoadingIndicator
 import com.dragote.xcamera.shared.designsystem.theme.AppChrome
@@ -81,7 +81,7 @@ fun SettingsScreen(
 }
 
 /**
- * Places the same [CameraLever] toggle FLASH/GRID/MODE use directly on the screen's own
+ * Places the same [LeverSwitch] toggle FLASH/GRID/MODE use directly on the screen's own
  * [AppChrome.BodyGradient] — no wrapping card/recess around each one, mirroring exactly how
  * `feature:camera`'s toolbar Row presents `FlashLever`/`ModeLever`.
  */
@@ -99,19 +99,19 @@ private fun SettingsContent(
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
-        CameraLever(
+        LeverSwitch(
             checked = uiState.showGrid,
             onToggle = { onShowGridToggled(!uiState.showGrid) },
             label = "GRID",
             glyph = LeverGlyph.Grid,
         )
-        CameraLever(
+        LeverSwitch(
             checked = uiState.showHistogram,
             onToggle = { onShowHistogramToggled(!uiState.showHistogram) },
             label = "HISTOGRAM",
             glyph = LeverGlyph.None,
         )
-        CameraLever(
+        LeverSwitch(
             checked = uiState.showHorizonLine,
             onToggle = { onShowHorizonLineToggled(!uiState.showHorizonLine) },
             label = "HORIZON",
@@ -125,10 +125,10 @@ private fun SettingsContent(
 private fun SettingsContentPreview() {
     XCameraTheme {
         Row(modifier = Modifier.padding(24.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-            CameraLever(checked = false, onToggle = {}, label = "GRID", glyph = LeverGlyph.Grid)
-            CameraLever(checked = true, onToggle = {}, label = "GRID", glyph = LeverGlyph.Grid)
-            CameraLever(checked = false, onToggle = {}, label = "HISTOGRAM")
-            CameraLever(checked = true, onToggle = {}, label = "HISTOGRAM")
+            LeverSwitch(checked = false, onToggle = {}, label = "GRID", glyph = LeverGlyph.Grid)
+            LeverSwitch(checked = true, onToggle = {}, label = "GRID", glyph = LeverGlyph.Grid)
+            LeverSwitch(checked = false, onToggle = {}, label = "HISTOGRAM")
+            LeverSwitch(checked = true, onToggle = {}, label = "HISTOGRAM")
         }
     }
 }
