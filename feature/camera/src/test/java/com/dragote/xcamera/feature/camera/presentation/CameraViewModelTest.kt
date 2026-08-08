@@ -13,8 +13,11 @@ import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraClipping
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
+import com.dragote.xcamera.shared.common.domain.model.CameraSettings
+import com.dragote.xcamera.shared.common.domain.repository.CameraSettingsRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
+import com.dragote.xcamera.shared.testing.MainDispatcherRule
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -35,30 +38,35 @@ class CameraViewModelTest {
     val mainDispatcherRule = MainDispatcherRule()
 
     private lateinit var cameraRepository: CameraRepository
+    private lateinit var cameraSettingsRepository: CameraSettingsRepository
     private lateinit var autoIsoFlow: MutableStateFlow<Int?>
     private lateinit var autoExposureTimeFlow: MutableStateFlow<Long?>
     private lateinit var zebraMaskFlow: MutableStateFlow<ZebraMask?>
     private lateinit var histogramDataFlow: MutableStateFlow<HistogramData?>
     private lateinit var focusDistanceFlow: MutableStateFlow<Float?>
     private lateinit var afConvergenceStateFlow: MutableStateFlow<AfConvergenceState?>
+    private lateinit var cameraSettingsFlow: MutableStateFlow<CameraSettings>
     private lateinit var viewModel: CameraViewModel
 
     @Before
     fun setUp() {
         cameraRepository = mockk()
+        cameraSettingsRepository = mockk()
         autoIsoFlow = MutableStateFlow(null)
         autoExposureTimeFlow = MutableStateFlow(null)
         zebraMaskFlow = MutableStateFlow(null)
         histogramDataFlow = MutableStateFlow(null)
         focusDistanceFlow = MutableStateFlow(null)
         afConvergenceStateFlow = MutableStateFlow(null)
+        cameraSettingsFlow = MutableStateFlow(CameraSettings())
         every { cameraRepository.observeAutoIso() } returns autoIsoFlow
         every { cameraRepository.observeAutoExposureTime() } returns autoExposureTimeFlow
         every { cameraRepository.observeZebraMask() } returns zebraMaskFlow
         every { cameraRepository.observeHistogramData() } returns histogramDataFlow
         every { cameraRepository.observeFocusDistance() } returns focusDistanceFlow
         every { cameraRepository.observeAfConvergenceState() } returns afConvergenceStateFlow
-        viewModel = CameraViewModel(cameraRepository)
+        every { cameraSettingsRepository.observeSettings() } returns cameraSettingsFlow
+        viewModel = CameraViewModel(cameraRepository, cameraSettingsRepository)
     }
 
     @Test
@@ -816,6 +824,17 @@ class CameraViewModelTest {
             val data = HistogramData(listOf(1, 2, 3))
             histogramDataFlow.value = data
             assertEquals(data, awaitItem())
+        }
+    }
+
+    @Test
+    fun `cameraSettings mirrors the settings repository's flow`() = runTest {
+        viewModel.cameraSettings.test {
+            assertEquals(CameraSettings(), awaitItem())
+
+            val settings = CameraSettings(showGrid = true, showHistogram = false, showHorizonLine = false)
+            cameraSettingsFlow.value = settings
+            assertEquals(settings, awaitItem())
         }
     }
 

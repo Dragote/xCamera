@@ -24,6 +24,14 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
+import com.dragote.xcamera.shared.designsystem.component.LeverBody
+import com.dragote.xcamera.shared.designsystem.component.LeverGlyph
+import com.dragote.xcamera.shared.designsystem.component.LeverKnobHeight
+import com.dragote.xcamera.shared.designsystem.component.LeverKnobInset
+import com.dragote.xcamera.shared.designsystem.component.LeverKnobTravel
+import com.dragote.xcamera.shared.designsystem.component.LeverKnobWidth
+import com.dragote.xcamera.shared.designsystem.component.LeverTrackHeight
+import com.dragote.xcamera.shared.designsystem.component.LeverTrackWidth
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**

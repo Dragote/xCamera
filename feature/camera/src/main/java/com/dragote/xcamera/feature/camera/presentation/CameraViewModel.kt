@@ -18,6 +18,8 @@ import com.dragote.xcamera.feature.camera.domain.model.nearestIsoStopIndex
 import com.dragote.xcamera.feature.camera.domain.model.nearestShutterStopIndex
 import com.dragote.xcamera.feature.camera.domain.model.shutterSpeedStopsInRange
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
+import com.dragote.xcamera.shared.common.domain.model.CameraSettings
+import com.dragote.xcamera.shared.common.domain.repository.CameraSettingsRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -39,6 +41,7 @@ import javax.inject.Inject
 @HiltViewModel
 class CameraViewModel @Inject constructor(
     private val cameraRepository: CameraRepository,
+    private val cameraSettingsRepository: CameraSettingsRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CameraUiState())
@@ -69,6 +72,15 @@ class CameraViewModel @Inject constructor(
      */
     val afConvergenceState: StateFlow<AfConvergenceState?> =
         cameraRepository.observeAfConvergenceState().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * Deliberately its own [StateFlow], not a [CameraUiState] field, for the same reason [zebraMask]
+     * is — it comes from a wholly separate repository ([CameraSettingsRepository], owned by
+     * `feature:settings`) rather than [cameraRepository]'s own capture-result stream, so it has no
+     * business sharing a single combined state object with fields that do.
+     */
+    val cameraSettings: StateFlow<CameraSettings> =
+        cameraSettingsRepository.observeSettings().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CameraSettings())
 
     init {
         // Gated on manualExposurePinned, not manualModeEnabled — the latter flips the instant ModeLever
