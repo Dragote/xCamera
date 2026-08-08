@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
@@ -40,6 +41,49 @@ fun rememberDeviceOrientationQuadrant(): State<Float> {
     }
 
     return quadrant
+}
+
+/**
+ * Both the coarse, hysteresis-debounced [quadrant] ([nextQuadrant]'s own bucket, as returned by
+ * [rememberDeviceOrientationQuadrant]) and [smoothedOrientationDegrees] — a continuous,
+ * low-pass-filtered ([smoothOrientationDegrees]) view of the same raw [OrientationEventListener]
+ * reading — for the same callback. `HorizonLineOverlay` needs both: [quadrant] for its static
+ * reference line (always snapped to the nearest 90° bucket, never jittery), and
+ * [smoothedOrientationDegrees] for its dynamic tilt-readout line (tracks the device's real-world roll
+ * continuously). Pulling both from one state object here means one physical listener registration
+ * instead of `HorizonLineOverlay` running a second [OrientationEventListener] alongside whatever
+ * quadrant-only listener a sibling overlay already has running.
+ */
+data class DeviceOrientationState(val quadrant: Float, val smoothedOrientationDegrees: Float)
+
+/** See [DeviceOrientationState]'s own doc for why this exists alongside [rememberDeviceOrientationQuadrant]
+ *  rather than replacing it — existing quadrant-only consumers ([HistogramOverlay], [ViewfinderThumbnailChip])
+ *  have no need for the continuous value, so they're left on the simpler `State<Float>` shape. */
+@Composable
+fun rememberDeviceOrientationState(): State<DeviceOrientationState> {
+    val context = LocalContext.current
+    val state = remember { mutableStateOf(DeviceOrientationState(quadrant = 0f, smoothedOrientationDegrees = 0f)) }
+
+    DisposableEffect(context) {
+        val listener = object : OrientationEventListener(context) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == ORIENTATION_UNKNOWN) return
+                val raw = orientation.toFloat()
+                state.value = DeviceOrientationState(
+                    quadrant = nextQuadrant(state.value.quadrant, raw),
+                    smoothedOrientationDegrees = smoothOrientationDegrees(
+                        current = state.value.smoothedOrientationDegrees,
+                        target = raw,
+                        factor = OrientationSmoothingFactor,
+                    ),
+                )
+            }
+        }
+        listener.enable()
+        onDispose { listener.disable() }
+    }
+
+    return state
 }
 
 /** Clockwise on-screen rotation that visually counters a physical device rotation of [quadrant]°, so
@@ -102,4 +146,25 @@ fun nextQuadrant(current: Float, orientation: Float): Float {
         }
     }
     return best
+}
+
+/** Exponential-moving-average step per [OrientationEventListener] callback — `HorizonLineOverlay`'s
+ *  dynamic line reads straight off [DeviceOrientationState.smoothedOrientationDegrees] rather than the
+ *  raw sensor callback, since the raw accelerometer-derived value has enough per-callback noise that
+ *  drawing it directly reads as a visible shake on every small hand tremor. This is a fixed-fraction
+ *  low-pass filter (no dt/frame-clock dependency, just "move [factor] of the way from [current] toward
+ *  [target] on each raw callback") rather than a Compose-side animation, so it stays a plain testable
+ *  function with no composition/coroutine plumbing. */
+const val OrientationSmoothingFactor = 0.2f
+
+/**
+ * Moves [current] a [factor] fraction of the way toward [target], both angles in degrees, wrapping
+ * correctly across the 0°/360° boundary — reuses [angularDistance]'s shortest-signed-path math so a
+ * target of e.g. `2f` from a current of `358f` steps *forward* through the wrap (358 → 360/0 → 2)
+ * rather than the long way around through 180°. The result is always folded back into `[0, 360)` so
+ * it composes safely with a further [counterRotationDegrees] call.
+ */
+fun smoothOrientationDegrees(current: Float, target: Float, factor: Float): Float {
+    val step = angularDistance(target, current) * factor
+    return (current + step + 360f) % 360f
 }
