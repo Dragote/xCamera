@@ -2,6 +2,7 @@ package com.dragote.xcamera.navigation
 
 import com.dragote.xcamera.feature.camera.ui.cameraDestinations
 import com.dragote.xcamera.feature.camera.ui.destinations.CameraScreenDestination
+import com.dragote.xcamera.feature.settings.ui.settingsDestinations
 import com.ramcosta.composedestinations.spec.DestinationSpec
 import com.ramcosta.composedestinations.spec.NavGraphSpec
 import com.ramcosta.composedestinations.spec.Route
@@ -17,6 +18,6 @@ object AppNavGraph : NavGraphSpec {
     override val baseRoute: String = route
     override val startRoute: Route = CameraScreenDestination
     override val destinationsByRoute: Map<String, DestinationSpec<*>> =
-        cameraDestinations.associateBy { it.route }
+        (cameraDestinations + settingsDestinations).associateBy { it.route }
     override val nestedNavGraphs: List<NavGraphSpec> = emptyList()
 }

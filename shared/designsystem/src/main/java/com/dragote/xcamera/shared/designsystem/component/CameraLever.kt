@@ -1,4 +1,4 @@
-package com.dragote.xcamera.feature.camera.ui.component
+package com.dragote.xcamera.shared.designsystem.component
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -31,16 +31,16 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
+import com.dragote.xcamera.shared.designsystem.theme.AppChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
-internal val LeverTrackWidth = 88.dp
-internal val LeverTrackHeight = 38.dp
-internal val LeverKnobWidth = 42.dp
-internal val LeverKnobHeight = 30.dp
-internal val LeverKnobInset = 4.dp
-internal val LeverKnobRadius = 15.dp
-internal val LeverKnobTravel = LeverTrackWidth - LeverKnobWidth - LeverKnobInset * 2
+val LeverTrackWidth = 88.dp
+val LeverTrackHeight = 38.dp
+val LeverKnobWidth = 42.dp
+val LeverKnobHeight = 30.dp
+val LeverKnobInset = 4.dp
+val LeverKnobRadius = 15.dp
+val LeverKnobTravel = LeverTrackWidth - LeverKnobWidth - LeverKnobInset * 2
 
 /** What's drawn in the recessed part of the track, to the left of the knob. */
 enum class LeverGlyph { Bolt, Grid, AutoManual, None }
@@ -59,17 +59,17 @@ fun CameraLever(
     label: String,
     modifier: Modifier = Modifier,
     glyph: LeverGlyph = LeverGlyph.None,
-    accent: Color = CameraChrome.Accent,
+    accent: Color = AppChrome.Accent,
 ) {
     val haptic = LocalHapticFeedback.current
     val t by animateFloatAsState(
         targetValue = if (checked) 1f else 0f,
-        animationSpec = tween(durationMillis = 320, easing = CameraChrome.KnobOvershootEasing),
+        animationSpec = tween(durationMillis = 320, easing = AppChrome.KnobOvershootEasing),
         label = "leverKnobTravel",
     )
     val on by animateFloatAsState(
         targetValue = if (checked) 1f else 0f,
-        animationSpec = tween(durationMillis = 280, easing = CameraChrome.EaseStandard),
+        animationSpec = tween(durationMillis = 280, easing = AppChrome.EaseStandard),
         label = "leverOnGlow",
     )
 
@@ -82,17 +82,17 @@ fun CameraLever(
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             onToggle()
         }
-        Text(text = label, style = CameraChrome.leverLabelStyle())
+        Text(text = label, style = AppChrome.labelStyle())
     }
 }
 
 /**
- * The track+knob [Canvas] on its own, without the label underneath — pulled out so [ModeLever]
- * can lay real Compose text for its A/M lettering on top of it instead of going through a
- * [LeverGlyph] baked into the Canvas draw.
+ * The track+knob [Canvas] on its own, without the label underneath — pulled out so `ModeLever`
+ * (in `feature:camera`) can lay real Compose text for its A/M lettering on top of it instead of
+ * going through a [LeverGlyph] baked into the Canvas draw.
  */
 @Composable
-internal fun LeverBody(
+fun LeverBody(
     t: Float,
     on: Float,
     glyph: LeverGlyph,
@@ -125,7 +125,7 @@ private fun DrawScope.drawTrack(accent: Color, on: Float) {
         Color.White.copy(alpha = 0.10f),
     )
 
-    drawPath(path, CameraChrome.TrackOffGradient)
+    drawPath(path, AppChrome.TrackOffGradient)
 
     // Inset groove shadow: a soft blurred shadow cast along the track's own silhouette (clipped
     // back to its own bounds) wraps around the whole rim and fades gradually, unlike the old
@@ -152,7 +152,7 @@ private fun DrawScope.drawTrack(accent: Color, on: Float) {
     }
 
     if (on > 0f) {
-        drawPath(path, CameraChrome.trackOnGradient(accent), alpha = on)
+        drawPath(path, AppChrome.trackOnGradient(accent), alpha = on)
     }
 }
 
@@ -173,7 +173,7 @@ private fun DrawScope.drawKnob() {
         canvas.nativeCanvas.drawRoundRect(rect.left, rect.top, rect.right, rect.bottom, radius, radius, shadowPaint)
     }
 
-    drawPath(path, CameraChrome.KnobGradient)
+    drawPath(path, AppChrome.KnobGradient)
 
     clipPath(path) {
         drawRect(Color.White.copy(alpha = 0.28f), Offset(rect.left, rect.top), Size(rect.width, 1f))

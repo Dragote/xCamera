@@ -21,6 +21,9 @@ mockk = "1.13.13"
 turbine = "1.2.1"
 hiltNavigationCompose = "1.2.0"
 
+# DataStore
+datastore = "1.2.1"
+
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -76,6 +79,9 @@ composeDestinations-ksp = { group = "io.github.raamcosta.compose-destinations", 
 # Testing
 mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
 turbine = { group = "app.cash.turbine", name = "turbine", version.ref = "turbine" }
+
+# DataStore
+androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

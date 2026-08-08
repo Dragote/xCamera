@@ -1,47 +1,30 @@
 package com.dragote.xcamera.shared.designsystem.theme
 
-import android.app.Activity
-import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80,
-)
-
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40,
+// xCamera has exactly one visual identity — the dark skeuomorphic camera-body chrome — with no
+// light-mode variant, so there's no dark/light branching here. Dynamic color (Material You) is
+// deliberately not supported: it would pull the palette from the device wallpaper, actively
+// fighting the fixed chrome palette this app is built around.
+private val XCameraColorScheme = darkColorScheme(
+    primary = AppChrome.Accent,
+    onPrimary = Color(0xFF1A1006),
+    background = Color(0xFF0D0C0B),
+    onBackground = AppChrome.ValueColor,
+    surface = Color(0xFF171615),
+    onSurface = AppChrome.ValueColor,
+    surfaceVariant = Color(0xFF131210),
+    onSurfaceVariant = AppChrome.LabelColor,
+    secondary = AppChrome.LabelColor,
 )
 
 @Composable
-fun XCameraTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
-    content: @Composable () -> Unit,
-) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
-
+fun XCameraTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = XCameraColorScheme,
         typography = Typography,
         content = content,
     )

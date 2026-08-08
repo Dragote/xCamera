@@ -24,4 +24,7 @@ rootProject.name = "xCamera"
 include(":app")
 include(":shared:common")
 include(":shared:designsystem")
+include(":shared:navigation")
+include(":shared:testing")
 include(":feature:camera")
+include(":feature:settings")

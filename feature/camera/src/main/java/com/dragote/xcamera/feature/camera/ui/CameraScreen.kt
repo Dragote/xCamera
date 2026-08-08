@@ -86,12 +86,12 @@ import com.dragote.xcamera.feature.camera.ui.component.FlashLever
 import com.dragote.xcamera.feature.camera.ui.component.FocusDial
 import com.dragote.xcamera.feature.camera.ui.component.FocusRing
 import com.dragote.xcamera.feature.camera.ui.component.FocusTapIndicator
-import com.dragote.xcamera.feature.camera.ui.component.GridLever
 import com.dragote.xcamera.feature.camera.ui.component.HistogramOverlay
 import com.dragote.xcamera.feature.camera.ui.component.HorizonLineOverlay
 import com.dragote.xcamera.feature.camera.ui.component.IsoDial
 import com.dragote.xcamera.feature.camera.ui.component.LensDial
 import com.dragote.xcamera.feature.camera.ui.component.ModeLever
+import com.dragote.xcamera.feature.camera.ui.component.SettingsButton
 import com.dragote.xcamera.feature.camera.ui.component.ShutterButton
 import com.dragote.xcamera.feature.camera.ui.component.ShutterSpeedDial
 import com.dragote.xcamera.feature.camera.ui.component.ViewfinderGridOverlay
@@ -102,7 +102,10 @@ import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.feature.camera.ui.theme.grainTexture
 import com.dragote.xcamera.shared.common.domain.result.Result
 import com.dragote.xcamera.shared.designsystem.component.ErrorState
+import com.dragote.xcamera.shared.navigation.SettingsRoutes
 import com.ramcosta.composedestinations.annotation.Destination
+import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import com.ramcosta.composedestinations.spec.Direction
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -179,6 +182,7 @@ private val galleryReadPermission: String? = when {
 @Destination
 @Composable
 fun CameraScreen(
+    navigator: DestinationsNavigator,
     viewModel: CameraViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -200,7 +204,7 @@ fun CameraScreen(
     }
 
     when (uiState.permissionStatus) {
-        CameraPermissionStatus.Granted -> CameraContent(viewModel = viewModel, uiState = uiState)
+        CameraPermissionStatus.Granted -> CameraContent(navigator = navigator, viewModel = viewModel, uiState = uiState)
         CameraPermissionStatus.Denied -> ErrorState(
             message = "Camera permission is required to use xCamera",
             onRetry = { permissionLauncher.launch(requiredPermissions.toTypedArray()) },
@@ -250,13 +254,14 @@ private fun rememberCameraRepository(): CameraRepository {
  */
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
-private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
+private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraViewModel, uiState: CameraUiState) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val coroutineScope = rememberCoroutineScope()
     val cameraRepository = rememberCameraRepository()
     val zebraMask by viewModel.zebraMask.collectAsStateWithLifecycle()
     val histogramData by viewModel.histogramData.collectAsStateWithLifecycle()
+    val cameraSettings by viewModel.cameraSettings.collectAsStateWithLifecycle()
 
     // The live preview no longer goes through a raw Camera2-owned Surface at all — CameraController
     // owns its own preview ImageReader internally (see its own doc for why) and hands each delivered
@@ -293,7 +298,6 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
             }
         }
     }
-    var gridEnabled by remember { mutableStateOf(false) }
     var latestGalleryUri by remember { mutableStateOf<Uri?>(null) }
     // Top-of-window Y and height (px) of the deck below — DialWheel's mechanical shutters use these
     // to rebuild the deck's own gradient positioned exactly, so a closed dial reads as the deck
@@ -565,11 +569,13 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                     modifier = Modifier.fillMaxWidth().padding(top = 16.dp, start = 26.dp, end = 26.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
+                    SettingsButton(
+                        onClick = { navigator.navigate(Direction(SettingsRoutes.SETTINGS_SCREEN)) },
+                    )
                     FlashLever(
                         flashOn = uiState.flashMode == FlashMode.ON,
                         onToggle = viewModel::onFlashModeToggled,
                     )
-                    GridLever(checked = gridEnabled, onToggle = { gridEnabled = !gridEnabled })
                     ModeLever(
                         manual = uiState.manualModeEnabled,
                         onToggle = viewModel::onManualModeToggled,
@@ -650,8 +656,10 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                         ),
                 ) {
                     AndroidView(factory = { textureView }, modifier = Modifier.fillMaxSize())
-                    ViewfinderGridOverlay(visible = gridEnabled, modifier = Modifier.fillMaxSize())
-                    HorizonLineOverlay(modifier = Modifier.fillMaxSize())
+                    ViewfinderGridOverlay(visible = cameraSettings.showGrid, modifier = Modifier.fillMaxSize())
+                    if (cameraSettings.showHorizonLine) {
+                        HorizonLineOverlay(modifier = Modifier.fillMaxSize())
+                    }
                     ZebraOverlay(mask = zebraMask, modifier = Modifier.fillMaxSize())
                     FocusTapIndicator(
                         position = focusTapPosition,
@@ -689,10 +697,12 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                         },
                         modifier = Modifier.fillMaxSize(),
                     )
-                    HistogramOverlay(
-                        data = histogramData,
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    if (cameraSettings.showHistogram) {
+                        HistogramOverlay(
+                            data = histogramData,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                 }
             }
 
