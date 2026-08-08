@@ -1,11 +1,5 @@
 package com.dragote.xcamera.feature.camera.ui.component
 
-import android.content.Context
-import android.os.Build
-import android.os.VibrationAttributes
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
@@ -52,7 +46,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -62,6 +55,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome.Accent
+import com.dragote.xcamera.shared.designsystem.haptics.hapticTick
+import com.dragote.xcamera.shared.designsystem.haptics.rememberHapticTickVibrator
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -120,7 +115,7 @@ fun DialWheel(
     backgroundTopY: Float = 0f,
     backgroundHeight: Float = 0f,
 ) {
-    val vibrator = rememberDialVibrator()
+    val vibrator = rememberHapticTickVibrator()
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val maxIndex = values.lastIndex
@@ -222,14 +217,14 @@ fun DialWheel(
                             while (accum >= stepPx && committed < maxIndex) {
                                 committed++
                                 accum -= stepPx
-                                tickHaptic(vibrator)
+                                vibrator.hapticTick()
                                 onIndexChange(committed)
                                 snapTo(committed)
                             }
                             while (accum <= -stepPx && committed > 0) {
                                 committed--
                                 accum += stepPx
-                                tickHaptic(vibrator)
+                                vibrator.hapticTick()
                                 onIndexChange(committed)
                                 snapTo(committed)
                             }
@@ -390,51 +385,6 @@ private const val MAX_SPEED_GAIN = 5f
 private fun dragGain(instantSpeedPxPerSec: Float): Float {
     val ratio = instantSpeedPxPerSec / SPEED_REF_PX_S
     return 1f + min(ratio.pow(SPEED_GAIN_EXPONENT), MAX_SPEED_GAIN - 1f)
-}
-
-/**
- * Bypasses [android.view.View.performHapticFeedback] and goes straight to [Vibrator] — but a plain
- * `vibrator.vibrate(effect)` turned out NOT to be enough on its own: modern Android tags any
- * vibration that doesn't say otherwise as [VibrationAttributes.USAGE_TOUCH] by default, and the
- * platform vibrator service gates USAGE_TOUCH on the exact same "Touch feedback" system toggle that
- * gates `performHapticFeedback` — confirmed by testing with that toggle off, where this still
- * produced nothing. [VibrationAttributes.USAGE_HARDWARE_FEEDBACK] (API 33+) is a different category
- * — "feedback for a hardware component, such as a physical button" — that isn't gated by that
- * toggle, so tagging the tick with it is what actually gets it through regardless of that setting.
- * Below API 33 there's no equivalent override; the tick just falls back to whatever the system
- * setting allows. A future iteration of this dial should expose its own in-app haptics on/off (or
- * "match system") preference rather than always silently overriding what the user chose in system
- * settings — this is a deliberate, known gap, not an oversight.
- */
-@Composable
-private fun rememberDialVibrator(): Vibrator {
-    val context = LocalContext.current
-    return remember(context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val manager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-            manager.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-        }
-    }
-}
-
-private fun tickHaptic(vibrator: Vibrator) {
-    if (!vibrator.hasVibrator()) return
-    val effect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
-    } else {
-        VibrationEffect.createOneShot(12L, VibrationEffect.DEFAULT_AMPLITUDE)
-    }
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        val attributes = VibrationAttributes.Builder()
-            .setUsage(VibrationAttributes.USAGE_HARDWARE_FEEDBACK)
-            .build()
-        vibrator.vibrate(effect, attributes)
-    } else {
-        vibrator.vibrate(effect)
-    }
 }
 
 /** Side carets pointing at the centerline — always lit, since the barrel is parked on a real detent
