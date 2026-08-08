@@ -22,7 +22,6 @@ android {
 }
 
 dependencies {
-    implementation(project(":shared:common"))
     implementation(project(":shared:designsystem"))
     implementation(project(":feature:camera"))
     implementation(project(":feature:settings"))
