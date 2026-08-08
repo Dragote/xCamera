@@ -7,18 +7,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.dragote.xcamera.shared.designsystem.component.CameraLever
 import com.dragote.xcamera.shared.designsystem.component.LeverGlyph
+import com.dragote.xcamera.shared.designsystem.component.LeverSwitch
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
-/** Wraps [CameraLever] with real flash state. */
+/** Wraps [LeverSwitch] with real flash state. */
 @Composable
 fun FlashLever(
     flashOn: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    CameraLever(
+    LeverSwitch(
         checked = flashOn,
         onToggle = onToggle,
         label = "FLASH",

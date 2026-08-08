@@ -39,7 +39,7 @@ import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
  * `CameraViewModel.onManualModeToggled`) rather than owning its own decorative one — a tap always
  * calls [onToggle] regardless of current state, letting the ViewModel decide whether that means
  * entering manual (a no-op if neither ISO nor shutter has anything to offer for the current lens) or
- * leaving it. Built directly on [LeverBody] (rather than [CameraLever]) since the A/M lettering needs
+ * leaving it. Built directly on [LeverBody] (rather than `LeverSwitch`) since the A/M lettering needs
  * real Compose text laid on top of the knob, not a [LeverGlyph] baked into the shared Canvas draw.
  */
 @Composable

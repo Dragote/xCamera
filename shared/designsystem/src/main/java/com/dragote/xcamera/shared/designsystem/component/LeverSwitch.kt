@@ -53,7 +53,7 @@ enum class LeverGlyph { Bolt, Grid, AutoManual, None }
  * highlight can be real shadow/gradient layers instead of Modifier-based approximations.
  */
 @Composable
-fun CameraLever(
+fun LeverSwitch(
     checked: Boolean,
     onToggle: () -> Unit,
     label: String,
@@ -227,13 +227,13 @@ private fun DrawScope.drawGlyph(glyph: LeverGlyph, on: Float) = when (glyph) {
 
 @Preview(showBackground = true, backgroundColor = 0xFF201F1D)
 @Composable
-private fun CameraLeverPreview() {
+private fun LeverSwitchPreview() {
     XCameraTheme {
         Row(modifier = Modifier.padding(24.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-            CameraLever(checked = false, onToggle = {}, label = "FLASH", glyph = LeverGlyph.Bolt)
-            CameraLever(checked = true, onToggle = {}, label = "FLASH", glyph = LeverGlyph.Bolt)
-            CameraLever(checked = false, onToggle = {}, label = "GRID", glyph = LeverGlyph.Grid)
-            CameraLever(checked = true, onToggle = {}, label = "GRID", glyph = LeverGlyph.Grid)
+            LeverSwitch(checked = false, onToggle = {}, label = "FLASH", glyph = LeverGlyph.Bolt)
+            LeverSwitch(checked = true, onToggle = {}, label = "FLASH", glyph = LeverGlyph.Bolt)
+            LeverSwitch(checked = false, onToggle = {}, label = "GRID", glyph = LeverGlyph.Grid)
+            LeverSwitch(checked = true, onToggle = {}, label = "GRID", glyph = LeverGlyph.Grid)
         }
     }
 }
