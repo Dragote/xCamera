@@ -19,7 +19,7 @@ import androidx.compose.ui.unit.sp
 /**
  * Cross-feature subset of the skeuomorphic camera-body chrome palette/type — the parts reused by
  * more than one feature module (currently `feature:camera` and `feature:settings`, e.g. by this
- * package's own `CameraLever.kt`). Screen-specific chrome (zebra tints, dial/barrel/shutter
+ * package's own `LeverSwitch.kt`). Screen-specific chrome (zebra tints, dial/barrel/shutter
  * gradients, grain texture, etc.) stays local to `feature:camera`'s own `CameraChrome.kt`, which
  * delegates to this object for the shared subset.
  */
@@ -74,12 +74,12 @@ object AppChrome {
         1f to accent,
     )
 
-    fun labelStyle(): TextStyle = TextStyle(
+    fun labelStyle(color: Color = LabelColor): TextStyle = TextStyle(
         fontFamily = Mono,
         fontWeight = FontWeight.SemiBold,
         fontSize = 10.sp,
         letterSpacing = 0.2f.em,
-        color = LabelColor,
+        color = color,
     )
 
     fun valueStyle(color: Color = ValueColor): TextStyle = TextStyle(
