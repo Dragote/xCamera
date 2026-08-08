@@ -88,6 +88,7 @@ import com.dragote.xcamera.feature.camera.ui.component.FocusRing
 import com.dragote.xcamera.feature.camera.ui.component.FocusTapIndicator
 import com.dragote.xcamera.feature.camera.ui.component.GridLever
 import com.dragote.xcamera.feature.camera.ui.component.HistogramOverlay
+import com.dragote.xcamera.feature.camera.ui.component.HorizonLineOverlay
 import com.dragote.xcamera.feature.camera.ui.component.IsoDial
 import com.dragote.xcamera.feature.camera.ui.component.LensDial
 import com.dragote.xcamera.feature.camera.ui.component.ModeLever
@@ -650,6 +651,7 @@ private fun CameraContent(viewModel: CameraViewModel, uiState: CameraUiState) {
                 ) {
                     AndroidView(factory = { textureView }, modifier = Modifier.fillMaxSize())
                     ViewfinderGridOverlay(visible = gridEnabled, modifier = Modifier.fillMaxSize())
+                    HorizonLineOverlay(modifier = Modifier.fillMaxSize())
                     ZebraOverlay(mask = zebraMask, modifier = Modifier.fillMaxSize())
                     FocusTapIndicator(
                         position = focusTapPosition,
