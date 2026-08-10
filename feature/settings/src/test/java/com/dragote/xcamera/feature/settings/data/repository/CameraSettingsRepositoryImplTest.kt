@@ -4,6 +4,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import app.cash.turbine.test
 import com.dragote.xcamera.feature.settings.data.local.CameraSettingsLocalDataSource
 import com.dragote.xcamera.shared.common.domain.model.CameraSettings
+import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -68,6 +69,18 @@ class CameraSettingsRepositoryImplTest {
 
             repository.setShowHorizonLine(false)
             assertEquals(CameraSettings(showHorizonLine = false), awaitItem())
+        }
+    }
+
+    @Test
+    fun `setFocusPeakingSensitivity persists and is reflected by observeSettings`() = runTest {
+        val repository = buildRepository()
+
+        repository.observeSettings().test {
+            assertEquals(CameraSettings(), awaitItem())
+
+            repository.setFocusPeakingSensitivity(FocusPeakingSensitivity.HIGH)
+            assertEquals(CameraSettings(focusPeakingSensitivity = FocusPeakingSensitivity.HIGH), awaitItem())
         }
     }
 

@@ -1,6 +1,7 @@
 package com.dragote.xcamera.shared.common.domain.repository
 
 import com.dragote.xcamera.shared.common.domain.model.CameraSettings
+import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -22,4 +23,6 @@ interface CameraSettingsRepository {
     suspend fun setShowHistogram(enabled: Boolean)
 
     suspend fun setShowHorizonLine(enabled: Boolean)
+
+    suspend fun setFocusPeakingSensitivity(sensitivity: FocusPeakingSensitivity)
 }

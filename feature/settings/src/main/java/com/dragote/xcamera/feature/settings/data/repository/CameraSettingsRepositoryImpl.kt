@@ -2,6 +2,7 @@ package com.dragote.xcamera.feature.settings.data.repository
 
 import com.dragote.xcamera.feature.settings.data.local.CameraSettingsLocalDataSource
 import com.dragote.xcamera.shared.common.domain.model.CameraSettings
+import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import com.dragote.xcamera.shared.common.domain.repository.CameraSettingsRepository
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
@@ -19,4 +20,7 @@ class CameraSettingsRepositoryImpl @Inject constructor(
     override suspend fun setShowHistogram(enabled: Boolean) = localDataSource.setShowHistogram(enabled)
 
     override suspend fun setShowHorizonLine(enabled: Boolean) = localDataSource.setShowHorizonLine(enabled)
+
+    override suspend fun setFocusPeakingSensitivity(sensitivity: FocusPeakingSensitivity) =
+        localDataSource.setFocusPeakingSensitivity(sensitivity)
 }

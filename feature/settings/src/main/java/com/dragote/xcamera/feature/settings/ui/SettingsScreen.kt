@@ -1,12 +1,15 @@
 package com.dragote.xcamera.feature.settings.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -18,14 +21,22 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dragote.xcamera.feature.settings.presentation.SettingsUiState
 import com.dragote.xcamera.feature.settings.presentation.SettingsViewModel
+import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import com.dragote.xcamera.shared.designsystem.component.LeverSwitch
 import com.dragote.xcamera.shared.designsystem.component.LeverGlyph
 import com.dragote.xcamera.shared.designsystem.component.LoadingIndicator
@@ -73,6 +84,7 @@ fun SettingsScreen(
                     onShowGridToggled = viewModel::onShowGridToggled,
                     onShowHistogramToggled = viewModel::onShowHistogramToggled,
                     onShowHorizonLineToggled = viewModel::onShowHorizonLineToggled,
+                    onFocusPeakingSensitivityChanged = viewModel::onFocusPeakingSensitivityChanged,
                     modifier = Modifier.padding(innerPadding),
                 )
             }
@@ -91,6 +103,7 @@ private fun SettingsContent(
     onShowGridToggled: (Boolean) -> Unit,
     onShowHistogramToggled: (Boolean) -> Unit,
     onShowHorizonLineToggled: (Boolean) -> Unit,
+    onFocusPeakingSensitivityChanged: (FocusPeakingSensitivity) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -117,6 +130,55 @@ private fun SettingsContent(
             label = "HORIZON",
             glyph = LeverGlyph.None,
         )
+        PeakingSensitivitySelector(
+            selected = uiState.focusPeakingSensitivity,
+            onSelected = onFocusPeakingSensitivityChanged,
+        )
+    }
+}
+
+/** LOW/MEDIUM/HIGH segmented picker for [FocusPeakingSensitivity] — the settings screen's first
+ *  non-boolean control, so (per this repo's duplication convention) built local to this file rather
+ *  than promoted to `shared:designsystem` until a second multi-option setting needs the same shape.
+ *  Segments styled as filled pills (selected) vs. outlined text (unselected) using the same
+ *  [AppChrome] mono type/accent [LeverSwitch] uses, so it reads as part of the same control family
+ *  even though the interaction shape (radio group, not a two-position toggle) is different. */
+@Composable
+private fun PeakingSensitivitySelector(
+    selected: FocusPeakingSensitivity,
+    onSelected: (FocusPeakingSensitivity) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptic = LocalHapticFeedback.current
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FocusPeakingSensitivity.entries.forEach { option ->
+                val isSelected = option == selected
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isSelected) AppChrome.Accent else Color.Transparent)
+                        .border(
+                            width = 1.dp,
+                            color = if (isSelected) Color.Transparent else AppChrome.LabelColor.copy(alpha = 0.4f),
+                            shape = RoundedCornerShape(8.dp),
+                        )
+                        .semantics { this.selected = isSelected }
+                        .clickable(enabled = !isSelected, role = Role.RadioButton) {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onSelected(option)
+                        }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = option.name,
+                        style = AppChrome.valueStyle(if (isSelected) Color.White else AppChrome.ValueColor),
+                    )
+                }
+            }
+        }
+        Text(text = "PEAKING SENSITIVITY", style = AppChrome.labelStyle())
     }
 }
 
@@ -129,6 +191,18 @@ private fun SettingsContentPreview() {
             LeverSwitch(checked = true, onToggle = {}, label = "GRID", glyph = LeverGlyph.Grid)
             LeverSwitch(checked = false, onToggle = {}, label = "HISTOGRAM")
             LeverSwitch(checked = true, onToggle = {}, label = "HISTOGRAM")
+        }
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF201F1D)
+@Composable
+private fun PeakingSensitivitySelectorPreview() {
+    XCameraTheme {
+        Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            PeakingSensitivitySelector(selected = FocusPeakingSensitivity.LOW, onSelected = {})
+            PeakingSensitivitySelector(selected = FocusPeakingSensitivity.MEDIUM, onSelected = {})
+            PeakingSensitivitySelector(selected = FocusPeakingSensitivity.HIGH, onSelected = {})
         }
     }
 }

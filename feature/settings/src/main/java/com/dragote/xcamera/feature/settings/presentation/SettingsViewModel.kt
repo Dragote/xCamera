@@ -2,6 +2,7 @@ package com.dragote.xcamera.feature.settings.presentation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import com.dragote.xcamera.shared.common.domain.repository.CameraSettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -17,7 +18,7 @@ class SettingsViewModel @Inject constructor(
 ) : ViewModel() {
 
     val uiState: StateFlow<SettingsUiState?> = cameraSettingsRepository.observeSettings()
-        .map { SettingsUiState(it.showGrid, it.showHistogram, it.showHorizonLine) }
+        .map { SettingsUiState(it.showGrid, it.showHistogram, it.showHorizonLine, it.focusPeakingSensitivity) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     fun onShowGridToggled(enabled: Boolean) {
@@ -30,5 +31,9 @@ class SettingsViewModel @Inject constructor(
 
     fun onShowHorizonLineToggled(enabled: Boolean) {
         viewModelScope.launch { cameraSettingsRepository.setShowHorizonLine(enabled) }
+    }
+
+    fun onFocusPeakingSensitivityChanged(sensitivity: FocusPeakingSensitivity) {
+        viewModelScope.launch { cameraSettingsRepository.setFocusPeakingSensitivity(sensitivity) }
     }
 }

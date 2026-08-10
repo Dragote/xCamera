@@ -2,6 +2,7 @@ package com.dragote.xcamera.feature.settings.presentation
 
 import app.cash.turbine.test
 import com.dragote.xcamera.shared.common.domain.model.CameraSettings
+import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import com.dragote.xcamera.shared.common.domain.repository.CameraSettingsRepository
 import com.dragote.xcamera.shared.testing.MainDispatcherRule
 import io.mockk.coVerify
@@ -40,8 +41,21 @@ class SettingsViewModelTest {
         viewModel.uiState.test {
             assertEquals(SettingsUiState(), awaitItem())
 
-            settingsFlow.value = CameraSettings(showGrid = true, showHistogram = false, showHorizonLine = false)
-            assertEquals(SettingsUiState(showGrid = true, showHistogram = false, showHorizonLine = false), awaitItem())
+            settingsFlow.value = CameraSettings(
+                showGrid = true,
+                showHistogram = false,
+                showHorizonLine = false,
+                focusPeakingSensitivity = FocusPeakingSensitivity.HIGH,
+            )
+            assertEquals(
+                SettingsUiState(
+                    showGrid = true,
+                    showHistogram = false,
+                    showHorizonLine = false,
+                    focusPeakingSensitivity = FocusPeakingSensitivity.HIGH,
+                ),
+                awaitItem(),
+            )
         }
     }
 
@@ -64,5 +78,12 @@ class SettingsViewModelTest {
         viewModel.onShowHorizonLineToggled(false)
 
         coVerify { cameraSettingsRepository.setShowHorizonLine(false) }
+    }
+
+    @Test
+    fun `onFocusPeakingSensitivityChanged delegates to the repository`() = runTest {
+        viewModel.onFocusPeakingSensitivityChanged(FocusPeakingSensitivity.LOW)
+
+        coVerify { cameraSettingsRepository.setFocusPeakingSensitivity(FocusPeakingSensitivity.LOW) }
     }
 }

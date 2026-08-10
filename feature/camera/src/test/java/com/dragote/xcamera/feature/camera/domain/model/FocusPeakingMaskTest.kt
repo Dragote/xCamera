@@ -1,6 +1,8 @@
 package com.dragote.xcamera.feature.camera.domain.model
 
+import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FocusPeakingMaskTest {
@@ -103,6 +105,24 @@ class FocusPeakingMaskTest {
 
         val lenient = FocusPeakingMask.fromLuma(luma, width = 2, height = 1, columns = 1, rows = 1, contrastThreshold = 15)
         assertEquals(listOf(true), lenient.edge)
+    }
+
+    @Test
+    fun `contrastThreshold is monotonically stricter from HIGH to LOW`() {
+        val low = FocusPeakingMask.contrastThreshold(FocusPeakingSensitivity.LOW)
+        val medium = FocusPeakingMask.contrastThreshold(FocusPeakingSensitivity.MEDIUM)
+        val high = FocusPeakingMask.contrastThreshold(FocusPeakingSensitivity.HIGH)
+
+        assertTrue("LOW ($low) should require more contrast than MEDIUM ($medium)", low > medium)
+        assertTrue("MEDIUM ($medium) should require more contrast than HIGH ($high)", medium > high)
+    }
+
+    @Test
+    fun `MEDIUM sensitivity resolves to DefaultContrastThreshold`() {
+        assertEquals(
+            FocusPeakingMask.DefaultContrastThreshold,
+            FocusPeakingMask.contrastThreshold(FocusPeakingSensitivity.MEDIUM),
+        )
     }
 
     @Test
