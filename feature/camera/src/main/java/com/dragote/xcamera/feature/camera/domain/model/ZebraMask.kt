@@ -100,8 +100,9 @@ data class ZebraMask(
         }
 
         /** Sample budget per cell axis — see [fromLumaPlane]'s own doc. 8x8 = 64 samples/cell is
-         *  comfortably enough for a stable majority vote while keeping a 24x32 grid's total per-frame
-         *  cost (≈49k luma reads) trivial regardless of the source frame's real resolution. */
+         *  comfortably enough for a stable majority vote while keeping even `CameraController`'s
+         *  48x64 grid's total per-frame cost (≈197k luma reads) trivial regardless of the source
+         *  frame's real resolution. */
         private const val SamplesPerCellAxis = 8
     }
 
