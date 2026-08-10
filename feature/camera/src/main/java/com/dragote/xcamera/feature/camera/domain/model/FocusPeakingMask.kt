@@ -1,5 +1,6 @@
 package com.dragote.xcamera.feature.camera.domain.model
 
+import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -88,7 +89,23 @@ data class FocusPeakingMask(
             return FocusPeakingMask(columns, rows, cells)
         }
 
-        /** Peak local-contrast floor (0..255 luma units) a cell must clear to be classified [edge]. */
-        const val DefaultContrastThreshold = 40
+        /** Peak local-contrast floor (0..255 luma units) a cell must clear to be classified [edge] at
+         *  [FocusPeakingSensitivity.MEDIUM] — also the fallback when no explicit [contrastThreshold]
+         *  is passed. Raised from the original `40`: that value triggered on edges that were still
+         *  visibly short of true peak focus during a manual-focus rack, misleading users into locking
+         *  focus too early — see [contrastThreshold] for the full LOW/MEDIUM/HIGH sensitivity range
+         *  this now lives alongside. */
+        const val DefaultContrastThreshold = 50
+
+        /** [sensitivity]'s corresponding contrast floor for [fromLuma]'s own [contrastThreshold]
+         *  parameter. Sensitivity and contrast floor are inversely related — [FocusPeakingSensitivity.LOW]
+         *  requires *more* contrast (a higher floor) before flagging anything as sharp, trading a later
+         *  trigger during a focus rack for fewer premature "that's sharp enough" reads;
+         *  [FocusPeakingSensitivity.HIGH] flags weaker edges, closer to the original pre-tuning `40`. */
+        fun contrastThreshold(sensitivity: FocusPeakingSensitivity): Int = when (sensitivity) {
+            FocusPeakingSensitivity.LOW -> 65
+            FocusPeakingSensitivity.MEDIUM -> DefaultContrastThreshold
+            FocusPeakingSensitivity.HIGH -> 35
+        }
     }
 }

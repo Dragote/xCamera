@@ -531,7 +531,8 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                 val crop = withContext(Dispatchers.Default) { cropLoupeBitmap(fullFrame, center, loupeCropRadiusPx) }
                 if (crop != null) {
                     focusLoupeBitmap = crop.asImageBitmap()
-                    focusPeakingMask = withContext(Dispatchers.Default) { focusPeakingMaskFromBitmap(crop) }
+                    val threshold = FocusPeakingMask.contrastThreshold(cameraSettings.focusPeakingSensitivity)
+                    focusPeakingMask = withContext(Dispatchers.Default) { focusPeakingMaskFromBitmap(crop, threshold) }
                 }
             }
             delay(LoupeRefreshIntervalMs)
@@ -1071,9 +1072,11 @@ private fun cropLoupeBitmap(source: Bitmap, center: Offset, radiusPx: Int): Bitm
  * One mask cell per source pixel (`columns = width`, `rows = height`) rather than a coarse downsampled
  * grid — [FocusRing] renders the mask as a scaled-up bitmap overlay (not per-cell rectangles), so
  * pixel-resolution classification is what makes the highlight trace the actual sharp-object silhouette
- * as a thin contour instead of boxing whole regions.
+ * as a thin contour instead of boxing whole regions. [contrastThreshold] is the caller's own resolved
+ * [FocusPeakingMask.contrastThreshold] for the user's current sensitivity setting, not a fixed value —
+ * see that function's own doc.
  */
-private fun focusPeakingMaskFromBitmap(crop: Bitmap): FocusPeakingMask {
+private fun focusPeakingMaskFromBitmap(crop: Bitmap, contrastThreshold: Int): FocusPeakingMask {
     val width = crop.width
     val height = crop.height
     val pixels = IntArray(width * height)
@@ -1085,5 +1088,5 @@ private fun focusPeakingMaskFromBitmap(crop: Bitmap): FocusPeakingMask {
         val b = pixel and 0xFF
         (r * 299 + g * 587 + b * 114) / 1000
     }
-    return FocusPeakingMask.fromLuma(luma, width, height, columns = width, rows = height)
+    return FocusPeakingMask.fromLuma(luma, width, height, columns = width, rows = height, contrastThreshold = contrastThreshold)
 }
