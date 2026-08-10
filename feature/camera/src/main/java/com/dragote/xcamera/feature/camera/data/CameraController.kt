@@ -1579,10 +1579,14 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
          */
         const val PreviewMaxExposureTimeNs = 1_000_000_000L / 15
 
-        /** Grid dimensions [ZebraMask.fromLumaPlane] buckets the analysis frame into — matches the
-         *  reference implementation's own coarse/blocky (not per-pixel) clipping mask. */
-        const val ZebraGridColumns = 24
-        const val ZebraGridRows = 32
+        /** Grid dimensions [ZebraMask.fromLumaPlane] buckets the analysis frame into — coarse/blocky
+         *  (not per-pixel) like the reference implementation's own clipping mask, but doubled from
+         *  that reference's 24x32 (same 3:4 aspect) for a visibly finer overlay — [ZebraOverlay]'s
+         *  own per-cell rendering (rounded corners, dot/stripe fill) reads noticeably smoother with
+         *  more, smaller sectors. Still trivial per-frame cost — see [ZebraMask.fromLumaPlane]'s own
+         *  doc for the sample-budget math this scales. */
+        const val ZebraGridColumns = 48
+        const val ZebraGridRows = 64
 
         /** Floor between real [ZebraMask] recomputations — see [classifyZebraIfDue]. */
         const val ZebraThrottleMs = 66L
