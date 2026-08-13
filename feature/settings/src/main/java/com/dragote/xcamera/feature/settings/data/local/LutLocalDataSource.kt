@@ -3,6 +3,9 @@ package com.dragote.xcamera.feature.settings.data.local
 import android.content.Context
 import android.net.Uri
 import com.dragote.xcamera.shared.common.domain.model.LutPreset
+import com.dragote.xcamera.shared.common.domain.model.parseCubeLut
+import com.dragote.xcamera.shared.common.domain.model.resampleCubeLut
+import com.dragote.xcamera.shared.common.domain.model.toCubeFileContent
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.IOException
@@ -23,6 +26,13 @@ import javax.inject.Inject
  * [sanitizeForFileName]) means the display name recovered from a file name may differ cosmetically
  * from what the user originally typed (stripped punctuation, truncated) — an accepted simplification,
  * not a correctness issue for this feature's own scope.
+ *
+ * [importLut] (issue #43 follow-up) validates every picked file against [parseCubeLut] and resamples
+ * it onto [CanonicalLutSize] before writing it to disk — every `.cube` file this class stores is
+ * therefore always exactly [CanonicalLutSize]³, regardless of what the user originally uploaded. This
+ * keeps every LUT in the library uniformly small/fast to re-parse and lets `feature:camera`'s GPU
+ * texture cache assume a fixed texture size across LUT switches (see that module's
+ * `ui/gl/CameraPreviewRenderer` for the consumer of that assumption).
  */
 class LutLocalDataSource @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -41,10 +51,20 @@ class LutLocalDataSource @Inject constructor(
 
     /**
      * Copies [sourceUri]'s bytes (the SAF `ACTION_OPEN_DOCUMENT` result) into app-private storage
-     * under a fresh id, returning the resulting [LutPreset]. Throws [IOException] on any read/write
-     * failure — `LutRepositoryImpl` is what translates that into a [com.dragote.xcamera.shared.common
-     * .domain.result.Result], this data source stays exception-based like `CameraController`'s own
-     * hardware-adjacent calls do.
+     * under a fresh id, validates it's an actual parseable `.cube` file, resamples it onto
+     * [CanonicalLutSize] (issue #43 follow-up — see this class's own doc for why a uniform on-disk
+     * size matters), and returns the resulting [LutPreset]. Throws [IOException] on any read/write
+     * failure *or* on a file that copies fine but fails [parseCubeLut] (an unsupported/corrupt
+     * `.cube`) — in that case the just-copied file is deleted before throwing, so a bad import never
+     * leaves a broken file behind for [listLuts] to find. `LutRepositoryImpl` is what translates
+     * either failure into a [com.dragote.xcamera.shared.common.domain.result.Result], this data
+     * source stays exception-based like `CameraController`'s own hardware-adjacent calls do.
+     *
+     * This is now the *primary* validation gate for import — `LutResolutionRepository`'s
+     * resolve-failure auto-cleanup (`feature:camera`, wired in `SettingsViewModel`) is a secondary,
+     * defensive fallback for a file that goes missing/corrupts on disk *after* a valid import (e.g.
+     * external interference), not the first line of defense it used to be before the parser moved to
+     * `shared:common`.
      *
      * The returned [LutPreset.displayName] is already run through [sanitizeForFileName] (not the raw
      * [displayName] as typed/picked) — deliberately, so it's identical to what a later [listLuts] scan
@@ -59,6 +79,14 @@ class LutLocalDataSource @Inject constructor(
         val input = context.contentResolver.openInputStream(sourceUri)
             ?: throw IOException("Couldn't open an input stream for $sourceUri")
         input.use { stream -> file.outputStream().use { output -> stream.copyTo(output) } }
+
+        val parsed = parseCubeLut(file.readText())
+        if (parsed == null) {
+            file.delete()
+            throw IOException("$sourceUri did not contain a valid .cube file")
+        }
+        file.writeText(resampleCubeLut(parsed, CanonicalLutSize).toCubeFileContent())
+
         return LutPreset(id = id, displayName = sanitizedDisplayName, filePath = file.absolutePath)
     }
 
@@ -91,5 +119,11 @@ class LutLocalDataSource @Inject constructor(
 
     private companion object {
         const val FileNameSeparator = "__"
+
+        /** The standard professional `.cube` grid size (DaVinci Resolve/Lightroom's own default
+         *  export size) — small and fast enough to parse/upload while still visually indistinguishable
+         *  from a larger grid for real-time preview grading. See this class's own doc for why every
+         *  imported LUT is normalized onto this one size. */
+        const val CanonicalLutSize = 33
     }
 }
