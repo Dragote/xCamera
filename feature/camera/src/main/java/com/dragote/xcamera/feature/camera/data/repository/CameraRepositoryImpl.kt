@@ -18,11 +18,14 @@ import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.model.parseCubeLut
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.shared.common.domain.repository.LutRepository
+import com.dragote.xcamera.shared.common.domain.repository.LutResolutionRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -33,7 +36,11 @@ import javax.inject.Singleton
 class CameraRepositoryImpl @Inject constructor(
     private val cameraController: CameraController,
     private val lutRepository: LutRepository,
-) : CameraRepository {
+) : CameraRepository, LutResolutionRepository {
+
+    /** Backs [observeResolvingLutId] — see [LutResolutionRepository]'s own doc for why this only ever
+     *  holds a non-null `lutId`, never a "resolving null" state. */
+    private val _resolvingLutId = MutableStateFlow<String?>(null)
 
     override suspend fun bindCamera(
         lifecycleOwner: LifecycleOwner,
@@ -94,21 +101,32 @@ class CameraRepositoryImpl @Inject constructor(
      * `.cube`) always means "no LUT" to [CameraController.setLut] — never throws.
      */
     override suspend fun setLut(lutId: String?, intensityPercent: Int) {
-        val cubeLut = lutId?.let { id ->
-            lutRepository.observeLuts().first().find { it.id == id }
-        }?.let { preset ->
-            // Parsing (parseCubeLut, not just the file read) must stay inside this withContext — a
-            // 33+-size .cube file is tens of thousands of data rows, and this is called from
-            // CameraScreen's LaunchedEffect on the main thread; parsing outside the IO dispatcher
-            // switch previously froze the UI (confirmed: hangs hard when applying a LUT).
-            withContext(Dispatchers.IO) {
-                runCatching { File(preset.filePath).readText() }.getOrNull()?.let { content -> parseCubeLut(content) }
-            }
+        if (lutId == null) {
+            // "Off" clears the active LUT synchronously — nothing to resolve, so _resolvingLutId
+            // never toggles for this path (see LutResolutionRepository's own doc).
+            cameraController.setLut(null, intensityPercent)
+            return
         }
-        cameraController.setLut(cubeLut, intensityPercent)
+        _resolvingLutId.value = lutId
+        try {
+            val cubeLut = lutRepository.observeLuts().first().find { it.id == lutId }?.let { preset ->
+                // Parsing (parseCubeLut, not just the file read) must stay inside this withContext — a
+                // 33+-size .cube file is tens of thousands of data rows, and this is called from
+                // CameraScreen's LaunchedEffect on the main thread; parsing outside the IO dispatcher
+                // switch previously froze the UI (confirmed: hangs hard when applying a LUT).
+                withContext(Dispatchers.IO) {
+                    runCatching { File(preset.filePath).readText() }.getOrNull()?.let { content -> parseCubeLut(content) }
+                }
+            }
+            cameraController.setLut(cubeLut, intensityPercent)
+        } finally {
+            _resolvingLutId.value = null
+        }
     }
 
     override fun observeActiveLut(): Flow<ActiveLut?> = cameraController.activeLut
+
+    override fun observeResolvingLutId(): Flow<String?> = _resolvingLutId.asStateFlow()
 
     override suspend fun takePhoto(): Result<Uri, DataError.Local> = try {
         Result.Success(cameraController.takePhoto())

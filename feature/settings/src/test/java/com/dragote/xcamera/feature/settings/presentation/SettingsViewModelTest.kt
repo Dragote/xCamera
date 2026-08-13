@@ -7,6 +7,7 @@ import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import com.dragote.xcamera.shared.common.domain.model.LutPreset
 import com.dragote.xcamera.shared.common.domain.repository.CameraSettingsRepository
 import com.dragote.xcamera.shared.common.domain.repository.LutRepository
+import com.dragote.xcamera.shared.common.domain.repository.LutResolutionRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
 import com.dragote.xcamera.shared.testing.MainDispatcherRule
@@ -28,19 +29,24 @@ class SettingsViewModelTest {
 
     private lateinit var cameraSettingsRepository: CameraSettingsRepository
     private lateinit var lutRepository: LutRepository
+    private lateinit var lutResolutionRepository: LutResolutionRepository
     private lateinit var settingsFlow: MutableStateFlow<CameraSettings>
     private lateinit var lutsFlow: MutableStateFlow<List<LutPreset>>
+    private lateinit var resolvingLutIdFlow: MutableStateFlow<String?>
     private lateinit var viewModel: SettingsViewModel
 
     @Before
     fun setUp() {
         cameraSettingsRepository = mockk(relaxUnitFun = true)
         lutRepository = mockk(relaxUnitFun = true)
+        lutResolutionRepository = mockk(relaxUnitFun = true)
         settingsFlow = MutableStateFlow(CameraSettings())
         lutsFlow = MutableStateFlow(emptyList())
+        resolvingLutIdFlow = MutableStateFlow(null)
         every { cameraSettingsRepository.observeSettings() } returns settingsFlow
         every { lutRepository.observeLuts() } returns lutsFlow
-        viewModel = SettingsViewModel(cameraSettingsRepository, lutRepository)
+        every { lutResolutionRepository.observeResolvingLutId() } returns resolvingLutIdFlow
+        viewModel = SettingsViewModel(cameraSettingsRepository, lutRepository, lutResolutionRepository)
     }
 
     @Test
@@ -82,6 +88,19 @@ class SettingsViewModelTest {
             val lut = LutPreset(id = "1", displayName = "Portra", filePath = "/luts/1.cube")
             lutsFlow.value = listOf(lut)
             assertEquals(listOf(lut), awaitItem()?.luts)
+        }
+    }
+
+    @Test
+    fun `uiState reflects the resolving LUT id`() = runTest {
+        viewModel.uiState.test {
+            assertEquals(null, awaitItem()?.resolvingLutId)
+
+            resolvingLutIdFlow.value = "1"
+            assertEquals("1", awaitItem()?.resolvingLutId)
+
+            resolvingLutIdFlow.value = null
+            assertEquals(null, awaitItem()?.resolvingLutId)
         }
     }
 

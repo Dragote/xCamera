@@ -13,13 +13,17 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -177,6 +181,7 @@ private fun SettingsContent(
             luts = uiState.luts,
             selectedLutId = uiState.selectedLutId,
             intensityPercent = uiState.lutIntensityPercent,
+            resolvingLutId = uiState.resolvingLutId,
             onLutSelected = onLutSelected,
             onIntensityChanged = onLutIntensityChanged,
             onImportRequested = onImportLutRequested,
@@ -191,12 +196,16 @@ private fun SettingsContent(
  * "+ IMPORT" pill. Reuses the same filled-pill-vs-outlined-text selection language
  * [PeakingSensitivitySelector] established rather than inventing a second one. The intensity
  * [Slider] only appears once a LUT is actually selected — it's meaningless while grading is off.
+ * [resolvingLutId] (from `LutResolutionRepository`, `feature:camera`'s side of `setLut`'s file-read/
+ * parse work) shows a small spinner on whichever chip's id matches it — "OFF" can never match, see
+ * that interface's own doc.
  */
 @Composable
 private fun LutSelector(
     luts: List<LutPreset>,
     selectedLutId: String?,
     intensityPercent: Int,
+    resolvingLutId: String?,
     onLutSelected: (String?) -> Unit,
     onIntensityChanged: (Int) -> Unit,
     onImportRequested: () -> Unit,
@@ -213,7 +222,11 @@ private fun LutSelector(
                 onLutSelected(null)
             }
             luts.forEach { lut ->
-                LutPill(label = lut.displayName.uppercase(), isSelected = lut.id == selectedLutId) {
+                LutPill(
+                    label = lut.displayName.uppercase(),
+                    isSelected = lut.id == selectedLutId,
+                    isResolving = lut.id == resolvingLutId,
+                ) {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     onLutSelected(lut.id)
                 }
@@ -229,7 +242,7 @@ private fun LutSelector(
 }
 
 @Composable
-private fun LutPill(label: String, isSelected: Boolean, onClick: () -> Unit) {
+private fun LutPill(label: String, isSelected: Boolean, isResolving: Boolean = false, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
@@ -244,7 +257,17 @@ private fun LutPill(label: String, isSelected: Boolean, onClick: () -> Unit) {
             .padding(horizontal = 14.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text = label, style = AppChrome.valueStyle(if (isSelected) Color.White else AppChrome.ValueColor))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(text = label, style = AppChrome.valueStyle(if (isSelected) Color.White else AppChrome.ValueColor))
+            if (isResolving) {
+                Spacer(modifier = Modifier.width(6.dp))
+                CircularProgressIndicator(
+                    modifier = Modifier.size(12.dp),
+                    strokeWidth = 1.5.dp,
+                    color = if (isSelected) Color.White else AppChrome.ValueColor,
+                )
+            }
+        }
     }
 }
 
@@ -376,6 +399,7 @@ private fun LutSelectorPreview() {
                 luts = luts,
                 selectedLutId = null,
                 intensityPercent = 100,
+                resolvingLutId = null,
                 onLutSelected = {},
                 onIntensityChanged = {},
                 onImportRequested = {},
@@ -385,6 +409,20 @@ private fun LutSelectorPreview() {
                 luts = luts,
                 selectedLutId = "1",
                 intensityPercent = 70,
+                resolvingLutId = null,
+                onLutSelected = {},
+                onIntensityChanged = {},
+                onImportRequested = {},
+            )
+            // A LUT just picked, still being resolved (file read + .cube parse) — spinner on its own
+            // chip. selectedLutId already reflects the pick (persisted instantly, see
+            // SettingsViewModel.onLutSelected); resolvingLutId matches it until CameraRepositoryImpl's
+            // setLut finishes.
+            LutSelector(
+                luts = luts,
+                selectedLutId = "2",
+                intensityPercent = 70,
+                resolvingLutId = "2",
                 onLutSelected = {},
                 onIntensityChanged = {},
                 onImportRequested = {},

@@ -4,6 +4,7 @@ import android.content.Context
 import com.dragote.xcamera.feature.camera.data.CameraController
 import com.dragote.xcamera.feature.camera.data.repository.CameraRepositoryImpl
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
+import com.dragote.xcamera.shared.common.domain.repository.LutResolutionRepository
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -18,6 +19,13 @@ abstract class CameraModule {
 
     @Binds
     abstract fun bindCameraRepository(impl: CameraRepositoryImpl): CameraRepository
+
+    /** [CameraRepositoryImpl] also backs `shared:common`'s [LutResolutionRepository] — `feature:settings`
+     *  consumes it to show a per-chip loading spinner while `setLut` is still resolving a selection (see
+     *  that interface's own doc), mirroring `feature:settings`' `SettingsModule` binding `CameraSettingsRepository`
+     *  and `LutRepository` in the reverse direction. */
+    @Binds
+    abstract fun bindLutResolutionRepository(impl: CameraRepositoryImpl): LutResolutionRepository
 
     companion object {
         // Unscoped would mean every injection point (the ViewModel's constructor injection vs.

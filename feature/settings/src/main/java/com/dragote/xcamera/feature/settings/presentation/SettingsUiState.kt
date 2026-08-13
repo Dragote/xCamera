@@ -13,4 +13,8 @@ data class SettingsUiState(
     val luts: List<LutPreset> = emptyList(),
     val selectedLutId: String? = null,
     val lutIntensityPercent: Int = 100,
+    /** The id of whichever LUT the camera pipeline is still resolving (file read + `.cube` parse) —
+     *  `null` once resolution finishes or nothing's in flight. Drives the spinner on that specific
+     *  chip in `ui/SettingsScreen`'s `LutSelector`, not a generic global spinner (issue #43). */
+    val resolvingLutId: String? = null,
 )

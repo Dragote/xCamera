@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import com.dragote.xcamera.shared.common.domain.repository.CameraSettingsRepository
 import com.dragote.xcamera.shared.common.domain.repository.LutRepository
+import com.dragote.xcamera.shared.common.domain.repository.LutResolutionRepository
 import com.dragote.xcamera.shared.common.domain.result.Result
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,12 +22,14 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     private val cameraSettingsRepository: CameraSettingsRepository,
     private val lutRepository: LutRepository,
+    private val lutResolutionRepository: LutResolutionRepository,
 ) : ViewModel() {
 
     val uiState: StateFlow<SettingsUiState?> = combine(
         cameraSettingsRepository.observeSettings(),
         lutRepository.observeLuts(),
-    ) { settings, luts ->
+        lutResolutionRepository.observeResolvingLutId(),
+    ) { settings, luts, resolvingLutId ->
         SettingsUiState(
             showGrid = settings.showGrid,
             showHistogram = settings.showHistogram,
@@ -35,6 +38,7 @@ class SettingsViewModel @Inject constructor(
             luts = luts,
             selectedLutId = settings.selectedLutId,
             lutIntensityPercent = settings.lutIntensityPercent,
+            resolvingLutId = resolvingLutId,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 

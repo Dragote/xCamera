@@ -17,15 +17,18 @@ import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.shared.common.domain.repository.LutRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
+import com.dragote.xcamera.shared.common.domain.model.LutPreset
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class CameraRepositoryImplTest {
@@ -274,5 +277,48 @@ class CameraRepositoryImplTest {
         every { cameraController.activeLut } returns activeLutFlow
 
         assertEquals(activeLutFlow, repository.observeActiveLut())
+    }
+
+    @Test
+    fun `setLut sets the resolving id before the parse work and clears it once done`() = runTest {
+        val preset = LutPreset(id = "1", displayName = "Test", filePath = "/nonexistent/path.cube")
+        every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
+        var resolvingIdDuringSetLut: String? = "not-captured"
+        every { cameraController.setLut(any(), any()) } answers {
+            resolvingIdDuringSetLut = (repository.observeResolvingLutId() as StateFlow<String?>).value
+        }
+
+        repository.setLut("1", 50)
+
+        assertEquals("1", resolvingIdDuringSetLut)
+        assertNull((repository.observeResolvingLutId() as StateFlow<String?>).value)
+    }
+
+    @Test
+    fun `setLut with a null id never surfaces a resolving id`() = runTest {
+        every { cameraController.setLut(null, 50) } returns Unit
+
+        repository.setLut(null, 50)
+
+        assertNull((repository.observeResolvingLutId() as StateFlow<String?>).value)
+    }
+
+    @Test
+    fun `setLut with an unknown id still toggles the resolving id around the call`() = runTest {
+        every { lutRepository.observeLuts() } returns flowOf(emptyList())
+        var resolvingIdDuringSetLut: String? = "not-captured"
+        every { cameraController.setLut(null, 80) } answers {
+            resolvingIdDuringSetLut = (repository.observeResolvingLutId() as StateFlow<String?>).value
+        }
+
+        repository.setLut("missing-id", 80)
+
+        assertEquals("missing-id", resolvingIdDuringSetLut)
+        assertNull((repository.observeResolvingLutId() as StateFlow<String?>).value)
+    }
+
+    @Test
+    fun `observeResolvingLutId starts out null`() {
+        assertNull((repository.observeResolvingLutId() as StateFlow<String?>).value)
     }
 }
