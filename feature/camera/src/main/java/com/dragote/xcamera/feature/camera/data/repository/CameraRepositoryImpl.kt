@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Handler
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.data.CameraController
+import com.dragote.xcamera.feature.camera.data.LutFileReader
 import com.dragote.xcamera.feature.camera.domain.model.ActiveLut
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
@@ -16,6 +17,7 @@ import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
+import com.dragote.xcamera.shared.common.domain.model.CubeLut
 import com.dragote.xcamera.shared.common.domain.model.parseCubeLut
 import com.dragote.xcamera.shared.common.domain.repository.LutRepository
 import com.dragote.xcamera.shared.common.domain.repository.LutResolutionRepository
@@ -30,7 +32,6 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -38,7 +39,22 @@ import javax.inject.Singleton
 class CameraRepositoryImpl @Inject constructor(
     private val cameraController: CameraController,
     private val lutRepository: LutRepository,
+    private val lutFileReader: LutFileReader,
 ) : CameraRepository, LutResolutionRepository {
+
+    /**
+     * In-memory cache of already-resolved LUTs, keyed by [com.dragote.xcamera.shared.common.domain
+     * .model.LutPreset.id] (issue #43 follow-up) — a repeat selection of a `lutId` already resolved
+     * this session skips the file-read + [parseCubeLut] work entirely, going straight to
+     * [cameraController.setLut]. Deliberately *not* what gates whether a `lutId` still exists: [setLut]
+     * still re-checks [lutRepository]'s current list on every call (seeing whether a preset still
+     * resolves to a file path at all) before ever consulting this cache, so a stale entry for a
+     * since-deleted LUT (`SettingsViewModel.onLutDeleteRequested`, or the resolution-failure auto-
+     * cleanup path from issue #43's earlier round) is never served as if it still existed — see
+     * [setLut]'s own doc. A plain unbounded `MutableMap`, no LRU/eviction — a user's LUT library is
+     * realistically tens of entries, not thousands, per this project's minimal-infra preference.
+     */
+    private val resolvedLutCache = mutableMapOf<String, CubeLut>()
 
     /** Backs [observeResolvingLutId] — see [LutResolutionRepository]'s own doc for why this only ever
      *  holds a non-null `lutId`, never a "resolving null" state. */
@@ -104,7 +120,12 @@ class CameraRepositoryImpl @Inject constructor(
     /**
      * Looks [lutId] up in [lutRepository]'s current list (a one-shot [first] read, not a live
      * subscription — LUT selection changes are infrequent user actions, not something that needs to
-     * react to the *list* changing mid-resolution), then reads + parses that preset's file off disk.
+     * react to the *list* changing mid-resolution) *every* call, even for a [lutId] already present in
+     * [resolvedLutCache] — this is what keeps a stale cache entry for a since-deleted LUT from ever
+     * being served: a deleted [lutId] has no matching preset any more, so this short-circuits to `null`
+     * before [resolvedLutCache] is ever consulted, regardless of what's still sitting in it. Only the
+     * file-read + [parseCubeLut] work is skipped on a cache hit, not this existence check.
+     *
      * `null` (either `lutId` itself, an id not present in the list, an unreadable file, or a malformed
      * `.cube`) always means "no LUT" to [CameraController.setLut] — never throws. A non-null [lutId]
      * that still resolves to a `null` LUT is also reported via [_resolutionFailures] — see
@@ -122,13 +143,20 @@ class CameraRepositoryImpl @Inject constructor(
         }
         _resolvingLutId.value = lutId
         try {
-            val cubeLut = lutRepository.observeLuts().first().find { it.id == lutId }?.let { preset ->
-                // Parsing (parseCubeLut, not just the file read) must stay inside this withContext — a
-                // 33+-size .cube file is tens of thousands of data rows, and this is called from
-                // CameraScreen's LaunchedEffect on the main thread; parsing outside the IO dispatcher
-                // switch previously froze the UI (confirmed: hangs hard when applying a LUT).
-                withContext(Dispatchers.IO) {
-                    runCatching { File(preset.filePath).readText() }.getOrNull()?.let { content -> parseCubeLut(content) }
+            val preset = lutRepository.observeLuts().first().find { it.id == lutId }
+            val cubeLut = if (preset == null) {
+                resolvedLutCache.remove(lutId) // no longer a valid id — drop any stale cached entry too
+                null
+            } else {
+                resolvedLutCache[lutId] ?: run {
+                    // Parsing (parseCubeLut, not just the file read) must stay inside this withContext —
+                    // a 33+-size .cube file is tens of thousands of data rows, and this is called from
+                    // CameraViewModel's cameraSettings collector, potentially on the main thread; parsing
+                    // outside the IO dispatcher switch previously froze the UI (confirmed: hangs hard
+                    // when applying a LUT).
+                    withContext(Dispatchers.IO) {
+                        lutFileReader.readText(preset.filePath)?.let { content -> parseCubeLut(content) }
+                    }?.also { resolvedLutCache[lutId] = it }
                 }
             }
             if (cubeLut == null) {

@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Handler
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.data.CameraController
+import com.dragote.xcamera.feature.camera.data.LutFileReader
 import com.dragote.xcamera.feature.camera.domain.model.ActiveLut
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
@@ -24,27 +25,22 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
-import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.TemporaryFolder
 
 class CameraRepositoryImplTest {
-
-    @get:Rule
-    val temporaryFolder = TemporaryFolder()
 
     private val cameraController = mockk<CameraController>()
     private val lutRepository = mockk<LutRepository> {
         every { observeLuts() } returns flowOf(emptyList())
     }
-    private val repository = CameraRepositoryImpl(cameraController, lutRepository)
+    private val lutFileReader = mockk<LutFileReader>()
+    private val repository = CameraRepositoryImpl(cameraController, lutRepository, lutFileReader)
 
     @Test
     fun `bindCamera delegates to the controller`() = runTest {
@@ -290,6 +286,7 @@ class CameraRepositoryImplTest {
     fun `setLut sets the resolving id before the parse work and clears it once done`() = runTest {
         val preset = LutPreset(id = "1", displayName = "Test", filePath = "/nonexistent/path.cube")
         every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
+        every { lutFileReader.readText(preset.filePath) } returns null
         var resolvingIdDuringSetLut: String? = "not-captured"
         every { cameraController.setLut(any(), any()) } answers {
             resolvingIdDuringSetLut = (repository.observeResolvingLutId() as StateFlow<String?>).value
@@ -344,6 +341,7 @@ class CameraRepositoryImplTest {
     fun `setLut with a preset whose file can't be read emits a resolution failure`() = runTest {
         val preset = LutPreset(id = "1", displayName = "Test", filePath = "/nonexistent/path.cube")
         every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
+        every { lutFileReader.readText(preset.filePath) } returns null
         every { cameraController.setLut(null, 50) } returns Unit
 
         repository.observeResolutionFailures().test {
@@ -354,9 +352,9 @@ class CameraRepositoryImplTest {
 
     @Test
     fun `setLut with malformed cube content emits a resolution failure`() = runTest {
-        val file = temporaryFolder.newFile("malformed.cube").apply { writeText("not a cube file") }
-        val preset = LutPreset(id = "2", displayName = "Malformed", filePath = file.absolutePath)
+        val preset = LutPreset(id = "2", displayName = "Malformed", filePath = "/luts/2.cube")
         every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
+        every { lutFileReader.readText(preset.filePath) } returns "not a cube file"
         every { cameraController.setLut(null, 50) } returns Unit
 
         repository.observeResolutionFailures().test {
@@ -377,23 +375,9 @@ class CameraRepositoryImplTest {
 
     @Test
     fun `setLut that successfully resolves a LUT doesn't emit a resolution failure`() = runTest {
-        val file = temporaryFolder.newFile("valid.cube").apply {
-            writeText(
-                """
-                LUT_3D_SIZE 2
-                0.0 0.0 0.0
-                0.0 0.0 1.0
-                0.0 1.0 0.0
-                0.0 1.0 1.0
-                1.0 0.0 0.0
-                1.0 0.0 1.0
-                1.0 1.0 0.0
-                1.0 1.0 1.0
-                """.trimIndent(),
-            )
-        }
-        val preset = LutPreset(id = "3", displayName = "Valid", filePath = file.absolutePath)
+        val preset = LutPreset(id = "3", displayName = "Valid", filePath = "/luts/3.cube")
         every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
+        every { lutFileReader.readText(preset.filePath) } returns validCubeContent
         every { cameraController.setLut(any(), 50) } returns Unit
 
         repository.observeResolutionFailures().test {
@@ -401,4 +385,43 @@ class CameraRepositoryImplTest {
             expectNoEvents()
         }
     }
+
+    @Test
+    fun `a repeat setLut call with the same id skips the file read (resolve cache)`() = runTest {
+        val preset = LutPreset(id = "3", displayName = "Valid", filePath = "/luts/3.cube")
+        every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
+        every { lutFileReader.readText(preset.filePath) } returns validCubeContent
+        every { cameraController.setLut(any(), 50) } returns Unit
+
+        repository.setLut("3", 50)
+        repository.setLut("3", 50)
+
+        verify(exactly = 1) { lutFileReader.readText(preset.filePath) }
+    }
+
+    @Test
+    fun `a cached LUT is never served once its id is no longer present in the LUT list`() = runTest {
+        val preset = LutPreset(id = "3", displayName = "Valid", filePath = "/luts/3.cube")
+        every { lutRepository.observeLuts() } returnsMany listOf(flowOf(listOf(preset)), flowOf(emptyList()))
+        every { lutFileReader.readText(preset.filePath) } returns validCubeContent
+        every { cameraController.setLut(any(), 50) } returns Unit
+        every { cameraController.setLut(null, 50) } returns Unit
+
+        repository.setLut("3", 50) // resolves and caches
+        repository.setLut("3", 50) // preset no longer in the (now-empty) list — must not use the cache
+
+        verify { cameraController.setLut(null, 50) }
+    }
+
+    private val validCubeContent = """
+        LUT_3D_SIZE 2
+        0.0 0.0 0.0
+        0.0 0.0 1.0
+        0.0 1.0 0.0
+        0.0 1.0 1.0
+        1.0 0.0 0.0
+        1.0 0.0 1.0
+        1.0 1.0 0.0
+        1.0 1.0 1.0
+    """.trimIndent()
 }
