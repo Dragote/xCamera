@@ -37,7 +37,6 @@ import com.dragote.xcamera.feature.camera.domain.model.ActiveLut
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
-import com.dragote.xcamera.feature.camera.domain.model.CubeLut
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.FocusRegionSizeFraction
 import com.dragote.xcamera.feature.camera.domain.model.HistogramData
@@ -45,6 +44,7 @@ import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.model.displayFractionToSensorFraction
+import com.dragote.xcamera.shared.common.domain.model.CubeLut
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope

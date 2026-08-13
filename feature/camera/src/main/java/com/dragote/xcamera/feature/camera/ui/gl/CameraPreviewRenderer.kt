@@ -13,7 +13,7 @@ import android.opengl.Matrix
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
-import com.dragote.xcamera.feature.camera.domain.model.CubeLut
+import com.dragote.xcamera.shared.common.domain.model.CubeLut
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer

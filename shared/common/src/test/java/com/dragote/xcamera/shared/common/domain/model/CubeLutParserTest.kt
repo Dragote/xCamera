@@ -1,4 +1,4 @@
-package com.dragote.xcamera.feature.camera.domain.model
+package com.dragote.xcamera.shared.common.domain.model
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -261,5 +261,27 @@ class CubeLutParserTest {
         assertEquals(a, b)
         assertEquals(a.hashCode(), b.hashCode())
         assertEquals(false, a == c)
+    }
+
+    @Test
+    fun `toCubeFileContent round-trips through parseCubeLut back to an equal CubeLut`() {
+        val original = parseCubeLut(validCubeContent())!!
+
+        val roundTripped = parseCubeLut(original.toCubeFileContent())
+
+        assertEquals(original, roundTripped)
+    }
+
+    @Test
+    fun `toCubeFileContent writes the LUT_3D_SIZE header followed by one row per grid point`() {
+        val lut = CubeLut(2, floatArrayOf(0f, 0f, 0f, 0f, 0f, 1f, 0f, 1f, 0f, 0f, 1f, 1f, 1f, 0f, 0f, 1f, 0f, 1f, 1f, 1f, 0f, 1f, 1f, 1f))
+
+        val content = lut.toCubeFileContent()
+
+        val lines = content.trim().lines()
+        assertEquals("LUT_3D_SIZE 2", lines.first())
+        assertEquals(9, lines.size) // header + 8 data rows (2^3)
+        assertEquals("0.0 0.0 0.0", lines[1])
+        assertEquals("1.0 1.0 1.0", lines.last())
     }
 }

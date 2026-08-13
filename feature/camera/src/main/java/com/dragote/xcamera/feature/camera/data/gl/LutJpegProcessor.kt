@@ -9,7 +9,7 @@ import android.opengl.GLES30
 import android.opengl.GLUtils
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
-import com.dragote.xcamera.feature.camera.domain.model.CubeLut
+import com.dragote.xcamera.shared.common.domain.model.CubeLut
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File

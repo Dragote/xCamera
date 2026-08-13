@@ -1,11 +1,14 @@
-package com.dragote.xcamera.feature.camera.domain.model
+package com.dragote.xcamera.shared.common.domain.model
 
 /**
  * Parses a standard ASCII `.cube` 3D LUT file (Adobe/Iridas format, the same one DaVinci Resolve/
  * Lightroom export) into a [CubeLut] — a plain, Android/GL-type-free domain function per this
  * project's camera conventions (`.claude/agents/camera-engineer.md`: "LUT math/parsing should stay
  * in plain testable classes, GL/shader plumbing thin"), so it's unit-testable directly against real
- * `.cube` file content with no GL context or Android framework involved at all.
+ * `.cube` file content with no GL context or Android framework involved at all. Lives in
+ * `shared:common` (moved from `feature:camera` in issue #43's follow-up) so `feature:settings` can
+ * validate `.cube` content at import time without depending on `feature:camera` — see [CubeLut]'s
+ * own doc.
  *
  * Supported subset (this project's own non-goals explicitly exclude anything beyond a shippable
  * import-and-apply slice): `LUT_3D_SIZE N` header, then exactly `N*N*N` data rows of three
@@ -19,7 +22,8 @@ package com.dragote.xcamera.feature.camera.domain.model
  * Data rows are read in the file's own order — the `.cube` spec's own convention is the *blue*
  * coordinate varies fastest (then green, then red), i.e. row index `r*size*size + g*size + b` for
  * the LUT entry at [r, g, b] — callers building a `GL_TEXTURE_3D` from [CubeLut.values] must upload
- * with that same axis order for the result to sample correctly.
+ * with that same axis order for the result to sample correctly. [toCubeFileContent] writes rows back
+ * out in this exact same order, so it round-trips with this parser.
  *
  * Returns `null` (never throws) on anything malformed: missing/duplicate/non-positive `LUT_3D_SIZE`,
  * a data row that isn't exactly three parseable floats, a data row before the `LUT_3D_SIZE` header has
@@ -83,4 +87,21 @@ fun parseCubeLut(content: String): CubeLut? {
     if (writeIndex != resolvedValues.size) return null // fewer rows than the header promised
 
     return CubeLut(resolvedSize, resolvedValues)
+}
+
+/**
+ * Serializes [this] back to standard ASCII `.cube` file content — the inverse of [parseCubeLut]:
+ * a `LUT_3D_SIZE N` header line followed by one `r g b` row per grid point, written in the exact same
+ * blue-fastest row order [parseCubeLut] reads them back in (see that function's own doc). Used to
+ * write a [resampleCubeLut]d grid back out to disk (`feature:settings`'s `LutRepositoryImpl`, issue
+ * #43 follow-up) so every imported LUT is stored pre-normalized to one canonical size on disk, not
+ * just held that way in memory.
+ */
+fun CubeLut.toCubeFileContent(): String = buildString {
+    append("LUT_3D_SIZE ").append(size).append('\n')
+    var i = 0
+    while (i < values.size) {
+        append(values[i]).append(' ').append(values[i + 1]).append(' ').append(values[i + 2]).append('\n')
+        i += 3
+    }
 }

@@ -15,8 +15,8 @@ import com.dragote.xcamera.feature.camera.domain.model.HistogramData
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
-import com.dragote.xcamera.feature.camera.domain.model.parseCubeLut
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
+import com.dragote.xcamera.shared.common.domain.model.parseCubeLut
 import com.dragote.xcamera.shared.common.domain.repository.LutRepository
 import com.dragote.xcamera.shared.common.domain.repository.LutResolutionRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
