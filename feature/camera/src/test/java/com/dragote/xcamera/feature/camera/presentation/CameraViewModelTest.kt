@@ -15,6 +15,7 @@ import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.shared.common.domain.model.CameraSettings
 import com.dragote.xcamera.shared.common.domain.repository.CameraSettingsRepository
+import com.dragote.xcamera.shared.common.domain.repository.LutResolutionRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
 import com.dragote.xcamera.shared.testing.MainDispatcherRule
@@ -39,6 +40,7 @@ class CameraViewModelTest {
 
     private lateinit var cameraRepository: CameraRepository
     private lateinit var cameraSettingsRepository: CameraSettingsRepository
+    private lateinit var lutResolutionRepository: LutResolutionRepository
     private lateinit var autoIsoFlow: MutableStateFlow<Int?>
     private lateinit var autoExposureTimeFlow: MutableStateFlow<Long?>
     private lateinit var zebraMaskFlow: MutableStateFlow<ZebraMask?>
@@ -46,12 +48,14 @@ class CameraViewModelTest {
     private lateinit var focusDistanceFlow: MutableStateFlow<Float?>
     private lateinit var afConvergenceStateFlow: MutableStateFlow<AfConvergenceState?>
     private lateinit var cameraSettingsFlow: MutableStateFlow<CameraSettings>
+    private lateinit var resolvingLutIdFlow: MutableStateFlow<String?>
     private lateinit var viewModel: CameraViewModel
 
     @Before
     fun setUp() {
         cameraRepository = mockk()
         cameraSettingsRepository = mockk()
+        lutResolutionRepository = mockk()
         autoIsoFlow = MutableStateFlow(null)
         autoExposureTimeFlow = MutableStateFlow(null)
         zebraMaskFlow = MutableStateFlow(null)
@@ -59,6 +63,7 @@ class CameraViewModelTest {
         focusDistanceFlow = MutableStateFlow(null)
         afConvergenceStateFlow = MutableStateFlow(null)
         cameraSettingsFlow = MutableStateFlow(CameraSettings())
+        resolvingLutIdFlow = MutableStateFlow(null)
         every { cameraRepository.observeAutoIso() } returns autoIsoFlow
         every { cameraRepository.observeAutoExposureTime() } returns autoExposureTimeFlow
         every { cameraRepository.observeZebraMask() } returns zebraMaskFlow
@@ -66,7 +71,8 @@ class CameraViewModelTest {
         every { cameraRepository.observeFocusDistance() } returns focusDistanceFlow
         every { cameraRepository.observeAfConvergenceState() } returns afConvergenceStateFlow
         every { cameraSettingsRepository.observeSettings() } returns cameraSettingsFlow
-        viewModel = CameraViewModel(cameraRepository, cameraSettingsRepository)
+        every { lutResolutionRepository.observeResolvingLutId() } returns resolvingLutIdFlow
+        viewModel = CameraViewModel(cameraRepository, cameraSettingsRepository, lutResolutionRepository)
     }
 
     @Test
@@ -916,6 +922,19 @@ class CameraViewModelTest {
             val updated = awaitItem()
             assertFalse(updated.manualFocusSupported)
             assertEquals(0f, updated.maxFocusDistanceDiopters)
+        }
+    }
+
+    @Test
+    fun `isLutResolving mirrors whether observeResolvingLutId holds a non-null id`() = runTest {
+        viewModel.isLutResolving.test {
+            assertEquals(false, awaitItem())
+
+            resolvingLutIdFlow.value = "1"
+            assertEquals(true, awaitItem())
+
+            resolvingLutIdFlow.value = null
+            assertEquals(false, awaitItem())
         }
     }
 

@@ -20,6 +20,7 @@ import com.dragote.xcamera.feature.camera.domain.model.shutterSpeedStopsInRange
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.shared.common.domain.model.CameraSettings
 import com.dragote.xcamera.shared.common.domain.repository.CameraSettingsRepository
+import com.dragote.xcamera.shared.common.domain.repository.LutResolutionRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -42,6 +44,7 @@ import javax.inject.Inject
 class CameraViewModel @Inject constructor(
     private val cameraRepository: CameraRepository,
     private val cameraSettingsRepository: CameraSettingsRepository,
+    private val lutResolutionRepository: LutResolutionRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CameraUiState())
@@ -81,6 +84,21 @@ class CameraViewModel @Inject constructor(
      */
     val cameraSettings: StateFlow<CameraSettings> =
         cameraSettingsRepository.observeSettings().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CameraSettings())
+
+    /**
+     * Deliberately its own [StateFlow], not a [CameraUiState] field, for the same reason [cameraSettings]
+     * is — it comes from [LutResolutionRepository] (injected directly, not through [cameraRepository],
+     * since it doesn't need the hardware-facing interface at all — Hilt already binds
+     * `CameraRepositoryImpl` to both), a wholly separate repository from `feature:camera`'s own
+     * capture-result stream. Mirrors `feature:settings`' `SettingsViewModel` consuming the same
+     * interface for its per-chip spinner (issue #43): this is the viewfinder's own indicator for the
+     * identical resolving window, shown for whenever the user has already navigated back to the camera
+     * screen — the common case, since that's where a LUT's actual effect is visible — while a LUT
+     * selection is still being read + parsed off disk.
+     */
+    val isLutResolving: StateFlow<Boolean> = lutResolutionRepository.observeResolvingLutId()
+        .map { it != null }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     init {
         // Gated on manualExposurePinned, not manualModeEnabled — the latter flips the instant ModeLever

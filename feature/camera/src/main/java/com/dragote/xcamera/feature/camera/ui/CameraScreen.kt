@@ -87,6 +87,7 @@ import com.dragote.xcamera.feature.camera.ui.component.HistogramOverlay
 import com.dragote.xcamera.feature.camera.ui.component.HorizonLineOverlay
 import com.dragote.xcamera.feature.camera.ui.component.IsoDial
 import com.dragote.xcamera.feature.camera.ui.component.LensDial
+import com.dragote.xcamera.feature.camera.ui.component.LutResolvingIndicator
 import com.dragote.xcamera.feature.camera.ui.component.ModeLever
 import com.dragote.xcamera.feature.camera.ui.component.SettingsButton
 import com.dragote.xcamera.feature.camera.ui.component.ShutterButton
@@ -261,6 +262,7 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     val zebraMask by viewModel.zebraMask.collectAsStateWithLifecycle()
     val histogramData by viewModel.histogramData.collectAsStateWithLifecycle()
     val cameraSettings by viewModel.cameraSettings.collectAsStateWithLifecycle()
+    val isLutResolving by viewModel.isLutResolving.collectAsStateWithLifecycle()
 
     // The live preview no longer goes through a raw Camera2-owned Surface at all — CameraController
     // owns its own preview ImageReader internally (see its own doc for why) and hands each delivered
@@ -699,6 +701,10 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                             null
                         },
                         modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
+                    )
+                    LutResolvingIndicator(
+                        visible = isLutResolving,
+                        modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
                     )
                     ViewfinderThumbnailChip(
                         photoUri = uiState.lastSavedUri ?: latestGalleryUri,
