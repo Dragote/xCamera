@@ -85,6 +85,45 @@ class CameraSettingsRepositoryImplTest {
     }
 
     @Test
+    fun `setSelectedLutId persists and is reflected by observeSettings`() = runTest {
+        val repository = buildRepository()
+
+        repository.observeSettings().test {
+            assertEquals(CameraSettings(), awaitItem())
+
+            repository.setSelectedLutId("abc-123")
+            assertEquals(CameraSettings(selectedLutId = "abc-123"), awaitItem())
+        }
+    }
+
+    @Test
+    fun `setSelectedLutId with null clears a previously selected id`() = runTest {
+        val repository = buildRepository()
+
+        repository.observeSettings().test {
+            assertEquals(CameraSettings(), awaitItem())
+
+            repository.setSelectedLutId("abc-123")
+            assertEquals(CameraSettings(selectedLutId = "abc-123"), awaitItem())
+
+            repository.setSelectedLutId(null)
+            assertEquals(CameraSettings(selectedLutId = null), awaitItem())
+        }
+    }
+
+    @Test
+    fun `setLutIntensityPercent persists and is reflected by observeSettings`() = runTest {
+        val repository = buildRepository()
+
+        repository.observeSettings().test {
+            assertEquals(CameraSettings(), awaitItem())
+
+            repository.setLutIntensityPercent(42)
+            assertEquals(CameraSettings(lutIntensityPercent = 42), awaitItem())
+        }
+    }
+
+    @Test
     fun `each setter's write is independent of the other two settings`() = runTest {
         val repository = buildRepository()
 
