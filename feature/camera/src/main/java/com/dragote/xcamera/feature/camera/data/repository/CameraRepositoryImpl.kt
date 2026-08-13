@@ -18,7 +18,7 @@ import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.shared.common.domain.model.CubeLut
-import com.dragote.xcamera.shared.common.domain.model.parseCubeLut
+import com.dragote.xcamera.shared.common.domain.model.parseCubeLutBinary
 import com.dragote.xcamera.shared.common.domain.repository.LutRepository
 import com.dragote.xcamera.shared.common.domain.repository.LutResolutionRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
@@ -135,10 +135,10 @@ class CameraRepositoryImpl @Inject constructor(
      * [resolvedLutCache] — this is what keeps a stale cache entry for a since-deleted LUT from ever
      * being served: a deleted [lutId] has no matching preset any more, so this short-circuits to `null`
      * before [resolvedLutCache] is ever consulted, regardless of what's still sitting in it. Only the
-     * file-read + [parseCubeLut] work is skipped on a cache hit, not this existence check.
+     * file-read + [parseCubeLutBinary] work is skipped on a cache hit, not this existence check.
      *
      * `null` (either `lutId` itself, an id not present in the list, an unreadable file, or a malformed
-     * `.cube`) always means "no LUT" to [CameraController.setLut] — never throws. A non-null [lutId]
+     * stored LUT) always means "no LUT" to [CameraController.setLut] — never throws. A non-null [lutId]
      * that still resolves to a `null` LUT is also reported via [_resolutionFailures] — see
      * [observeResolutionFailures]'s own doc for why that's the file-type-validation gate for import
      * (issue #43's follow-up: `feature:settings` can't validate `.cube` content itself without
@@ -160,13 +160,13 @@ class CameraRepositoryImpl @Inject constructor(
                 null
             } else {
                 resolvedLutCache[lutId] ?: run {
-                    // Parsing (parseCubeLut, not just the file read) must stay inside this withContext —
-                    // a 33+-size .cube file is tens of thousands of data rows, and this is called from
-                    // CameraViewModel's cameraSettings collector, potentially on the main thread; parsing
-                    // outside the IO dispatcher switch previously froze the UI (confirmed: hangs hard
-                    // when applying a LUT).
+                    // The file-read + decode stays inside this withContext even though
+                    // parseCubeLutBinary's own bulk-byte-read decode is far cheaper than the old text
+                    // parser it replaced (issue #43 follow-up) — this is still called from
+                    // CameraViewModel's cameraSettings collector, potentially on the main thread, and
+                    // any disk IO belongs off it regardless of how fast the decode itself now is.
                     withContext(Dispatchers.IO) {
-                        lutFileReader.readText(preset.filePath)?.let { content -> parseCubeLut(content) }
+                        lutFileReader.readBytes(preset.filePath)?.let { bytes -> parseCubeLutBinary(bytes) }
                     }?.also { resolvedLutCache[lutId] = it }
                 }
             }

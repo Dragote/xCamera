@@ -3,7 +3,7 @@ package com.dragote.xcamera.feature.settings.data.local
 import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
-import com.dragote.xcamera.shared.common.domain.model.parseCubeLut
+import com.dragote.xcamera.shared.common.domain.model.parseCubeLutBinary
 import io.mockk.every
 import io.mockk.mockk
 import java.io.ByteArrayInputStream
@@ -63,7 +63,7 @@ class LutLocalDataSourceTest {
     }
 
     @Test
-    fun `importLut writes a resampled cube file, not the raw source bytes verbatim`() {
+    fun `importLut writes a resampled binary file, not the raw source bytes verbatim`() {
         val uri = mockk<Uri>()
         stubSourceContent(uri, validCubeContent(size = 2).toByteArray())
 
@@ -71,7 +71,7 @@ class LutLocalDataSourceTest {
 
         assertEquals("My LUT", preset.displayName)
         assertTrue(java.io.File(preset.filePath).exists())
-        val storedLut = parseCubeLut(java.io.File(preset.filePath).readText())
+        val storedLut = parseCubeLutBinary(java.io.File(preset.filePath).readBytes())
         assertEquals(33, storedLut?.size) // canonical size, regardless of the size-2 input
     }
 
@@ -82,7 +82,7 @@ class LutLocalDataSourceTest {
 
         val preset = dataSource.importLut(uri, "Five")
 
-        val storedLut = parseCubeLut(java.io.File(preset.filePath).readText())
+        val storedLut = parseCubeLutBinary(java.io.File(preset.filePath).readBytes())
         assertEquals(33, storedLut?.size)
     }
 
