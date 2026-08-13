@@ -25,4 +25,9 @@ interface CameraSettingsRepository {
     suspend fun setShowHorizonLine(enabled: Boolean)
 
     suspend fun setFocusPeakingSensitivity(sensitivity: FocusPeakingSensitivity)
+
+    /** `null` disables LUT grading entirely — see [CameraSettings.selectedLutId]'s own doc. */
+    suspend fun setSelectedLutId(id: String?)
+
+    suspend fun setLutIntensityPercent(percent: Int)
 }
