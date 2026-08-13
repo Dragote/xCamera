@@ -180,6 +180,79 @@ class CubeLutParserTest {
     }
 
     @Test
+    fun `returns null for a data row before the LUT_3D_SIZE header`() {
+        val content = """
+            0.0 0.0 0.0
+            LUT_3D_SIZE 2
+            0.0 0.0 1.0
+            0.0 1.0 0.0
+            0.0 1.0 1.0
+            1.0 0.0 0.0
+            1.0 0.0 1.0
+            1.0 1.0 0.0
+            1.0 1.0 1.0
+        """.trimIndent()
+
+        assertNull(parseCubeLut(content))
+    }
+
+    @Test
+    fun `returns null when there are more data rows than size cubed promises`() {
+        val content = """
+            LUT_3D_SIZE 2
+            0.0 0.0 0.0
+            0.0 0.0 1.0
+            0.0 1.0 0.0
+            0.0 1.0 1.0
+            1.0 0.0 0.0
+            1.0 0.0 1.0
+            1.0 1.0 0.0
+            1.0 1.0 1.0
+            1.0 1.0 1.0
+        """.trimIndent()
+
+        assertNull(parseCubeLut(content))
+    }
+
+    /**
+     * A real-sized 32x32x32 LUT (32*32*32*3 = 98,304 floats) — large enough that the old
+     * `ArrayList<Float>`-boxing implementation would be meaningfully slower than the current
+     * preallocated-`FloatArray` one, generated here rather than hand-written so this stays a
+     * correctness check (every value round-trips exactly) rather than a hardcoded fixture to maintain.
+     */
+    @Test
+    fun `parses a large synthetic LUT correctly`() {
+        val size = 32
+        val expected = FloatArray(size * size * size * 3)
+        val content = buildString {
+            appendLine("LUT_3D_SIZE $size")
+            var index = 0
+            for (r in 0 until size) {
+                for (g in 0 until size) {
+                    for (b in 0 until size) {
+                        // Deterministic, varied per-channel values derived from the LUT coordinates —
+                        // distinct enough per entry that a transposition/off-by-one bug in the write
+                        // order would actually be caught by the round-trip comparison below.
+                        val redValue = r / (size - 1).toFloat()
+                        val greenValue = g / (size - 1).toFloat()
+                        val blueValue = b / (size - 1).toFloat()
+                        expected[index] = redValue
+                        expected[index + 1] = greenValue
+                        expected[index + 2] = blueValue
+                        index += 3
+                        appendLine("$redValue $greenValue $blueValue")
+                    }
+                }
+            }
+        }
+
+        val lut = parseCubeLut(content)
+
+        assertEquals(size, lut?.size)
+        assertEquals(expected.toList(), lut?.values?.toList())
+    }
+
+    @Test
     fun `CubeLut equality is structural, not by array reference`() {
         val a = CubeLut(2, floatArrayOf(0f, 1f))
         val b = CubeLut(2, floatArrayOf(0f, 1f))

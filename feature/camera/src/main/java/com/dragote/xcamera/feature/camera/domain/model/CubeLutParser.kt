@@ -22,14 +22,28 @@ package com.dragote.xcamera.feature.camera.domain.model
  * with that same axis order for the result to sample correctly.
  *
  * Returns `null` (never throws) on anything malformed: missing/duplicate/non-positive `LUT_3D_SIZE`,
- * a data row that isn't exactly three parseable floats, or a final row count that doesn't match
- * `size^3` exactly — a corrupt/unsupported file should just fail to import, not crash the caller.
+ * a data row that isn't exactly three parseable floats, a data row before the `LUT_3D_SIZE` header has
+ * been seen (the normal/valid case — and every real `.cube` export — always puts the size header
+ * first; this parser doesn't try to support an out-of-order file, see this function's own perf-rewrite
+ * doc below), or a final row count that doesn't match `size^3` exactly — a corrupt/unsupported file
+ * should just fail to import, not crash the caller.
+ *
+ * Writes directly into a [FloatArray] preallocated the moment `LUT_3D_SIZE` is parsed, rather than
+ * accumulating into a growable `List<Float>` — a 64-size `.cube` file is `64*64*64*3` ≈ 800k values,
+ * and boxing every one of those into a `Float` object (what a `List<Float>`/`ArrayList<Float>` would
+ * do) is real, avoidable allocation pressure on the parse path this file's own earlier history already
+ * flagged as user-visibly slow. No growable fallback for a data row seen before the size header, on
+ * purpose — the `.cube` format's own convention (and every real exporter) always writes the header
+ * first, so a file that violates this is already malformed by this parser's own standing contract; a
+ * growable-buffer fallback purely to still parse a header-comes-second file would be solving a problem
+ * no real `.cube` file actually has.
  */
 private val whitespaceRegex = Regex("\\s+")
 
 fun parseCubeLut(content: String): CubeLut? {
     var size: Int? = null
-    val values = ArrayList<Float>()
+    var values: FloatArray? = null
+    var writeIndex = 0
 
     for (rawLine in content.lineSequence()) {
         val line = rawLine.trim()
@@ -42,24 +56,31 @@ fun parseCubeLut(content: String): CubeLut? {
                 val parsedSize = line.substringAfter(' ').trim().toIntOrNull() ?: return null
                 if (parsedSize <= 0) return null
                 size = parsedSize
+                values = FloatArray(parsedSize * parsedSize * parsedSize * 3)
             }
             "TITLE", "DOMAIN_MIN", "DOMAIN_MAX" -> {
                 // Recognized but unsupported/irrelevant to this parser — see this function's own doc.
             }
             "LUT_1D_SIZE" -> return null // a different file format entirely, not a 3D LUT.
             else -> {
-                // Expected to be a data row: "r g b".
+                // Expected to be a data row: "r g b" — malformed if seen before LUT_3D_SIZE (values is
+                // still null, nothing to write into yet) or once more rows have shown up than the
+                // header promised (writeIndex already at capacity).
+                val target = values ?: return null
                 val components = line.split(whitespaceRegex)
                 if (components.size != 3) return null
-                val row = components.map { it.toFloatOrNull() ?: return null }
-                values.addAll(row)
+                for (component in components) {
+                    if (writeIndex >= target.size) return null
+                    target[writeIndex] = component.toFloatOrNull() ?: return null
+                    writeIndex++
+                }
             }
         }
     }
 
     val resolvedSize = size ?: return null
-    val expectedFloatCount = resolvedSize * resolvedSize * resolvedSize * 3
-    if (values.size != expectedFloatCount) return null
+    val resolvedValues = values ?: return null
+    if (writeIndex != resolvedValues.size) return null // fewer rows than the header promised
 
-    return CubeLut(resolvedSize, values.toFloatArray())
+    return CubeLut(resolvedSize, resolvedValues)
 }
