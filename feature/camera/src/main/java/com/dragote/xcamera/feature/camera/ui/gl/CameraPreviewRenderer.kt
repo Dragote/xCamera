@@ -6,11 +6,13 @@ import android.opengl.EGL14
 import android.opengl.EGLConfig
 import android.opengl.EGLContext
 import android.opengl.EGLDisplay
+import android.opengl.EGLExt
 import android.opengl.EGLSurface
-import android.opengl.GLES20
+import android.opengl.GLES30
 import android.opengl.Matrix
 import android.os.Handler
 import android.os.HandlerThread
+import com.dragote.xcamera.feature.camera.domain.model.CubeLut
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -30,11 +32,18 @@ import java.nio.FloatBuffer
  * deliberately never shares a thread with `CameraController`'s own `backgroundHandler` (which acquires
  * each [Image] and hands it here via `Handler.post` onto [handler] — see `CameraRepository
  * .setPreviewFrameListener`'s own doc). Every entry point below except [start]/[stop]/[updateViewMetrics]
- * /[updateRotation] is expected to run *on* [handler] (either because the caller already posted onto it,
- * or because this class posts internally) — there is deliberately only ever one owner driving this
- * renderer's lifecycle (`ui/CameraScreen`'s `TextureView` attach/detach), unlike an earlier, since-
+ * /[updateRotation]/[setLut] is expected to run *on* [handler] (either because the caller already posted
+ * onto it, or because this class posts internally) — there is deliberately only ever one owner driving
+ * this renderer's lifecycle (`ui/CameraScreen`'s `TextureView` attach/detach), unlike an earlier, since-
  * reverted attempt elsewhere in this module that let two independent lifecycle reactions both touch
  * `Surface` state and crashed; keep it that way.
+ *
+ * **GLES 3.0, not 2.0** (issue #43) — the sole reason for the version bump is native `GL_TEXTURE_3D`
+ * support for LUT sampling (GLES 2.0 has no 3D texture type at all); every other GL call this class
+ * makes would have worked identically under GLES 2.0. Costs nothing device-support-wise: GLES 3.0
+ * only requires API 18+, well under this project's minSdk 26. [android.opengl.GLES30] is a strict
+ * superset of [android.opengl.GLES20] (extends it), so every pre-existing 2D-texture/YUV call below
+ * is unchanged apart from the class name its static calls are qualified against.
  */
 class CameraPreviewRenderer {
 
@@ -58,9 +67,32 @@ class CameraPreviewRenderer {
     private var yTextureUniform = 0
     private var uTextureUniform = 0
     private var vTextureUniform = 0
+    private var lutTextureUniform = 0
+    private var lutEnabledUniform = 0
+    private var lutIntensityUniform = 0
     private var yTextureId = 0
     private var uTextureId = 0
     private var vTextureId = 0
+
+    /** `0` until a LUT has actually been uploaded via [setLut] — [uploadLutIfPending] treats that as
+     *  "no texture object exists yet, allocate one" the same way [textureStorageAllocated] gates the
+     *  Y/U/V planes' own allocate-once behavior. */
+    private var lutTextureId = 0
+
+    /** Set by [setLut] (via [handler]) whenever a *different* [CubeLut] arrives — cleared once
+     *  [uploadLutIfPending] has actually uploaded it, so a LUT is only re-uploaded to the GPU when it
+     *  genuinely changes, not on every intensity-only update (see [pendingLutIntensity]). */
+    private var pendingLut: CubeLut? = null
+    private var lutPendingUpload = false
+
+    /** Whichever [CubeLut] is currently uploaded to [lutTextureId] — `null` means grading is off
+     *  ([lutEnabledUniform] is pushed as `false`) and [lutTextureId] may be stale/unbound. */
+    private var currentLut: CubeLut? = null
+
+    /** 0f..1f blend factor pushed to [lutIntensityUniform] — updated independently of the texture
+     *  upload above so dragging the intensity slider never re-uploads the (potentially large) 3D
+     *  texture, only a single float uniform. */
+    private var pendingLutIntensity = 1f
 
     private var viewWidth = 0
     private var viewHeight = 0
@@ -76,7 +108,7 @@ class CameraPreviewRenderer {
     // dominant per-frame GPU cost otherwise.
     private var textureStorageAllocated = false
 
-    // Reused scratch buffers for the repacked (tightly-packed, stride-stripped) plane data GLES 2.0's
+    // Reused scratch buffers for the repacked (tightly-packed, stride-stripped) plane data GLES's
     // glTexImage2D requires — see repackPlane's own doc for why this repacking is necessary at all.
     // Resized (not reallocated per-frame) only when the source image's dimensions actually change.
     private var yScratch: ByteBuffer? = null
@@ -163,6 +195,24 @@ class CameraPreviewRenderer {
     }
 
     /**
+     * Called from `ui/CameraScreen` whenever `CameraController.activeLut` changes (issue #43) — cheap
+     * to call from any thread, same as [updateViewMetrics]/[updateRotation]. [cubeLut] `null` disables
+     * grading entirely (the preview renders exactly as it does with no LUT); [intensityPercent] (0-100)
+     * is converted to the `[0,1]` blend factor the fragment shader expects. A same-instance [cubeLut]
+     * (structural equality via [CubeLut.equals]) is deliberately *not* re-uploaded — see [pendingLut]'s
+     * own doc for why that matters (an intensity-only slider drag must never re-upload the texture).
+     */
+    fun setLut(cubeLut: CubeLut?, intensityPercent: Int) {
+        renderHandler?.post {
+            if (cubeLut != currentLut) {
+                pendingLut = cubeLut
+                lutPendingUpload = true
+            }
+            pendingLutIntensity = (intensityPercent.coerceIn(0, 100) / 100f)
+        }
+    }
+
+    /**
      * Takes ownership of [image]: always closes it before returning, on every path. Must run on
      * [handler] — `CameraController`'s frame hand-off already guarantees this (see
      * `CameraRepository.setPreviewFrameListener`'s doc), this does not itself post/dispatch.
@@ -198,7 +248,7 @@ class CameraPreviewRenderer {
         eglDisplay = display
 
         val configAttribs = intArrayOf(
-            EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
+            EGL14.EGL_RENDERABLE_TYPE, EGLExt.EGL_OPENGL_ES3_BIT_KHR,
             EGL14.EGL_RED_SIZE, 8,
             EGL14.EGL_GREEN_SIZE, 8,
             EGL14.EGL_BLUE_SIZE, 8,
@@ -214,7 +264,7 @@ class CameraPreviewRenderer {
             return
         }
 
-        val contextAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
+        val contextAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE)
         val context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, contextAttribs, 0)
         if (context == EGL14.EGL_NO_CONTEXT) {
             releaseGl()
@@ -235,30 +285,33 @@ class CameraPreviewRenderer {
         }
 
         programId = buildProgram()
-        positionHandle = GLES20.glGetAttribLocation(programId, "aPosition")
-        texCoordHandle = GLES20.glGetAttribLocation(programId, "aTexCoord")
-        transformHandle = GLES20.glGetUniformLocation(programId, "uTexTransform")
-        yTextureUniform = GLES20.glGetUniformLocation(programId, "uTextureY")
-        uTextureUniform = GLES20.glGetUniformLocation(programId, "uTextureU")
-        vTextureUniform = GLES20.glGetUniformLocation(programId, "uTextureV")
+        positionHandle = GLES30.glGetAttribLocation(programId, "aPosition")
+        texCoordHandle = GLES30.glGetAttribLocation(programId, "aTexCoord")
+        transformHandle = GLES30.glGetUniformLocation(programId, "uTexTransform")
+        yTextureUniform = GLES30.glGetUniformLocation(programId, "uTextureY")
+        uTextureUniform = GLES30.glGetUniformLocation(programId, "uTextureU")
+        vTextureUniform = GLES30.glGetUniformLocation(programId, "uTextureV")
+        lutTextureUniform = GLES30.glGetUniformLocation(programId, "uLut")
+        lutEnabledUniform = GLES30.glGetUniformLocation(programId, "uLutEnabled")
+        lutIntensityUniform = GLES30.glGetUniformLocation(programId, "uLutIntensity")
 
         // Our repacked plane buffers are tightly packed (width bytes/row, no padding) — GL's default
         // 4-byte row alignment would misread row boundaries whenever a plane width isn't a multiple
         // of 4 (chroma planes at odd/2 widths hit this often). Must match the buffers repackPlane
         // produces.
-        GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1)
+        GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
 
         val textureIds = IntArray(3)
-        GLES20.glGenTextures(3, textureIds, 0)
+        GLES30.glGenTextures(3, textureIds, 0)
         yTextureId = textureIds[0]
         uTextureId = textureIds[1]
         vTextureId = textureIds[2]
         for (id in textureIds) {
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, id)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, id)
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
         }
 
         released = false
@@ -277,6 +330,10 @@ class CameraPreviewRenderer {
         programId = 0
         transformDirty = true
         textureStorageAllocated = false
+        lutTextureId = 0
+        currentLut = null
+        pendingLut = null
+        lutPendingUpload = false
         released = true
     }
 
@@ -296,36 +353,46 @@ class CameraPreviewRenderer {
         }
 
         uploadPlanes(image)
+        uploadLutIfPending()
 
-        GLES20.glViewport(0, 0, viewWidth, viewHeight)
-        GLES20.glClearColor(0f, 0f, 0f, 1f)
-        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-        GLES20.glUseProgram(programId)
+        GLES30.glViewport(0, 0, viewWidth, viewHeight)
+        GLES30.glClearColor(0f, 0f, 0f, 1f)
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+        GLES30.glUseProgram(programId)
 
         vertexBuffer.position(0)
-        GLES20.glVertexAttribPointer(positionHandle, 2, GLES20.GL_FLOAT, false, 0, vertexBuffer)
-        GLES20.glEnableVertexAttribArray(positionHandle)
+        GLES30.glVertexAttribPointer(positionHandle, 2, GLES30.GL_FLOAT, false, 0, vertexBuffer)
+        GLES30.glEnableVertexAttribArray(positionHandle)
 
         texCoordBuffer.position(0)
-        GLES20.glVertexAttribPointer(texCoordHandle, 2, GLES20.GL_FLOAT, false, 0, texCoordBuffer)
-        GLES20.glEnableVertexAttribArray(texCoordHandle)
+        GLES30.glVertexAttribPointer(texCoordHandle, 2, GLES30.GL_FLOAT, false, 0, texCoordBuffer)
+        GLES30.glEnableVertexAttribArray(texCoordHandle)
 
-        GLES20.glUniformMatrix4fv(transformHandle, 1, false, transformMatrix, 0)
+        GLES30.glUniformMatrix4fv(transformHandle, 1, false, transformMatrix, 0)
 
-        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, yTextureId)
-        GLES20.glUniform1i(yTextureUniform, 0)
-        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, uTextureId)
-        GLES20.glUniform1i(uTextureUniform, 1)
-        GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, vTextureId)
-        GLES20.glUniform1i(vTextureUniform, 2)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, yTextureId)
+        GLES30.glUniform1i(yTextureUniform, 0)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, uTextureId)
+        GLES30.glUniform1i(uTextureUniform, 1)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, vTextureId)
+        GLES30.glUniform1i(vTextureUniform, 2)
 
-        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        val lutActive = currentLut != null && lutTextureId != 0
+        if (lutActive) {
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE3)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTextureId)
+            GLES30.glUniform1i(lutTextureUniform, 3)
+        }
+        GLES30.glUniform1i(lutEnabledUniform, if (lutActive) 1 else 0)
+        GLES30.glUniform1f(lutIntensityUniform, pendingLutIntensity)
 
-        GLES20.glDisableVertexAttribArray(positionHandle)
-        GLES20.glDisableVertexAttribArray(texCoordHandle)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+
+        GLES30.glDisableVertexAttribArray(positionHandle)
+        GLES30.glDisableVertexAttribArray(texCoordHandle)
 
         EGL14.eglSwapBuffers(eglDisplay, eglSurface)
     }
@@ -401,18 +468,68 @@ class CameraPreviewRenderer {
     }
 
     private fun uploadTexture(textureId: Int, width: Int, height: Int, pixels: ByteBuffer, allocate: Boolean) {
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
         if (allocate) {
-            GLES20.glTexImage2D(
-                GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE, width, height, 0,
-                GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, pixels,
+            GLES30.glTexImage2D(
+                GLES30.GL_TEXTURE_2D, 0, GLES30.GL_LUMINANCE, width, height, 0,
+                GLES30.GL_LUMINANCE, GLES30.GL_UNSIGNED_BYTE, pixels,
             )
         } else {
-            GLES20.glTexSubImage2D(
-                GLES20.GL_TEXTURE_2D, 0, 0, 0, width, height,
-                GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, pixels,
+            GLES30.glTexSubImage2D(
+                GLES30.GL_TEXTURE_2D, 0, 0, 0, width, height,
+                GLES30.GL_LUMINANCE, GLES30.GL_UNSIGNED_BYTE, pixels,
             )
         }
+    }
+
+    /**
+     * Runs on the render thread only (called from [drawFrame]) — [setLut] just flags [pendingLut]/
+     * [lutPendingUpload], the actual `glTexImage3D` upload happens here where a GL context is
+     * guaranteed current. A fresh texture object is always (re-)allocated for a new [CubeLut] rather
+     * than reusing [lutTextureId] via `glTexSubImage3D` the way the Y/U/V planes do — LUT swaps happen
+     * at most a few times per session (a user picking a different preset), nowhere near per-frame, so
+     * the incremental-upload optimization that matters for [uploadTexture] isn't worth the complexity
+     * here. [CubeLut.values] (`[0,1]` floats) are quantized to unsigned bytes — full float precision
+     * isn't visually meaningful for a color-grading LUT and keeps the texture 4x smaller.
+     */
+    private fun uploadLutIfPending() {
+        val lut = pendingLut
+        if (!lutPendingUpload || lut == null) {
+            if (lutPendingUpload && lut == null) {
+                // setLut(null, ...) — grading turned off. Nothing to upload; drawFrame's own
+                // `currentLut != null` check is what actually disables sampling.
+                currentLut = null
+                lutPendingUpload = false
+            }
+            return
+        }
+
+        if (lutTextureId == 0) {
+            val ids = IntArray(1)
+            GLES30.glGenTextures(1, ids, 0)
+            lutTextureId = ids[0]
+        }
+
+        val byteValues = ByteArray(lut.values.size) { i -> (lut.values[i].coerceIn(0f, 1f) * 255f).toInt().toByte() }
+        val buffer = ByteBuffer.allocateDirect(byteValues.size).order(ByteOrder.nativeOrder()).apply {
+            put(byteValues)
+            position(0)
+        }
+
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTextureId)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_WRAP_R, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexImage3D(
+            GLES30.GL_TEXTURE_3D, 0, GLES30.GL_RGB, lut.size, lut.size, lut.size, 0,
+            GLES30.GL_RGB, GLES30.GL_UNSIGNED_BYTE, buffer,
+        )
+
+        currentLut = lut
+        pendingLut = null
+        lutPendingUpload = false
     }
 
     private fun ensureCapacity(existing: ByteBuffer?, size: Int): ByteBuffer {
@@ -468,19 +585,19 @@ class CameraPreviewRenderer {
     }
 
     private fun buildProgram(): Int {
-        val vertexShader = compileShader(GLES20.GL_VERTEX_SHADER, VERTEX_SHADER_SRC)
-        val fragmentShader = compileShader(GLES20.GL_FRAGMENT_SHADER, FRAGMENT_SHADER_SRC)
-        val program = GLES20.glCreateProgram()
-        GLES20.glAttachShader(program, vertexShader)
-        GLES20.glAttachShader(program, fragmentShader)
-        GLES20.glLinkProgram(program)
+        val vertexShader = compileShader(GLES30.GL_VERTEX_SHADER, VERTEX_SHADER_SRC)
+        val fragmentShader = compileShader(GLES30.GL_FRAGMENT_SHADER, FRAGMENT_SHADER_SRC)
+        val program = GLES30.glCreateProgram()
+        GLES30.glAttachShader(program, vertexShader)
+        GLES30.glAttachShader(program, fragmentShader)
+        GLES30.glLinkProgram(program)
         return program
     }
 
     private fun compileShader(type: Int, source: String): Int {
-        val shader = GLES20.glCreateShader(type)
-        GLES20.glShaderSource(shader, source)
-        GLES20.glCompileShader(shader)
+        val shader = GLES30.glCreateShader(type)
+        GLES30.glShaderSource(shader, source)
+        GLES30.glCompileShader(shader)
         return shader
     }
 
@@ -492,11 +609,15 @@ class CameraPreviewRenderer {
                 .put(values)
                 .apply { position(0) }
 
+        // GLSL ES 3.00 (#version 300 es) — attribute/varying become in/out, texture2D() becomes the
+        // overload-resolved texture(), and the fragment shader declares its own `out vec4` instead of
+        // writing gl_FragColor. Functionally identical to the pre-#43 GLES 2.0 shader source otherwise.
         const val VERTEX_SHADER_SRC = """
-            attribute vec4 aPosition;
-            attribute vec2 aTexCoord;
+            #version 300 es
+            in vec4 aPosition;
+            in vec2 aTexCoord;
             uniform mat4 uTexTransform;
-            varying vec2 vTexCoord;
+            out vec2 vTexCoord;
             void main() {
                 gl_Position = aPosition;
                 vTexCoord = (uTexTransform * vec4(aTexCoord, 0.0, 1.0)).xy;
@@ -507,20 +628,39 @@ class CameraPreviewRenderer {
         // texture (U/V centered at 0.5, matching YUV_420_888's unsigned-byte-with-128-bias chroma
         // encoding). Exact color calibration (limited- vs full-range Y, BT.601 vs BT.709 coefficients)
         // is a real on-device tuning item, not verified against hardware yet.
+        //
+        // LUT sampling (issue #43) happens in this same pass, per this project's own technical
+        // decision to avoid a second render pass for the live preview: the converted RGB (clamped to
+        // [0,1] — a GL_TEXTURE_3D sample coordinate outside that range would wrap/clamp unpredictably
+        // depending on GL_TEXTURE_WRAP_* rather than the intended "just use the edge of the LUT cube")
+        // is used directly as the LUT's own sample coordinate — the standard way a 3D color LUT is
+        // applied on GPU: texture(uLut, rgb).rgb *is* the graded color for that input color, no
+        // separate per-channel indexing needed. uLutEnabled false (no LUT selected) skips the sample
+        // entirely rather than sampling a possibly-stale/unbound uLutTextureId.
         const val FRAGMENT_SHADER_SRC = """
+            #version 300 es
             precision mediump float;
-            varying vec2 vTexCoord;
+            in vec2 vTexCoord;
             uniform sampler2D uTextureY;
             uniform sampler2D uTextureU;
             uniform sampler2D uTextureV;
+            uniform highp sampler3D uLut;
+            uniform bool uLutEnabled;
+            uniform float uLutIntensity;
+            out vec4 fragColor;
             void main() {
-                float y = texture2D(uTextureY, vTexCoord).r;
-                float u = texture2D(uTextureU, vTexCoord).r - 0.5;
-                float v = texture2D(uTextureV, vTexCoord).r - 0.5;
+                float y = texture(uTextureY, vTexCoord).r;
+                float u = texture(uTextureU, vTexCoord).r - 0.5;
+                float v = texture(uTextureV, vTexCoord).r - 0.5;
                 float r = y + 1.402 * v;
                 float g = y - 0.344136 * u - 0.714136 * v;
                 float b = y + 1.772 * u;
-                gl_FragColor = vec4(r, g, b, 1.0);
+                vec3 color = clamp(vec3(r, g, b), 0.0, 1.0);
+                if (uLutEnabled) {
+                    vec3 graded = texture(uLut, color).rgb;
+                    color = mix(color, graded, uLutIntensity);
+                }
+                fragColor = vec4(color, 1.0);
             }
         """
     }

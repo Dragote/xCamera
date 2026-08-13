@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Handler
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.data.CameraController
+import com.dragote.xcamera.feature.camera.domain.model.ActiveLut
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
@@ -14,17 +15,24 @@ import com.dragote.xcamera.feature.camera.domain.model.HistogramData
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
+import com.dragote.xcamera.feature.camera.domain.model.parseCubeLut
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
+import com.dragote.xcamera.shared.common.domain.repository.LutRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class CameraRepositoryImpl @Inject constructor(
     private val cameraController: CameraController,
+    private val lutRepository: LutRepository,
 ) : CameraRepository {
 
     override suspend fun bindCamera(
@@ -77,6 +85,26 @@ class CameraRepositoryImpl @Inject constructor(
     override fun observeFocusDistance(): Flow<Float?> = cameraController.autoFocusDistanceDiopters
 
     override fun observeAfConvergenceState(): Flow<AfConvergenceState?> = cameraController.afConvergenceState
+
+    /**
+     * Looks [lutId] up in [lutRepository]'s current list (a one-shot [first] read, not a live
+     * subscription — LUT selection changes are infrequent user actions, not something that needs to
+     * react to the *list* changing mid-resolution), then reads + parses that preset's file off disk.
+     * `null` (either `lutId` itself, an id not present in the list, an unreadable file, or a malformed
+     * `.cube`) always means "no LUT" to [CameraController.setLut] — never throws.
+     */
+    override suspend fun setLut(lutId: String?, intensityPercent: Int) {
+        val cubeLut = lutId?.let { id ->
+            lutRepository.observeLuts().first().find { it.id == id }
+        }?.let { preset ->
+            withContext(Dispatchers.IO) {
+                runCatching { File(preset.filePath).readText() }.getOrNull()
+            }?.let { content -> parseCubeLut(content) }
+        }
+        cameraController.setLut(cubeLut, intensityPercent)
+    }
+
+    override fun observeActiveLut(): Flow<ActiveLut?> = cameraController.activeLut
 
     override suspend fun takePhoto(): Result<Uri, DataError.Local> = try {
         Result.Success(cameraController.takePhoto())

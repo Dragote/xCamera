@@ -4,6 +4,7 @@ import android.media.Image
 import android.net.Uri
 import android.os.Handler
 import androidx.lifecycle.LifecycleOwner
+import com.dragote.xcamera.feature.camera.domain.model.ActiveLut
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
@@ -144,6 +145,22 @@ interface CameraRepository {
      * before the first frame lands, or on a device that doesn't report this key at all.
      */
     fun observeAfConvergenceState(): Flow<AfConvergenceState?>
+
+    /**
+     * Resolves [lutId] (a `CameraSettings.selectedLutId`, `null` meaning "off") to an actual parsed
+     * LUT via `LutRepository` (`shared:common`, implemented by `feature:settings`) and
+     * `CubeLutParser`, then caches it on `CameraController` for both the live preview (see
+     * [observeActiveLut]) and the next still capture ([takePhoto]) — issue #43. `suspend` since
+     * resolving means reading + parsing a file off disk.
+     */
+    suspend fun setLut(lutId: String?, intensityPercent: Int)
+
+    /**
+     * The currently active (already-resolved) LUT + blend intensity, meant to be collected by
+     * `ui/CameraScreen` to push into `CameraPreviewRenderer.setLut` — mirrors [observeZebraMask]'s own
+     * "own `Flow`, not folded into a UI-state object" reasoning. `null` means grading is off.
+     */
+    fun observeActiveLut(): Flow<ActiveLut?>
 
     suspend fun takePhoto(): Result<Uri, DataError.Local>
 

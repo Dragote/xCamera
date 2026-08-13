@@ -153,6 +153,12 @@ class CameraViewModel @Inject constructor(
     fun setManualFocusDistance(distanceDiopters: Float?) =
         cameraRepository.setManualFocusDistance(distanceDiopters)
 
+    /** Resolves and caches [CameraUiState]-adjacent LUT selection (issue #43) — see
+     *  `CameraRepository.setLut`'s own doc. `ui/CameraScreen` calls this from a `LaunchedEffect` keyed
+     *  on [cameraSettings]'s `selectedLutId`/`lutIntensityPercent`, mirroring how `setFlashMode` is
+     *  driven off `uiState.flashMode` there. */
+    suspend fun setLut(lutId: String?, intensityPercent: Int) = cameraRepository.setLut(lutId, intensityPercent)
+
     suspend fun takePhoto(): Result<Uri, DataError.Local> = cameraRepository.takePhoto()
 
     fun listBackLenses(): List<CameraLens> = cameraRepository.listBackLenses()

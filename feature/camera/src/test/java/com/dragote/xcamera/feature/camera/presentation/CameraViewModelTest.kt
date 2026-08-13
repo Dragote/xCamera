@@ -880,6 +880,15 @@ class CameraViewModelTest {
     }
 
     @Test
+    fun `setLut delegates to the repository`() = runTest {
+        coEvery { cameraRepository.setLut("abc", 70) } returns Unit
+
+        viewModel.setLut("abc", 70)
+
+        coVerify { cameraRepository.setLut("abc", 70) }
+    }
+
+    @Test
     fun `onManualFocusCapabilityChanged reflects a supported lens`() = runTest {
         val capability = ManualFocusCapability(maxFocusDistanceDiopters = 6.5f)
 

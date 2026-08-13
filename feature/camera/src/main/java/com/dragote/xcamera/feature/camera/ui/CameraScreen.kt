@@ -440,6 +440,23 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
         viewModel.setFlashMode(uiState.flashMode)
     }
 
+    // Issue #43 — resolves CameraSettings.selectedLutId/lutIntensityPercent into an actual parsed LUT
+    // (see CameraRepository.setLut's own doc) whenever either changes. The *result* is pushed into
+    // CameraPreviewRenderer separately, via the observeActiveLut collector below — this effect only
+    // triggers the resolve/cache step, mirroring how uiState.flashMode drives setFlashMode above.
+    LaunchedEffect(cameraSettings.selectedLutId, cameraSettings.lutIntensityPercent) {
+        viewModel.setLut(cameraSettings.selectedLutId, cameraSettings.lutIntensityPercent)
+    }
+
+    // Mirrors the effect above but on the *resolved* side: CameraController.activeLut only updates
+    // once setLut has actually finished reading+parsing the LUT file, so this is what genuinely drives
+    // the live preview's own LUT texture — a separate collector (not chained onto the LaunchedEffect
+    // above) since CameraPreviewRenderer is owned directly by this composable, not by the ViewModel.
+    val activeLut by cameraRepository.observeActiveLut().collectAsStateWithLifecycle(initialValue = null)
+    LaunchedEffect(activeLut) {
+        renderer.setLut(activeLut?.cubeLut, activeLut?.intensityPercent ?: 0)
+    }
+
     // MANUAL_SENSOR/SENSOR_INFO_SENSITIVITY_RANGE/SENSOR_INFO_EXPOSURE_TIME_RANGE and
     // CONTROL_AE_COMPENSATION_RANGE/CONTROL_AE_COMPENSATION_STEP are all per-physical-lens, not
     // per-device, so both re-query on every lens switch rather than once — see

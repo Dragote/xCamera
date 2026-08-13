@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Handler
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.data.CameraController
+import com.dragote.xcamera.feature.camera.domain.model.ActiveLut
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
@@ -13,6 +14,7 @@ import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
+import com.dragote.xcamera.shared.common.domain.repository.LutRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
 import io.mockk.coEvery
@@ -21,6 +23,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -28,7 +31,10 @@ import org.junit.Test
 class CameraRepositoryImplTest {
 
     private val cameraController = mockk<CameraController>()
-    private val repository = CameraRepositoryImpl(cameraController)
+    private val lutRepository = mockk<LutRepository> {
+        every { observeLuts() } returns flowOf(emptyList())
+    }
+    private val repository = CameraRepositoryImpl(cameraController, lutRepository)
 
     @Test
     fun `bindCamera delegates to the controller`() = runTest {
@@ -241,5 +247,32 @@ class CameraRepositoryImplTest {
         every { cameraController.afConvergenceState } returns afConvergenceStateFlow
 
         assertEquals(afConvergenceStateFlow, repository.observeAfConvergenceState())
+    }
+
+    @Test
+    fun `setLut with a null id clears the controller's active LUT`() = runTest {
+        every { cameraController.setLut(null, 50) } returns Unit
+
+        repository.setLut(null, 50)
+
+        verify { cameraController.setLut(null, 50) }
+    }
+
+    @Test
+    fun `setLut with an unknown id resolves to no LUT`() = runTest {
+        every { lutRepository.observeLuts() } returns flowOf(emptyList())
+        every { cameraController.setLut(null, 80) } returns Unit
+
+        repository.setLut("missing-id", 80)
+
+        verify { cameraController.setLut(null, 80) }
+    }
+
+    @Test
+    fun `observeActiveLut delegates to the controller's activeLut flow`() {
+        val activeLutFlow = MutableStateFlow<ActiveLut?>(null)
+        every { cameraController.activeLut } returns activeLutFlow
+
+        assertEquals(activeLutFlow, repository.observeActiveLut())
     }
 }
