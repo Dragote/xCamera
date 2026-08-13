@@ -86,4 +86,24 @@ class LutLocalDataSourceTest {
         assertTrue(java.io.File(preset.filePath).exists())
         assertEquals(listOf(preset), dataSource.listLuts())
     }
+
+    @Test
+    fun `deleteLut removes the backing file and reports success`() {
+        val uri = mockk<Uri>()
+        stubSourceContent(uri, "LUT_3D_SIZE 2\n".toByteArray())
+        val preset = dataSource.importLut(uri, "My LUT")
+
+        val deleted = dataSource.deleteLut(preset.filePath)
+
+        assertTrue(deleted)
+        assertTrue(dataSource.listLuts().isEmpty())
+        assertTrue(java.io.File(preset.filePath).exists().not())
+    }
+
+    @Test
+    fun `deleteLut on a missing file reports failure without throwing`() {
+        val deleted = dataSource.deleteLut(java.io.File(temporaryFolder.root, "luts/nonexistent.cube").absolutePath)
+
+        assertTrue(deleted.not())
+    }
 }

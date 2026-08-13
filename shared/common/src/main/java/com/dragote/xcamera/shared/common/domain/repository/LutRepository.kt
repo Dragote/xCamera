@@ -26,9 +26,18 @@ interface LutRepository {
 
     /**
      * Copies the SAF-picked `.cube` file at [sourceUri] into app-private storage under [displayName],
-     * returning the resulting [LutPreset] on success. The only operation on this interface with a
-     * real, user-facing failure mode (the source can't be read, or the copy fails) — mirrors
-     * `CameraRepository.takePhoto`'s own `Result`-wrapping rationale.
+     * returning the resulting [LutPreset] on success. Mirrors `CameraRepository.takePhoto`'s own
+     * `Result`-wrapping rationale (a real, user-facing failure mode: the source can't be read, or the
+     * copy fails).
      */
     suspend fun importLut(sourceUri: Uri, displayName: String): Result<LutPreset, DataError.Local>
+
+    /**
+     * Deletes the imported LUT identified by [id] — removes its backing `.cube` file and drops it from
+     * [observeLuts]'s list. `Result.Error` for an unknown [id] or a file-deletion failure, mirroring
+     * [importLut]'s own `Result`-wrapping. Callers (`feature:settings`' `SettingsViewModel`) are
+     * responsible for clearing `CameraSettingsRepository.setSelectedLutId` first if [id] is the
+     * currently-selected LUT — this call has no visibility into that setting on its own.
+     */
+    suspend fun deleteLut(id: String): Result<Unit, DataError.Local>
 }

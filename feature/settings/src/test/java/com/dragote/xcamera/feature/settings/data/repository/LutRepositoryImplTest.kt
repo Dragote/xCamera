@@ -66,4 +66,44 @@ class LutRepositoryImplTest {
 
         assertTrue(result is Result.Error)
     }
+
+    @Test
+    fun `deleteLut removes the preset from the list on success`() = runTest {
+        val preset = LutPreset(id = "1", displayName = "Portra", filePath = "/luts/1.cube")
+        every { localDataSource.listLuts() } returns listOf(preset)
+        every { localDataSource.deleteLut(preset.filePath) } returns true
+
+        repository.observeLuts().test {
+            assertEquals(listOf(preset), awaitItem())
+
+            val result = repository.deleteLut("1")
+            assertEquals(Result.Success(Unit), result)
+            assertEquals(emptyList<LutPreset>(), awaitItem())
+        }
+    }
+
+    @Test
+    fun `deleteLut for an unknown id returns an error without touching the list`() = runTest {
+        every { localDataSource.listLuts() } returns emptyList()
+
+        val result = repository.deleteLut("missing")
+
+        assertTrue(result is Result.Error)
+        verify(exactly = 0) { localDataSource.deleteLut(any()) }
+    }
+
+    @Test
+    fun `deleteLut wraps a failed on-disk delete as a Result Error and keeps the list unchanged`() = runTest {
+        val preset = LutPreset(id = "1", displayName = "Portra", filePath = "/luts/1.cube")
+        every { localDataSource.listLuts() } returns listOf(preset)
+        every { localDataSource.deleteLut(preset.filePath) } returns false
+
+        repository.observeLuts().test {
+            assertEquals(listOf(preset), awaitItem())
+
+            val result = repository.deleteLut("1")
+            assertTrue(result is Result.Error)
+            expectNoEvents()
+        }
+    }
 }

@@ -56,4 +56,17 @@ class LutRepositoryImpl @Inject constructor(
             // The SAF grant for sourceUri can be revoked/expired between pick and import.
             Result.Error(DataError.Local.UNKNOWN)
         }
+
+    /**
+     * `Result.Error` for an unknown [id] (nothing to delete) or a failed on-disk delete — either way
+     * [lutsFlow] is only updated once the file itself is actually gone, so a failed delete never leaves
+     * [observeLuts] out of sync with what's really on disk.
+     */
+    override suspend fun deleteLut(id: String): Result<Unit, DataError.Local> {
+        val preset = lutsFlow.value.find { it.id == id } ?: return Result.Error(DataError.Local.UNKNOWN)
+        val deleted = withContext(Dispatchers.IO) { localDataSource.deleteLut(preset.filePath) }
+        if (!deleted) return Result.Error(DataError.Local.UNKNOWN)
+        lutsFlow.value = lutsFlow.value.filterNot { it.id == id }
+        return Result.Success(Unit)
+    }
 }

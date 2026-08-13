@@ -62,6 +62,14 @@ class LutLocalDataSource @Inject constructor(
         return LutPreset(id = id, displayName = sanitizedDisplayName, filePath = file.absolutePath)
     }
 
+    /**
+     * Deletes the backing `.cube` file at [filePath] (see [LutPreset.filePath]). Returns whether the
+     * file was actually deleted — `false` (not an exception) for a missing/already-gone file or a
+     * plain OS-level delete failure, matching [File.delete]'s own contract; `LutRepositoryImpl` is what
+     * turns that into a [com.dragote.xcamera.shared.common.domain.result.Result.Error].
+     */
+    fun deleteLut(filePath: String): Boolean = File(filePath).delete()
+
     private fun presetFromFile(file: File): LutPreset? {
         val nameWithoutExtension = file.nameWithoutExtension
         val separatorIndex = nameWithoutExtension.indexOf(FileNameSeparator)
