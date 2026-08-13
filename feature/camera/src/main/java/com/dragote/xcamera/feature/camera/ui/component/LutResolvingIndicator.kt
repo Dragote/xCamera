@@ -28,7 +28,6 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
-import kotlin.math.max
 
 /**
  * Shown over the viewfinder while `CameraViewModel.isLutResolving` is true (issue #43 follow-up) — the
@@ -52,11 +51,11 @@ import kotlin.math.max
  * the content left the *background* box sized/shaped for the un-rotated (wide, short) layout, so at a
  * 90°/270° quadrant the now-vertically-oriented text visibly overflowed past a background that never
  * itself reshaped to match (confirmed on-device: "the background just moves, without flipping, and the
- * text doesn't fit"). [RotatingBadge] fixes this by reserving a *square* footprint (side length = the
- * pill's own natural un-rotated width, always its longer dimension for a wide/short text pill) from its
- * parent instead of the pill's actual non-square bounds, then rotating the entire pill — background,
- * clip, padding, text — as a single image within that square; since the square's side already covers
- * the pill's longer dimension, the pill can never exceed the reserved footprint at any rotation.
+ * text doesn't fit"). [RotatingBadge] fixes this by reserving a footprint from its parent that's
+ * *transposed* (not just squared up) to match the rotation — see [RotatingBadge]'s own doc for why a
+ * square reservation was tried first and rejected (it left a large empty gap around the pill at 0°/180°)
+ * — then rotates the entire pill — background, clip, padding, text — as a single image within that
+ * exactly-sized footprint.
  *
  * [modifier] should size this to the full area it's allowed to roam across corners of (e.g.
  * `Modifier.fillMaxSize()` over the whole viewfinder), matching [ViewfinderThumbnailChip]'s own calling
@@ -112,21 +111,32 @@ fun LutResolvingIndicator(visible: Boolean, modifier: Modifier = Modifier) {
 private val CornerInset = 12.dp
 
 /**
- * Measures [content] at its own natural (unconstrained) size, then reports a *square* footprint — side
- * length = the larger of that natural width/height — to this composable's own parent, instead of
- * [content]'s real (non-square) size, and rotates+centers [content] by [rotationDegrees] within that
- * square. See [LutResolvingIndicator]'s own doc for why: a wide/short pill's background needs to rotate
- * together with its text, and a square reservation is what keeps the whole rotated pill inside its
- * allotted space at every quadrant without needing to separately re-layout the pill's own content for
- * each orientation.
+ * Measures [content] at its own natural (unconstrained) size, then reports a footprint to this
+ * composable's own parent that's *transposed* (width/height swapped) whenever [rotationDegrees] is a
+ * quarter turn (90°/270°) — exactly [content]'s real un-rotated size otherwise — and rotates+centers
+ * [content] within that footprint. An *always-square* (side = the larger natural dimension) footprint
+ * was tried first and rejected: it left a large, visibly wrong gap around the pill at 0°/180° (a wide,
+ * short pill centered inside a square sized to its own width leaves tall empty margins above/below it)
+ * — confirmed on-device. Transposing instead of squaring reserves exactly the pill's own bounding box at
+ * every quadrant (identical to its natural size at 0°/180°, swapped at 90°/270°), so there's never slack
+ * space to leave a gap, while still guaranteeing the rotated pill can't exceed its reserved footprint —
+ * `rotationDegrees == 90f`/`270f` is a safe exact-float comparison here the same way
+ * `HistogramOverlay`'s own `HistogramMarks.quarterTurned` already relies on it: both values only ever
+ * come from [counterRotationDegrees]/[rememberDeviceOrientationQuadrant]'s discrete quadrant snapping,
+ * never arithmetic that could introduce floating-point drift.
  */
 @Composable
 private fun RotatingBadge(rotationDegrees: Float, content: @Composable () -> Unit) {
     Layout(content = { Box(modifier = Modifier.graphicsLayer { rotationZ = rotationDegrees }) { content() } }) { measurables, _ ->
         val placeable = measurables.first().measure(Constraints())
-        val side = max(placeable.width, placeable.height)
-        layout(side, side) {
-            placeable.place(x = (side - placeable.width) / 2, y = (side - placeable.height) / 2)
+        val quarterTurned = rotationDegrees == 90f || rotationDegrees == 270f
+        val footprintWidth = if (quarterTurned) placeable.height else placeable.width
+        val footprintHeight = if (quarterTurned) placeable.width else placeable.height
+        layout(footprintWidth, footprintHeight) {
+            placeable.place(
+                x = (footprintWidth - placeable.width) / 2,
+                y = (footprintHeight - placeable.height) / 2,
+            )
         }
     }
 }
