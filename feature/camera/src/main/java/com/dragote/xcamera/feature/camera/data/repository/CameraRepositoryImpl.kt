@@ -97,9 +97,13 @@ class CameraRepositoryImpl @Inject constructor(
         val cubeLut = lutId?.let { id ->
             lutRepository.observeLuts().first().find { it.id == id }
         }?.let { preset ->
+            // Parsing (parseCubeLut, not just the file read) must stay inside this withContext — a
+            // 33+-size .cube file is tens of thousands of data rows, and this is called from
+            // CameraScreen's LaunchedEffect on the main thread; parsing outside the IO dispatcher
+            // switch previously froze the UI (confirmed: hangs hard when applying a LUT).
             withContext(Dispatchers.IO) {
-                runCatching { File(preset.filePath).readText() }.getOrNull()
-            }?.let { content -> parseCubeLut(content) }
+                runCatching { File(preset.filePath).readText() }.getOrNull()?.let { content -> parseCubeLut(content) }
+            }
         }
         cameraController.setLut(cubeLut, intensityPercent)
     }

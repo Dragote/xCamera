@@ -25,6 +25,8 @@ package com.dragote.xcamera.feature.camera.domain.model
  * a data row that isn't exactly three parseable floats, or a final row count that doesn't match
  * `size^3` exactly — a corrupt/unsupported file should just fail to import, not crash the caller.
  */
+private val whitespaceRegex = Regex("\\s+")
+
 fun parseCubeLut(content: String): CubeLut? {
     var size: Int? = null
     val values = ArrayList<Float>()
@@ -47,7 +49,7 @@ fun parseCubeLut(content: String): CubeLut? {
             "LUT_1D_SIZE" -> return null // a different file format entirely, not a 3D LUT.
             else -> {
                 // Expected to be a data row: "r g b".
-                val components = line.split(Regex("\\s+"))
+                val components = line.split(whitespaceRegex)
                 if (components.size != 3) return null
                 val row = components.map { it.toFloatOrNull() ?: return null }
                 values.addAll(row)
