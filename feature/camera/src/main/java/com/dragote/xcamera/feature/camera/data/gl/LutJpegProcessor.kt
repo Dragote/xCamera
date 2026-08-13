@@ -7,6 +7,7 @@ import android.opengl.EGLConfig
 import android.opengl.EGLExt
 import android.opengl.GLES30
 import android.opengl.GLUtils
+import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import com.dragote.xcamera.feature.camera.domain.model.CubeLut
 import java.io.ByteArrayInputStream
@@ -270,6 +271,11 @@ class LutJpegProcessor {
         GLES30.glAttachShader(program, vertexShader)
         GLES30.glAttachShader(program, fragmentShader)
         GLES30.glLinkProgram(program)
+        val linkStatus = IntArray(1)
+        GLES30.glGetProgramiv(program, GLES30.GL_LINK_STATUS, linkStatus, 0)
+        if (linkStatus[0] == GLES30.GL_FALSE) {
+            Log.e(TAG, "Program link failed: ${GLES30.glGetProgramInfoLog(program)}")
+        }
         return program
     }
 
@@ -277,6 +283,11 @@ class LutJpegProcessor {
         val shader = GLES30.glCreateShader(type)
         GLES30.glShaderSource(shader, source)
         GLES30.glCompileShader(shader)
+        val compileStatus = IntArray(1)
+        GLES30.glGetShaderiv(shader, GLES30.GL_COMPILE_STATUS, compileStatus, 0)
+        if (compileStatus[0] == GLES30.GL_FALSE) {
+            Log.e(TAG, "Shader compile failed (type=$type): ${GLES30.glGetShaderInfoLog(shader)}")
+        }
         return shader
     }
 
@@ -288,9 +299,14 @@ class LutJpegProcessor {
             .apply { position(0) }
 
     private companion object {
+        private const val TAG = "LutJpegProcessor"
         const val JpegQuality = 92
 
-        const val VERTEX_SHADER_SRC = """
+        // See CameraPreviewRenderer's own doc on this same pattern: #version must be the literal first
+        // characters handed to glShaderSource, so trimIndent() strips the leading blank line a raw
+        // triple-quoted string would otherwise carry — confirmed on-device (Adreno, Pixel 9 Pro) that a
+        // preceding blank line silently fails shader compilation on this class's identical sibling.
+        val VERTEX_SHADER_SRC = """
             #version 300 es
             in vec4 aPosition;
             in vec2 aTexCoord;
@@ -299,9 +315,9 @@ class LutJpegProcessor {
                 gl_Position = aPosition;
                 vTexCoord = aTexCoord;
             }
-        """
+        """.trimIndent()
 
-        const val FRAGMENT_SHADER_SRC = """
+        val FRAGMENT_SHADER_SRC = """
             #version 300 es
             precision mediump float;
             in vec2 vTexCoord;
@@ -314,6 +330,6 @@ class LutJpegProcessor {
                 vec3 graded = texture(uLut, clamp(color, 0.0, 1.0)).rgb;
                 fragColor = vec4(mix(color, graded, uLutIntensity), 1.0);
             }
-        """
+        """.trimIndent()
     }
 }

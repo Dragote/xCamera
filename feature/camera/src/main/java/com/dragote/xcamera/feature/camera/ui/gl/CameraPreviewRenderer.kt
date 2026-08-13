@@ -12,6 +12,7 @@ import android.opengl.GLES30
 import android.opengl.Matrix
 import android.os.Handler
 import android.os.HandlerThread
+import android.util.Log
 import com.dragote.xcamera.feature.camera.domain.model.CubeLut
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -591,17 +592,33 @@ class CameraPreviewRenderer {
         GLES30.glAttachShader(program, vertexShader)
         GLES30.glAttachShader(program, fragmentShader)
         GLES30.glLinkProgram(program)
+        val linkStatus = IntArray(1)
+        GLES30.glGetProgramiv(program, GLES30.GL_LINK_STATUS, linkStatus, 0)
+        if (linkStatus[0] == GLES30.GL_FALSE) {
+            Log.e(TAG, "Program link failed: ${GLES30.glGetProgramInfoLog(program)}")
+        }
         return program
     }
 
+    /** Logs (rather than throws) on a compile failure — an unusable [programId] still surfaces
+     *  visibly downstream as a black preview via [buildProgram]'s own link-status check, but a
+     *  hard crash here would take the whole render thread down for what's recoverable-if-fixed
+     *  shader source. */
     private fun compileShader(type: Int, source: String): Int {
         val shader = GLES30.glCreateShader(type)
         GLES30.glShaderSource(shader, source)
         GLES30.glCompileShader(shader)
+        val compileStatus = IntArray(1)
+        GLES30.glGetShaderiv(shader, GLES30.GL_COMPILE_STATUS, compileStatus, 0)
+        if (compileStatus[0] == GLES30.GL_FALSE) {
+            Log.e(TAG, "Shader compile failed (type=$type): ${GLES30.glGetShaderInfoLog(shader)}")
+        }
         return shader
     }
 
     private companion object {
+        private const val TAG = "CameraPreviewRenderer"
+
         fun directFloatBuffer(values: FloatArray): FloatBuffer =
             ByteBuffer.allocateDirect(values.size * Float.SIZE_BYTES)
                 .order(ByteOrder.nativeOrder())
@@ -612,7 +629,12 @@ class CameraPreviewRenderer {
         // GLSL ES 3.00 (#version 300 es) — attribute/varying become in/out, texture2D() becomes the
         // overload-resolved texture(), and the fragment shader declares its own `out vec4` instead of
         // writing gl_FragColor. Functionally identical to the pre-#43 GLES 2.0 shader source otherwise.
-        const val VERTEX_SHADER_SRC = """
+        // #version must be the literal first characters of the source — some GLES drivers (confirmed
+        // on-device: Adreno, Pixel 9 Pro) reject it if preceded by so much as a blank line, even though
+        // the spec technically allows leading whitespace/comments. trimIndent() strips both the leading
+        // blank line and the Kotlin-source indentation this raw string would otherwise carry, so
+        // #version genuinely starts the string handed to glShaderSource.
+        val VERTEX_SHADER_SRC = """
             #version 300 es
             in vec4 aPosition;
             in vec2 aTexCoord;
@@ -622,7 +644,7 @@ class CameraPreviewRenderer {
                 gl_Position = aPosition;
                 vTexCoord = (uTexTransform * vec4(aTexCoord, 0.0, 1.0)).xy;
             }
-        """
+        """.trimIndent()
 
         // Standard BT.601-ish YUV->RGB conversion, Y/U/V each sampled from their own GL_LUMINANCE
         // texture (U/V centered at 0.5, matching YUV_420_888's unsigned-byte-with-128-bias chroma
@@ -637,7 +659,7 @@ class CameraPreviewRenderer {
         // applied on GPU: texture(uLut, rgb).rgb *is* the graded color for that input color, no
         // separate per-channel indexing needed. uLutEnabled false (no LUT selected) skips the sample
         // entirely rather than sampling a possibly-stale/unbound uLutTextureId.
-        const val FRAGMENT_SHADER_SRC = """
+        val FRAGMENT_SHADER_SRC = """
             #version 300 es
             precision mediump float;
             in vec2 vTexCoord;
@@ -662,6 +684,6 @@ class CameraPreviewRenderer {
                 }
                 fragColor = vec4(color, 1.0);
             }
-        """
+        """.trimIndent()
     }
 }
