@@ -6,6 +6,8 @@ import android.net.Uri
 import android.os.Handler
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.data.CameraController
+import com.dragote.xcamera.feature.camera.data.LutFileReader
+import com.dragote.xcamera.feature.camera.domain.model.ActiveLut
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
@@ -13,22 +15,34 @@ import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
+import com.dragote.xcamera.shared.common.domain.repository.LutRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
+import com.dragote.xcamera.shared.common.domain.model.CubeLut
+import com.dragote.xcamera.shared.common.domain.model.LutPreset
+import com.dragote.xcamera.shared.common.domain.model.toBinary
+import app.cash.turbine.test
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class CameraRepositoryImplTest {
 
     private val cameraController = mockk<CameraController>()
-    private val repository = CameraRepositoryImpl(cameraController)
+    private val lutRepository = mockk<LutRepository> {
+        every { observeLuts() } returns flowOf(emptyList())
+    }
+    private val lutFileReader = mockk<LutFileReader>()
+    private val repository = CameraRepositoryImpl(cameraController, lutRepository, lutFileReader)
 
     @Test
     fun `bindCamera delegates to the controller`() = runTest {
@@ -242,4 +256,176 @@ class CameraRepositoryImplTest {
 
         assertEquals(afConvergenceStateFlow, repository.observeAfConvergenceState())
     }
+
+    @Test
+    fun `setLut with a null id clears the controller's active LUT`() = runTest {
+        every { cameraController.setLut(any(), null, 50) } returns Unit
+
+        repository.setLut(null, 50)
+
+        verify { cameraController.setLut(any(), null, 50) }
+    }
+
+    @Test
+    fun `setLut with an unknown id resolves to no LUT`() = runTest {
+        every { lutRepository.observeLuts() } returns flowOf(emptyList())
+        every { cameraController.setLut(any(), null, 80) } returns Unit
+
+        repository.setLut("missing-id", 80)
+
+        verify { cameraController.setLut(any(), null, 80) }
+    }
+
+    @Test
+    fun `observeActiveLut delegates to the controller's activeLut flow`() {
+        val activeLutFlow = MutableStateFlow<ActiveLut?>(null)
+        every { cameraController.activeLut } returns activeLutFlow
+
+        assertEquals(activeLutFlow, repository.observeActiveLut())
+    }
+
+    @Test
+    fun `setLut sets the resolving id before the parse work and clears it once done`() = runTest {
+        val preset = LutPreset(id = "1", displayName = "Test", filePath = "/nonexistent/path.cube")
+        every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
+        every { lutFileReader.readBytes(preset.filePath) } returns null
+        var resolvingIdDuringSetLut: String? = "not-captured"
+        every { cameraController.setLut(any(), any(), any()) } answers {
+            resolvingIdDuringSetLut = (repository.observeResolvingLutId() as StateFlow<String?>).value
+        }
+
+        repository.setLut("1", 50)
+
+        assertEquals("1", resolvingIdDuringSetLut)
+        assertNull((repository.observeResolvingLutId() as StateFlow<String?>).value)
+    }
+
+    @Test
+    fun `setLut with a null id never surfaces a resolving id`() = runTest {
+        every { cameraController.setLut(any(), null, 50) } returns Unit
+
+        repository.setLut(null, 50)
+
+        assertNull((repository.observeResolvingLutId() as StateFlow<String?>).value)
+    }
+
+    @Test
+    fun `setLut with an unknown id still toggles the resolving id around the call`() = runTest {
+        every { lutRepository.observeLuts() } returns flowOf(emptyList())
+        var resolvingIdDuringSetLut: String? = "not-captured"
+        every { cameraController.setLut(any(), null, 80) } answers {
+            resolvingIdDuringSetLut = (repository.observeResolvingLutId() as StateFlow<String?>).value
+        }
+
+        repository.setLut("missing-id", 80)
+
+        assertEquals("missing-id", resolvingIdDuringSetLut)
+        assertNull((repository.observeResolvingLutId() as StateFlow<String?>).value)
+    }
+
+    @Test
+    fun `observeResolvingLutId starts out null`() {
+        assertNull((repository.observeResolvingLutId() as StateFlow<String?>).value)
+    }
+
+    @Test
+    fun `setLut with an id not found in the LUT list emits a resolution failure`() = runTest {
+        every { lutRepository.observeLuts() } returns flowOf(emptyList())
+        every { cameraController.setLut(any(), null, 80) } returns Unit
+
+        repository.observeResolutionFailures().test {
+            repository.setLut("missing-id", 80)
+            assertEquals("missing-id", awaitItem())
+        }
+    }
+
+    @Test
+    fun `setLut with a preset whose file can't be read emits a resolution failure`() = runTest {
+        val preset = LutPreset(id = "1", displayName = "Test", filePath = "/nonexistent/path.cube")
+        every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
+        every { lutFileReader.readBytes(preset.filePath) } returns null
+        every { cameraController.setLut(any(), null, 50) } returns Unit
+
+        repository.observeResolutionFailures().test {
+            repository.setLut("1", 50)
+            assertEquals("1", awaitItem())
+        }
+    }
+
+    @Test
+    fun `setLut with malformed cube content emits a resolution failure`() = runTest {
+        val preset = LutPreset(id = "2", displayName = "Malformed", filePath = "/luts/2.lutbin")
+        every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
+        every { lutFileReader.readBytes(preset.filePath) } returns "not a valid lutbin file".toByteArray()
+        every { cameraController.setLut(any(), null, 50) } returns Unit
+
+        repository.observeResolutionFailures().test {
+            repository.setLut("2", 50)
+            assertEquals("2", awaitItem())
+        }
+    }
+
+    @Test
+    fun `setLut with a null id never emits a resolution failure`() = runTest {
+        every { cameraController.setLut(any(), null, 50) } returns Unit
+
+        repository.observeResolutionFailures().test {
+            repository.setLut(null, 50)
+            expectNoEvents()
+        }
+    }
+
+    @Test
+    fun `setLut that successfully resolves a LUT doesn't emit a resolution failure`() = runTest {
+        val preset = LutPreset(id = "3", displayName = "Valid", filePath = "/luts/3.cube")
+        every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
+        every { lutFileReader.readBytes(preset.filePath) } returns validCubeBytes
+        every { cameraController.setLut(any(), any(), 50) } returns Unit
+
+        repository.observeResolutionFailures().test {
+            repository.setLut("3", 50)
+            expectNoEvents()
+        }
+    }
+
+    @Test
+    fun `a repeat setLut call with the same id skips the file read (resolve cache)`() = runTest {
+        val preset = LutPreset(id = "3", displayName = "Valid", filePath = "/luts/3.cube")
+        every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
+        every { lutFileReader.readBytes(preset.filePath) } returns validCubeBytes
+        every { cameraController.setLut(any(), any(), 50) } returns Unit
+
+        repository.setLut("3", 50)
+        repository.setLut("3", 50)
+
+        verify(exactly = 1) { lutFileReader.readBytes(preset.filePath) }
+    }
+
+    @Test
+    fun `a cached LUT is never served once its id is no longer present in the LUT list`() = runTest {
+        val preset = LutPreset(id = "3", displayName = "Valid", filePath = "/luts/3.cube")
+        every { lutRepository.observeLuts() } returnsMany listOf(flowOf(listOf(preset)), flowOf(emptyList()))
+        every { lutFileReader.readBytes(preset.filePath) } returns validCubeBytes
+        every { cameraController.setLut(any(), any(), 50) } returns Unit
+        every { cameraController.setLut(any(), null, 50) } returns Unit
+
+        repository.setLut("3", 50) // resolves and caches
+        repository.setLut("3", 50) // preset no longer in the (now-empty) list — must not use the cache
+
+        verify { cameraController.setLut(any(), null, 50) }
+    }
+
+    private val validCubeBytes = CubeLut(
+        size = 2,
+        values = floatArrayOf(
+            0f, 0f, 0f,
+            0f, 0f, 1f,
+            0f, 1f, 0f,
+            0f, 1f, 1f,
+            1f, 0f, 0f,
+            1f, 0f, 1f,
+            1f, 1f, 0f,
+            1f, 1f, 1f,
+        ),
+    ).toBinary()
 }

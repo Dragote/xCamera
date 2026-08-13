@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.dragote.xcamera.shared.common.domain.model.CameraSettings
 import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
@@ -23,6 +24,8 @@ class CameraSettingsLocalDataSource @Inject constructor(
     private val showHistogramKey = booleanPreferencesKey("show_histogram")
     private val showHorizonLineKey = booleanPreferencesKey("show_horizon_line")
     private val focusPeakingSensitivityKey = stringPreferencesKey("focus_peaking_sensitivity")
+    private val selectedLutIdKey = stringPreferencesKey("selected_lut_id")
+    private val lutIntensityPercentKey = intPreferencesKey("lut_intensity_percent")
 
     /** Falls back to an empty [Preferences] on a corrupt preferences file rather than propagating
      *  the read failure — a settings read has no meaningful failure mode a caller could act on, it
@@ -40,6 +43,14 @@ class CameraSettingsLocalDataSource @Inject constructor(
                 focusPeakingSensitivity = preferences[focusPeakingSensitivityKey]
                     ?.let { stored -> runCatching { FocusPeakingSensitivity.valueOf(stored) }.getOrNull() }
                     ?: CameraSettings().focusPeakingSensitivity,
+                // No corrupt-value fallback needed here beyond the type mismatch DataStore itself
+                // already guards against (a stringPreferencesKey read against a differently-typed
+                // stored value throws inside dataStore.data, caught by the `catch` above) — any string
+                // is a structurally valid id, resolving it to an actual LUT is CameraRepository's job,
+                // not this data source's.
+                selectedLutId = preferences[selectedLutIdKey],
+                lutIntensityPercent = (preferences[lutIntensityPercentKey] ?: CameraSettings().lutIntensityPercent)
+                    .coerceIn(0, 100),
             )
         }
 
@@ -57,5 +68,17 @@ class CameraSettingsLocalDataSource @Inject constructor(
 
     suspend fun setFocusPeakingSensitivity(sensitivity: FocusPeakingSensitivity) {
         dataStore.edit { it[focusPeakingSensitivityKey] = sensitivity.name }
+    }
+
+    /** `null` removes the key entirely (rather than storing a sentinel) so a missing key and an
+     *  explicit "off" read back identically as `null` above. */
+    suspend fun setSelectedLutId(id: String?) {
+        dataStore.edit { preferences ->
+            if (id == null) preferences.remove(selectedLutIdKey) else preferences[selectedLutIdKey] = id
+        }
+    }
+
+    suspend fun setLutIntensityPercent(percent: Int) {
+        dataStore.edit { it[lutIntensityPercentKey] = percent.coerceIn(0, 100) }
     }
 }

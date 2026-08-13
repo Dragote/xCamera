@@ -32,6 +32,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
+import com.dragote.xcamera.feature.camera.data.gl.LutJpegProcessor
+import com.dragote.xcamera.feature.camera.domain.model.ActiveLut
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
@@ -42,6 +44,7 @@ import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.model.displayFractionToSensorFraction
+import com.dragote.xcamera.shared.common.domain.model.CubeLut
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -427,6 +430,23 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      */
     private val _histogramData = MutableStateFlow<HistogramData?>(null)
     val histogramData: StateFlow<HistogramData?> = _histogramData.asStateFlow()
+
+    /**
+     * The currently active LUT + blend intensity (issue #43), `null` meaning grading is off — set via
+     * [setLut] (in practice, `CameraRepositoryImpl` resolving `CameraSettings.selectedLutId` through
+     * `LutRepository` and `CubeLutParser`, this class never does that resolution itself). Two
+     * independent consumers read this: `ui/CameraScreen` collects it to push into
+     * `CameraPreviewRenderer.setLut` for the live preview, and [takePhoto] reads it synchronously
+     * (this field, not the `Flow`) to decide whether a still capture needs [lutJpegProcessor]'s
+     * offscreen pass at all. Its own `StateFlow` for the same "cross-cutting, independently-consumed
+     * state doesn't belong folded into a single UI-state object" reasoning [_zebraMask]/[_histogramData]
+     * already document.
+     */
+    private val _activeLut = MutableStateFlow<ActiveLut?>(null)
+    val activeLut: StateFlow<ActiveLut?> = _activeLut.asStateFlow()
+
+    /** See its own class doc — a thin, per-call offscreen GLES processor, not held across captures. */
+    private val lutJpegProcessor = LutJpegProcessor()
 
     /**
      * Guards against exceeding the preview [ImageReader]'s `maxImages` (2) — confirmed on-device this
@@ -1285,6 +1305,20 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     }
 
     /**
+     * See [_activeLut]'s own doc — [cubeLut] `null` means "no LUT selected," disabling grading
+     * entirely for both the live preview (once `ui/CameraScreen` observes this and pushes it into
+     * `CameraPreviewRenderer.setLut`) and the next still capture ([takePhoto]). [lutId] is only ever
+     * meaningful alongside a non-null [cubeLut] — see [ActiveLut.lutId]'s own doc for what it's for.
+     */
+    fun setLut(lutId: String?, cubeLut: CubeLut?, intensityPercent: Int) {
+        _activeLut.value = if (cubeLut != null && lutId != null) {
+            ActiveLut(lutId, cubeLut, intensityPercent.coerceIn(0, 100))
+        } else {
+            null
+        }
+    }
+
+    /**
      * Resolves [iso]/[shutterTimeNs] for the still-capture request: whichever is null (i.e. that
      * parameter's stop list is currently empty for this lens, so its own dial has nothing to pin —
      * both dials are always visible now, but an unsupported/unaligned range can still leave one of
@@ -1444,6 +1478,12 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      * directly on this one-off request via [resolveManualExposure] — completely independent of
      * whatever the live preview's repeating request is doing (see this class's own doc for why that
      * decoupling is the whole point of the Camera2 migration).
+     *
+     * When [_activeLut] is non-null (issue #43), the raw JPEG is additionally run through
+     * [lutJpegProcessor]'s offscreen decode -> shader -> re-encode pass before being written —
+     * replacing the plain direct-to-MediaStore write only in that case, per this issue's own scope. A
+     * `null` result from [LutJpegProcessor.apply] (any processing failure) falls back to the original,
+     * ungraded [bytes] rather than losing the capture — see that class's own doc.
      */
     suspend fun takePhoto(): Uri {
         val device = checkNotNull(cameraDevice) { "Camera not bound yet" }
@@ -1453,7 +1493,15 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
             ?: throw IllegalStateException("No CameraCharacteristics available for the bound lens")
 
         val bytes = captureStillJpeg(device, session, reader, characteristics)
-        return withContext(Dispatchers.IO) { saveJpegToMediaStore(bytes) }
+        val activeLut = _activeLut.value
+        val outputBytes = if (activeLut != null) {
+            withContext(Dispatchers.Default) {
+                lutJpegProcessor.apply(bytes, activeLut.cubeLut, activeLut.intensityPercent)
+            } ?: bytes
+        } else {
+            bytes
+        }
+        return withContext(Dispatchers.IO) { saveJpegToMediaStore(outputBytes) }
     }
 
     private suspend fun captureStillJpeg(

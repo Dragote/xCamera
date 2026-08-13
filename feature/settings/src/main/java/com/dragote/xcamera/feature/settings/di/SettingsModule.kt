@@ -6,7 +6,9 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import com.dragote.xcamera.feature.settings.data.repository.CameraSettingsRepositoryImpl
+import com.dragote.xcamera.feature.settings.data.repository.LutRepositoryImpl
 import com.dragote.xcamera.shared.common.domain.repository.CameraSettingsRepository
+import com.dragote.xcamera.shared.common.domain.repository.LutRepository
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -21,6 +23,14 @@ abstract class SettingsModule {
 
     @Binds
     abstract fun bindCameraSettingsRepository(impl: CameraSettingsRepositoryImpl): CameraSettingsRepository
+
+    /** Bound here (not `feature:camera`) even though `feature:camera` is its main consumer for
+     *  rendering — LUT import (Storage Access Framework) and its app-private-storage bookkeeping live
+     *  alongside `CameraSettingsRepository`'s own DataStore persistence, both owned by this feature's
+     *  data layer, mirroring exactly how `CameraSettingsRepository` itself is implemented here and
+     *  consumed by `feature:camera`. */
+    @Binds
+    abstract fun bindLutRepository(impl: LutRepositoryImpl): LutRepository
 
     companion object {
         @Provides

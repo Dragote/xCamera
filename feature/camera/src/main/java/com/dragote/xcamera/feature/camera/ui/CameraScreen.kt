@@ -87,6 +87,8 @@ import com.dragote.xcamera.feature.camera.ui.component.HistogramOverlay
 import com.dragote.xcamera.feature.camera.ui.component.HorizonLineOverlay
 import com.dragote.xcamera.feature.camera.ui.component.IsoDial
 import com.dragote.xcamera.feature.camera.ui.component.LensDial
+import com.dragote.xcamera.feature.camera.ui.component.LutDial
+import com.dragote.xcamera.feature.camera.ui.component.LutResolvingIndicator
 import com.dragote.xcamera.feature.camera.ui.component.ModeLever
 import com.dragote.xcamera.feature.camera.ui.component.SettingsButton
 import com.dragote.xcamera.feature.camera.ui.component.ShutterButton
@@ -261,6 +263,8 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     val zebraMask by viewModel.zebraMask.collectAsStateWithLifecycle()
     val histogramData by viewModel.histogramData.collectAsStateWithLifecycle()
     val cameraSettings by viewModel.cameraSettings.collectAsStateWithLifecycle()
+    val isLutResolving by viewModel.isLutResolving.collectAsStateWithLifecycle()
+    val luts by viewModel.luts.collectAsStateWithLifecycle()
 
     // The live preview no longer goes through a raw Camera2-owned Surface at all — CameraController
     // owns its own preview ImageReader internally (see its own doc for why) and hands each delivered
@@ -440,6 +444,21 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
         viewModel.setFlashMode(uiState.flashMode)
     }
 
+    // Issue #43 follow-up — resolving CameraSettings.selectedLutId/lutIntensityPercent into an actual
+    // parsed LUT (CameraRepository.setLut) is no longer triggered from here: CameraViewModel's own init
+    // block now drives it directly off CameraSettingsRepository.observeSettings(), so it keeps running
+    // for the ViewModel's whole lifetime (including while the user is on SettingsScreen and this
+    // composable isn't even in composition) rather than only while CameraScreen happens to be composed —
+    // see that collector's own comment for the full story. This effect only reacts to the *resolved*
+    // side: CameraController.activeLut only updates once setLut has actually finished reading+parsing
+    // the LUT file, so this is what genuinely drives the live preview's own LUT texture.
+    // CameraPreviewRenderer is a GL object owned directly by this composable (not the ViewModel), so this
+    // collector legitimately still lives here.
+    val activeLut by cameraRepository.observeActiveLut().collectAsStateWithLifecycle(initialValue = null)
+    LaunchedEffect(activeLut) {
+        renderer.setLut(activeLut?.lutId, activeLut?.cubeLut, activeLut?.intensityPercent ?: 0)
+    }
+
     // MANUAL_SENSOR/SENSOR_INFO_SENSITIVITY_RANGE/SENSOR_INFO_EXPOSURE_TIME_RANGE and
     // CONTROL_AE_COMPENSATION_RANGE/CONTROL_AE_COMPENSATION_STEP are all per-physical-lens, not
     // per-device, so both re-query on every lens switch rather than once — see
@@ -576,6 +595,15 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                         flashOn = uiState.flashMode == FlashMode.ON,
                         onToggle = viewModel::onFlashModeToggled,
                     )
+                    // Only shown once at least one LUT has been imported — mirrors ui/SettingsScreen's
+                    // own luts.isNotEmpty() gating for its edit-mode toggle (see LutDial's own doc).
+                    if (luts.isNotEmpty()) {
+                        LutDial(
+                            luts = luts,
+                            selectedLutId = cameraSettings.selectedLutId,
+                            onLutSelected = viewModel::onLutSelected,
+                        )
+                    }
                     ModeLever(
                         manual = uiState.manualModeEnabled,
                         onToggle = viewModel::onManualModeToggled,
@@ -682,6 +710,14 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                             null
                         },
                         modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
+                    )
+                    LutResolvingIndicator(
+                        visible = isLutResolving,
+                        // fillMaxSize, not an align(...) pin — LutResolvingIndicator corner-hops
+                        // internally now (TopStart reference corner, not TopEnd — HistogramOverlay
+                        // corner-hops through TopEnd too, so sharing a reference corner would still let
+                        // the two visually collide as both track the same rotation).
+                        modifier = Modifier.fillMaxSize(),
                     )
                     ViewfinderThumbnailChip(
                         photoUri = uiState.lastSavedUri ?: latestGalleryUri,

@@ -23,4 +23,8 @@ class CameraSettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setFocusPeakingSensitivity(sensitivity: FocusPeakingSensitivity) =
         localDataSource.setFocusPeakingSensitivity(sensitivity)
+
+    override suspend fun setSelectedLutId(id: String?) = localDataSource.setSelectedLutId(id)
+
+    override suspend fun setLutIntensityPercent(percent: Int) = localDataSource.setLutIntensityPercent(percent)
 }

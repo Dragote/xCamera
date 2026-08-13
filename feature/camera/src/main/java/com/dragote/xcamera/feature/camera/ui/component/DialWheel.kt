@@ -52,6 +52,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome.Accent
@@ -114,6 +115,14 @@ fun DialWheel(
      *  to a flat color — used by callers (previews, `LensDial`) that don't sit on that deck at all. */
     backgroundTopY: Float = 0f,
     backgroundHeight: Float = 0f,
+    /** Overall column width / barrel canvas height — defaults match the original fixed 107.dp/117.dp
+     *  footprint every existing caller (`IsoDial`/`ShutterSpeedDial`/`LensDial`) relies on. Exposed
+     *  purely so a smaller caller (`LutDial`, sized to fit alongside `SettingsButton`/`FlashLever`/
+     *  `ModeLever` in `ui/CameraScreen`'s toolbar) can shrink the footprint while reusing this same
+     *  click-ratchet gesture/barrel-drawing code — the gesture's own thresholds ([STEP_DP]) are pure
+     *  finger-travel distances, entirely independent of how big the barrel is actually drawn. */
+    width: Dp = 107.dp,
+    canvasHeight: Dp = 117.dp,
 ) {
     val vibrator = rememberHapticTickVibrator()
     val scope = rememberCoroutineScope()
@@ -161,7 +170,7 @@ fun DialWheel(
     var canvasTopY by remember { mutableFloatStateOf(0f) }
 
     Column(
-        modifier = modifier.width(107.dp),
+        modifier = modifier.width(width),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
@@ -175,7 +184,7 @@ fun DialWheel(
         Canvas(
             Modifier
                 .fillMaxWidth()
-                .height(117.dp)
+                .height(canvasHeight)
                 .onGloballyPositioned { canvasTopY = it.positionInRoot().y }
                 .semantics {
                     role = Role.Button
