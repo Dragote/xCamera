@@ -5,11 +5,16 @@ import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,10 +30,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -46,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -211,9 +220,15 @@ private fun SettingsContent(
  * itself, for the separate file-copy step that precedes resolution, and disables re-tapping import
  * while one's already in flight.
  *
- * A long-press on an actual [LutPreset] chip deletes it (haptic feedback matches every other
- * long-press interaction on this screen) — "OFF" and "+ IMPORT" aren't deletable, so only the
- * `luts.forEach` chips below get an `onLongClick`.
+ * Deletion is a classic iOS-style "jiggle mode" (replacing an earlier long-press-to-delete
+ * interaction, which risked conflicting with this row's own [horizontalScroll] drag gesture) — the
+ * pencil/check toggle next to the "COLOR LUT" label flips [isEditMode] (pure transient UI state, local
+ * to this composable, not worth threading through the ViewModel); while active every imported
+ * [LutPreset] chip shakes and tints red (see [LutPill]'s own doc) and tapping one deletes it via
+ * [onLutDeleteRequested] instead of selecting it. "OFF"/"+ IMPORT" aren't deletable, so they're just
+ * disabled for the duration instead of becoming delete targets. [initialEditMode] exists solely so a
+ * `@Preview` can render the edit-mode-active state without reaching into this composable's private
+ * `remember` — production call sites never pass it.
  */
 @Composable
 private fun LutSelector(
@@ -227,34 +242,64 @@ private fun LutSelector(
     onIntensityChanged: (Int) -> Unit,
     onImportRequested: () -> Unit,
     modifier: Modifier = Modifier,
+    initialEditMode: Boolean = false,
 ) {
     val haptic = LocalHapticFeedback.current
+    var isEditMode by remember { mutableStateOf(initialEditMode) }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Row(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            LutPill(label = "OFF", isSelected = selectedLutId == null) {
+            LutPill(label = "OFF", isSelected = selectedLutId == null, enabled = !isEditMode) {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 onLutSelected(null)
             }
-            luts.forEach { lut ->
+            luts.forEachIndexed { index, lut ->
                 LutPill(
                     label = lut.displayName.uppercase(),
                     isSelected = lut.id == selectedLutId,
                     isResolving = lut.id == resolvingLutId,
-                    onLongClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onLutDeleteRequested(lut.id)
-                    },
+                    isEditMode = isEditMode,
+                    jigglePhaseIndex = index,
                 ) {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onLutSelected(lut.id)
+                    if (isEditMode) onLutDeleteRequested(lut.id) else onLutSelected(lut.id)
                 }
             }
-            LutPill(label = "+ IMPORT", isSelected = false, isBusy = isImportingLut, onClick = onImportRequested)
+            LutPill(
+                label = "+ IMPORT",
+                isSelected = false,
+                isBusy = isImportingLut,
+                enabled = !isEditMode,
+                onClick = onImportRequested,
+            )
         }
-        Text(text = "COLOR LUT", style = AppChrome.labelStyle())
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(text = "COLOR LUT", style = AppChrome.labelStyle())
+            // No point offering edit mode over an empty list — mirrors the old onLongClick gating,
+            // which only ever existed on an actual LutPreset chip in the first place.
+            if (luts.isNotEmpty()) {
+                IconButton(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        isEditMode = !isEditMode
+                    },
+                    modifier = Modifier.size(24.dp),
+                ) {
+                    Icon(
+                        imageVector = if (isEditMode) Icons.Filled.Check else Icons.Filled.Edit,
+                        contentDescription = if (isEditMode) "Done editing LUTs" else "Edit LUTs",
+                        tint = if (isEditMode) MaterialTheme.colorScheme.error else AppChrome.LabelColor,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        }
 
         if (selectedLutId != null) {
             LutIntensitySlider(percent = intensityPercent, onIntensityChanged = onIntensityChanged)
@@ -266,45 +311,87 @@ private fun LutSelector(
  * [isBusy] drives the same spinner [isResolving] does, but also disables re-tapping ([onClick]) while
  * `true` — distinct flags rather than one shared boolean since a resolving chip (a genuine selection
  * already made) is still meant to read as selected/interactive-looking, while a busy "+ IMPORT" pill is
- * deliberately non-interactive until the copy finishes. [onLongClick] is only non-null for an actual
- * deletable [LutPreset] chip — "OFF"/"+ IMPORT" pass nothing, so [combinedClickable] falls back to a
- * plain click-only pill for them.
+ * deliberately non-interactive until the copy finishes.
+ *
+ * [isEditMode] (only ever passed `true` for an actual [LutPreset] chip — "OFF"/"+ IMPORT" never jiggle)
+ * drives the classic iOS "jiggle to delete" look: a small [rememberInfiniteTransition]-driven
+ * `rotationZ` wobble between ±[JiggleAmplitudeDegrees] over [JiggleDurationMs] each way, plus a red tint
+ * (reusing [MaterialTheme]'s own `colorScheme.error` rather than inventing a new design-system token
+ * for this one spot) on the fill/border/label. [jigglePhaseIndex] offsets each chip's animation start by
+ * a few milliseconds so a row of chips reads as a loosely shaking pile rather than moving in perfect
+ * lockstep — deliberately simple (index-based, not random) per this component's own scope.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LutPill(
     label: String,
     isSelected: Boolean,
     isResolving: Boolean = false,
     isBusy: Boolean = false,
-    onLongClick: (() -> Unit)? = null,
+    isEditMode: Boolean = false,
+    jigglePhaseIndex: Int = 0,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
+    val rotationDegrees = if (isEditMode) {
+        val infiniteTransition = rememberInfiniteTransition(label = "lutPillJiggle")
+        val angle by infiniteTransition.animateFloat(
+            initialValue = -JiggleAmplitudeDegrees,
+            targetValue = JiggleAmplitudeDegrees,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = JiggleDurationMs, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse,
+                initialStartOffset = StartOffset((jigglePhaseIndex * JiggleStaggerMs) % JiggleDurationMs),
+            ),
+            label = "lutPillJiggleAngle",
+        )
+        angle
+    } else {
+        0f
+    }
+    val destructiveColor = MaterialTheme.colorScheme.error
+
     Box(
         modifier = Modifier
+            .graphicsLayer { rotationZ = rotationDegrees }
             .clip(RoundedCornerShape(8.dp))
-            .background(if (isSelected) AppChrome.Accent else Color.Transparent)
+            .background(
+                when {
+                    isEditMode -> destructiveColor.copy(alpha = 0.22f)
+                    isSelected -> AppChrome.Accent
+                    else -> Color.Transparent
+                },
+            )
             .border(
                 width = 1.dp,
-                color = if (isSelected) Color.Transparent else AppChrome.LabelColor.copy(alpha = 0.4f),
+                color = when {
+                    isEditMode -> destructiveColor.copy(alpha = 0.7f)
+                    isSelected -> Color.Transparent
+                    else -> AppChrome.LabelColor.copy(alpha = 0.4f)
+                },
                 shape = RoundedCornerShape(8.dp),
             )
             .semantics { selected = isSelected }
-            .combinedClickable(
-                // enabled only gates isBusy, not isSelected — unlike a plain click, onLongClick (chip
-                // deletion) must still fire on an already-selected chip; onClick itself no-ops for that
-                // case instead (mirrors the old plain-clickable(enabled = !isSelected) behavior for the
-                // tap-to-select gesture specifically, without also disabling the long-press gesture).
-                enabled = !isBusy,
+            .clickable(
+                enabled = enabled && !isBusy,
                 role = Role.RadioButton,
-                onLongClick = onLongClick,
-                onClick = { if (!isSelected) onClick() },
+                // In edit mode a tap always fires (that's the delete gesture, even on the already-
+                // selected chip); otherwise mirrors the old no-op-on-reselect behavior.
+                onClick = { if (isEditMode || !isSelected) onClick() },
             )
             .padding(horizontal = 14.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(text = label, style = AppChrome.valueStyle(if (isSelected) Color.White else AppChrome.ValueColor))
+            Text(
+                text = label,
+                style = AppChrome.valueStyle(
+                    when {
+                        isEditMode -> destructiveColor
+                        isSelected -> Color.White
+                        else -> AppChrome.ValueColor
+                    },
+                ),
+            )
             if (isResolving || isBusy) {
                 Spacer(modifier = Modifier.width(6.dp))
                 CircularProgressIndicator(
@@ -316,6 +403,18 @@ private fun LutPill(
         }
     }
 }
+
+/** Jiggle rotation amplitude (each way from center) — classic "shaking icon" feel, small enough to stay
+ *  legible. */
+private const val JiggleAmplitudeDegrees = 2.5f
+
+/** One leg (center-to-extreme) of the jiggle wobble — a full back-and-forth cycle is roughly double
+ *  this, landing in the "quick, jittery" range rather than a slow sway. */
+private const val JiggleDurationMs = 170
+
+/** Per-chip animation start offset (multiplied by [LutSelector]'s own `forEachIndexed` index) so a row
+ *  of jiggling chips doesn't move in perfect lockstep. */
+private const val JiggleStaggerMs = 45
 
 /**
  * 0-100 blend intensity between original and graded color. Tracks its own local drag position (like
@@ -491,6 +590,21 @@ private fun LutSelectorPreview() {
                 onLutDeleteRequested = {},
                 onIntensityChanged = {},
                 onImportRequested = {},
+            )
+            // Jiggle-to-delete edit mode active (initialEditMode is preview-only, see LutSelector's own
+            // doc) — both imported chips jiggle/tint red, "OFF"/"+ IMPORT" stay put and disabled, and
+            // the toggle icon has flipped from pencil to checkmark.
+            LutSelector(
+                luts = luts,
+                selectedLutId = "1",
+                intensityPercent = 70,
+                resolvingLutId = null,
+                isImportingLut = false,
+                onLutSelected = {},
+                onLutDeleteRequested = {},
+                onIntensityChanged = {},
+                onImportRequested = {},
+                initialEditMode = true,
             )
         }
     }
