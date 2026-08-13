@@ -6,8 +6,10 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -81,6 +83,7 @@ fun SettingsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val lutImportError by viewModel.lutImportError.collectAsStateWithLifecycle()
+    val isImportingLut by viewModel.isImportingLut.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     // ACTION_OPEN_DOCUMENT (not GET_CONTENT) per this issue's own SAF requirement — a .cube file has
@@ -118,11 +121,13 @@ fun SettingsScreen(
             } else {
                 SettingsContent(
                     uiState = loadedState,
+                    isImportingLut = isImportingLut,
                     onShowGridToggled = viewModel::onShowGridToggled,
                     onShowHistogramToggled = viewModel::onShowHistogramToggled,
                     onShowHorizonLineToggled = viewModel::onShowHorizonLineToggled,
                     onFocusPeakingSensitivityChanged = viewModel::onFocusPeakingSensitivityChanged,
                     onLutSelected = viewModel::onLutSelected,
+                    onLutDeleteRequested = viewModel::onLutDeleteRequested,
                     onLutIntensityChanged = viewModel::onLutIntensityChanged,
                     onImportLutRequested = { importLutLauncher.launch(arrayOf("*/*")) },
                     modifier = Modifier.padding(innerPadding),
@@ -140,11 +145,13 @@ fun SettingsScreen(
 @Composable
 private fun SettingsContent(
     uiState: SettingsUiState,
+    isImportingLut: Boolean,
     onShowGridToggled: (Boolean) -> Unit,
     onShowHistogramToggled: (Boolean) -> Unit,
     onShowHorizonLineToggled: (Boolean) -> Unit,
     onFocusPeakingSensitivityChanged: (FocusPeakingSensitivity) -> Unit,
     onLutSelected: (String?) -> Unit,
+    onLutDeleteRequested: (String) -> Unit,
     onLutIntensityChanged: (Int) -> Unit,
     onImportLutRequested: () -> Unit,
     modifier: Modifier = Modifier,
@@ -182,7 +189,9 @@ private fun SettingsContent(
             selectedLutId = uiState.selectedLutId,
             intensityPercent = uiState.lutIntensityPercent,
             resolvingLutId = uiState.resolvingLutId,
+            isImportingLut = isImportingLut,
             onLutSelected = onLutSelected,
+            onLutDeleteRequested = onLutDeleteRequested,
             onIntensityChanged = onLutIntensityChanged,
             onImportRequested = onImportLutRequested,
         )
@@ -198,7 +207,13 @@ private fun SettingsContent(
  * [Slider] only appears once a LUT is actually selected — it's meaningless while grading is off.
  * [resolvingLutId] (from `LutResolutionRepository`, `feature:camera`'s side of `setLut`'s file-read/
  * parse work) shows a small spinner on whichever chip's id matches it — "OFF" can never match, see
- * that interface's own doc.
+ * that interface's own doc. [isImportingLut] shows the same spinner treatment on the "+ IMPORT" pill
+ * itself, for the separate file-copy step that precedes resolution, and disables re-tapping import
+ * while one's already in flight.
+ *
+ * A long-press on an actual [LutPreset] chip deletes it (haptic feedback matches every other
+ * long-press interaction on this screen) — "OFF" and "+ IMPORT" aren't deletable, so only the
+ * `luts.forEach` chips below get an `onLongClick`.
  */
 @Composable
 private fun LutSelector(
@@ -206,7 +221,9 @@ private fun LutSelector(
     selectedLutId: String?,
     intensityPercent: Int,
     resolvingLutId: String?,
+    isImportingLut: Boolean,
     onLutSelected: (String?) -> Unit,
+    onLutDeleteRequested: (String) -> Unit,
     onIntensityChanged: (Int) -> Unit,
     onImportRequested: () -> Unit,
     modifier: Modifier = Modifier,
@@ -226,12 +243,16 @@ private fun LutSelector(
                     label = lut.displayName.uppercase(),
                     isSelected = lut.id == selectedLutId,
                     isResolving = lut.id == resolvingLutId,
+                    onLongClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onLutDeleteRequested(lut.id)
+                    },
                 ) {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     onLutSelected(lut.id)
                 }
             }
-            LutPill(label = "+ IMPORT", isSelected = false, onClick = onImportRequested)
+            LutPill(label = "+ IMPORT", isSelected = false, isBusy = isImportingLut, onClick = onImportRequested)
         }
         Text(text = "COLOR LUT", style = AppChrome.labelStyle())
 
@@ -241,8 +262,24 @@ private fun LutSelector(
     }
 }
 
+/**
+ * [isBusy] drives the same spinner [isResolving] does, but also disables re-tapping ([onClick]) while
+ * `true` — distinct flags rather than one shared boolean since a resolving chip (a genuine selection
+ * already made) is still meant to read as selected/interactive-looking, while a busy "+ IMPORT" pill is
+ * deliberately non-interactive until the copy finishes. [onLongClick] is only non-null for an actual
+ * deletable [LutPreset] chip — "OFF"/"+ IMPORT" pass nothing, so [combinedClickable] falls back to a
+ * plain click-only pill for them.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun LutPill(label: String, isSelected: Boolean, isResolving: Boolean = false, onClick: () -> Unit) {
+private fun LutPill(
+    label: String,
+    isSelected: Boolean,
+    isResolving: Boolean = false,
+    isBusy: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
+    onClick: () -> Unit,
+) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
@@ -253,13 +290,22 @@ private fun LutPill(label: String, isSelected: Boolean, isResolving: Boolean = f
                 shape = RoundedCornerShape(8.dp),
             )
             .semantics { selected = isSelected }
-            .clickable(enabled = !isSelected, role = Role.RadioButton, onClick = onClick)
+            .combinedClickable(
+                // enabled only gates isBusy, not isSelected — unlike a plain click, onLongClick (chip
+                // deletion) must still fire on an already-selected chip; onClick itself no-ops for that
+                // case instead (mirrors the old plain-clickable(enabled = !isSelected) behavior for the
+                // tap-to-select gesture specifically, without also disabling the long-press gesture).
+                enabled = !isBusy,
+                role = Role.RadioButton,
+                onLongClick = onLongClick,
+                onClick = { if (!isSelected) onClick() },
+            )
             .padding(horizontal = 14.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(text = label, style = AppChrome.valueStyle(if (isSelected) Color.White else AppChrome.ValueColor))
-            if (isResolving) {
+            if (isResolving || isBusy) {
                 Spacer(modifier = Modifier.width(6.dp))
                 CircularProgressIndicator(
                     modifier = Modifier.size(12.dp),
@@ -400,7 +446,9 @@ private fun LutSelectorPreview() {
                 selectedLutId = null,
                 intensityPercent = 100,
                 resolvingLutId = null,
+                isImportingLut = false,
                 onLutSelected = {},
+                onLutDeleteRequested = {},
                 onIntensityChanged = {},
                 onImportRequested = {},
             )
@@ -410,7 +458,9 @@ private fun LutSelectorPreview() {
                 selectedLutId = "1",
                 intensityPercent = 70,
                 resolvingLutId = null,
+                isImportingLut = false,
                 onLutSelected = {},
+                onLutDeleteRequested = {},
                 onIntensityChanged = {},
                 onImportRequested = {},
             )
@@ -423,7 +473,22 @@ private fun LutSelectorPreview() {
                 selectedLutId = "2",
                 intensityPercent = 70,
                 resolvingLutId = "2",
+                isImportingLut = false,
                 onLutSelected = {},
+                onLutDeleteRequested = {},
+                onIntensityChanged = {},
+                onImportRequested = {},
+            )
+            // A large file mid-copy (before it's even resolvable) — spinner on the "+ IMPORT" pill
+            // itself, distinct from the resolvingLutId spinner above.
+            LutSelector(
+                luts = luts,
+                selectedLutId = null,
+                intensityPercent = 100,
+                resolvingLutId = null,
+                isImportingLut = true,
+                onLutSelected = {},
+                onLutDeleteRequested = {},
                 onIntensityChanged = {},
                 onImportRequested = {},
             )

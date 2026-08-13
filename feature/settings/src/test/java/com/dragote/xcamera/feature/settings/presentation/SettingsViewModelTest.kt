@@ -13,8 +13,11 @@ import com.dragote.xcamera.shared.common.domain.result.Result
 import com.dragote.xcamera.shared.testing.MainDispatcherRule
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -33,6 +36,7 @@ class SettingsViewModelTest {
     private lateinit var settingsFlow: MutableStateFlow<CameraSettings>
     private lateinit var lutsFlow: MutableStateFlow<List<LutPreset>>
     private lateinit var resolvingLutIdFlow: MutableStateFlow<String?>
+    private lateinit var resolutionFailuresFlow: MutableSharedFlow<String>
     private lateinit var viewModel: SettingsViewModel
 
     @Before
@@ -43,9 +47,15 @@ class SettingsViewModelTest {
         settingsFlow = MutableStateFlow(CameraSettings())
         lutsFlow = MutableStateFlow(emptyList())
         resolvingLutIdFlow = MutableStateFlow(null)
+        // extraBufferCapacity = 1 mirrors CameraRepositoryImpl's own _resolutionFailures — never
+        // actually relied on by these tests (each test that emits into it does so after the
+        // ViewModel's init collector has already started, thanks to MainDispatcherRule's
+        // UnconfinedTestDispatcher), but keeps this default stub emit-safe regardless.
+        resolutionFailuresFlow = MutableSharedFlow(extraBufferCapacity = 1)
         every { cameraSettingsRepository.observeSettings() } returns settingsFlow
         every { lutRepository.observeLuts() } returns lutsFlow
         every { lutResolutionRepository.observeResolvingLutId() } returns resolvingLutIdFlow
+        every { lutResolutionRepository.observeResolutionFailures() } returns resolutionFailuresFlow
         viewModel = SettingsViewModel(cameraSettingsRepository, lutRepository, lutResolutionRepository)
     }
 
@@ -192,5 +202,106 @@ class SettingsViewModelTest {
             viewModel.onLutImportErrorShown()
             assertEquals(null, awaitItem())
         }
+    }
+
+    // A real suspension point (delay) inside the mocked repository call, not an instantaneous
+    // coEvery — with MainDispatcherRule's UnconfinedTestDispatcher, an instantaneous mocked suspend
+    // function completes the whole true→false transition in one synchronous stretch with no
+    // opportunity for a Turbine-collected StateFlow to observe the transient true in between (a
+    // classic StateFlow-conflation trap for this exact test shape), so onLutImportRequested's own
+    // isImportingLut flip would otherwise appear to just stay false. Delaying gives the collector a
+    // genuine chance to see the intermediate state, mirroring how the real file-copy this flag guards
+    // is itself never instantaneous either.
+    @Test
+    fun `isImportingLut toggles true then false around a successful import`() = runTest {
+        val uri = mockk<Uri>()
+        val preset = LutPreset(id = "new-id", displayName = "My LUT", filePath = "/luts/new-id.cube")
+        coEvery { lutRepository.importLut(uri, "My LUT") } coAnswers {
+            delay(1)
+            Result.Success(preset)
+        }
+
+        viewModel.isImportingLut.test {
+            assertEquals(false, awaitItem())
+
+            viewModel.onLutImportRequested(uri, "My LUT")
+            assertEquals(true, awaitItem())
+            assertEquals(false, awaitItem())
+        }
+    }
+
+    @Test
+    fun `isImportingLut toggles true then false even when the import fails`() = runTest {
+        val uri = mockk<Uri>()
+        coEvery { lutRepository.importLut(uri, "My LUT") } coAnswers {
+            delay(1)
+            Result.Error(DataError.Local.UNKNOWN)
+        }
+
+        viewModel.isImportingLut.test {
+            assertEquals(false, awaitItem())
+
+            viewModel.onLutImportRequested(uri, "My LUT")
+            assertEquals(true, awaitItem())
+            assertEquals(false, awaitItem())
+        }
+    }
+
+    @Test
+    fun `onLutDeleteRequested clears the selection first when deleting the currently-selected LUT`() = runTest {
+        settingsFlow.value = CameraSettings(selectedLutId = "1")
+        coEvery { lutRepository.deleteLut("1") } returns Result.Success(Unit)
+
+        viewModel.onLutDeleteRequested("1")
+
+        coVerifyOrder {
+            cameraSettingsRepository.setSelectedLutId(null)
+            lutRepository.deleteLut("1")
+        }
+    }
+
+    @Test
+    fun `onLutDeleteRequested doesn't touch selection when deleting an unselected LUT`() = runTest {
+        settingsFlow.value = CameraSettings(selectedLutId = "1")
+        coEvery { lutRepository.deleteLut("2") } returns Result.Success(Unit)
+
+        viewModel.onLutDeleteRequested("2")
+
+        coVerify(exactly = 0) { cameraSettingsRepository.setSelectedLutId(any()) }
+        coVerify { lutRepository.deleteLut("2") }
+    }
+
+    @Test
+    fun `a resolution failure deletes the broken LUT, clears a matching selection, and surfaces an error`() = runTest {
+        settingsFlow.value = CameraSettings(selectedLutId = "1")
+        coEvery { lutRepository.deleteLut("1") } returns Result.Success(Unit)
+
+        viewModel.lutImportError.test {
+            assertEquals(null, awaitItem())
+
+            resolutionFailuresFlow.emit("1")
+
+            assertEquals("Invalid or unreadable LUT file", awaitItem())
+        }
+        coVerifyOrder {
+            cameraSettingsRepository.setSelectedLutId(null)
+            lutRepository.deleteLut("1")
+        }
+    }
+
+    @Test
+    fun `a resolution failure for a LUT that's no longer selected still deletes it but doesn't touch selection`() = runTest {
+        settingsFlow.value = CameraSettings(selectedLutId = "2") // a newer selection made in the meantime
+        coEvery { lutRepository.deleteLut("1") } returns Result.Success(Unit)
+
+        viewModel.lutImportError.test {
+            assertEquals(null, awaitItem())
+
+            resolutionFailuresFlow.emit("1")
+
+            assertEquals("Invalid or unreadable LUT file", awaitItem())
+        }
+        coVerify(exactly = 0) { cameraSettingsRepository.setSelectedLutId(any()) }
+        coVerify { lutRepository.deleteLut("1") }
     }
 }
