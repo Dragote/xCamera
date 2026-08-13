@@ -87,6 +87,7 @@ import com.dragote.xcamera.feature.camera.ui.component.HistogramOverlay
 import com.dragote.xcamera.feature.camera.ui.component.HorizonLineOverlay
 import com.dragote.xcamera.feature.camera.ui.component.IsoDial
 import com.dragote.xcamera.feature.camera.ui.component.LensDial
+import com.dragote.xcamera.feature.camera.ui.component.LutDial
 import com.dragote.xcamera.feature.camera.ui.component.LutResolvingIndicator
 import com.dragote.xcamera.feature.camera.ui.component.ModeLever
 import com.dragote.xcamera.feature.camera.ui.component.SettingsButton
@@ -263,6 +264,7 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     val histogramData by viewModel.histogramData.collectAsStateWithLifecycle()
     val cameraSettings by viewModel.cameraSettings.collectAsStateWithLifecycle()
     val isLutResolving by viewModel.isLutResolving.collectAsStateWithLifecycle()
+    val luts by viewModel.luts.collectAsStateWithLifecycle()
 
     // The live preview no longer goes through a raw Camera2-owned Surface at all — CameraController
     // owns its own preview ImageReader internally (see its own doc for why) and hands each delivered
@@ -593,6 +595,15 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                         flashOn = uiState.flashMode == FlashMode.ON,
                         onToggle = viewModel::onFlashModeToggled,
                     )
+                    // Only shown once at least one LUT has been imported — mirrors ui/SettingsScreen's
+                    // own luts.isNotEmpty() gating for its edit-mode toggle (see LutDial's own doc).
+                    if (luts.isNotEmpty()) {
+                        LutDial(
+                            luts = luts,
+                            selectedLutId = cameraSettings.selectedLutId,
+                            onLutSelected = viewModel::onLutSelected,
+                        )
+                    }
                     ModeLever(
                         manual = uiState.manualModeEnabled,
                         onToggle = viewModel::onManualModeToggled,

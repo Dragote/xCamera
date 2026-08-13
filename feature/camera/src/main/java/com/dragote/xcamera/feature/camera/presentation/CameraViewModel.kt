@@ -19,7 +19,9 @@ import com.dragote.xcamera.feature.camera.domain.model.nearestShutterStopIndex
 import com.dragote.xcamera.feature.camera.domain.model.shutterSpeedStopsInRange
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.shared.common.domain.model.CameraSettings
+import com.dragote.xcamera.shared.common.domain.model.LutPreset
 import com.dragote.xcamera.shared.common.domain.repository.CameraSettingsRepository
+import com.dragote.xcamera.shared.common.domain.repository.LutRepository
 import com.dragote.xcamera.shared.common.domain.repository.LutResolutionRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
@@ -46,6 +48,7 @@ class CameraViewModel @Inject constructor(
     private val cameraRepository: CameraRepository,
     private val cameraSettingsRepository: CameraSettingsRepository,
     private val lutResolutionRepository: LutResolutionRepository,
+    private val lutRepository: LutRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CameraUiState())
@@ -100,6 +103,19 @@ class CameraViewModel @Inject constructor(
     val isLutResolving: StateFlow<Boolean> = lutResolutionRepository.observeResolvingLutId()
         .map { it != null }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    /**
+     * Deliberately its own [StateFlow], not a [CameraUiState] field, for the same reason [cameraSettings]
+     * is — it comes from [LutRepository] (`feature:settings`' catalog of imported LUTs, injected
+     * directly the same way `data.repository.CameraRepositoryImpl` already consumes it to resolve
+     * selections), a wholly separate repository from [cameraRepository]'s own capture-result stream.
+     * Exists purely so `ui/CameraScreen`'s `LutDial` (the quick-access toolbar dial, issue #43 follow-up)
+     * can gate its own visibility on "at least one LUT imported" the same way `ui/SettingsScreen`'s own
+     * edit-mode toggle does — `CameraViewModel` otherwise only ever sees [CameraSettings.selectedLutId],
+     * never the underlying catalog.
+     */
+    val luts: StateFlow<List<LutPreset>> =
+        lutRepository.observeLuts().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     init {
         // Gated on manualExposurePinned, not manualModeEnabled — the latter flips the instant ModeLever
@@ -197,6 +213,18 @@ class CameraViewModel @Inject constructor(
      *  the *only* caller (see its own comment for why that moved off `ui/CameraScreen`'s `LaunchedEffect`)
      *  — private since there's no longer any legitimate reason for the UI layer to trigger this directly. */
     private suspend fun setLut(lutId: String?, intensityPercent: Int) = cameraRepository.setLut(lutId, intensityPercent)
+
+    /**
+     * `ui/CameraScreen`'s `LutDial` (issue #43 follow-up) calls this on every discrete click — `null`
+     * selects "OFF". Mirrors `feature:settings`' `SettingsViewModel.onLutSelected` exactly: both just
+     * persist the selection via [CameraSettingsRepository.setSelectedLutId], never touch
+     * [CameraSettings.lutIntensityPercent] (intensity stays a Settings-screen-only fine-tune). The
+     * `init` block's `cameraSettings`-driven collector above is what actually reacts to the change and
+     * triggers [setLut]'s resolve — this function doesn't duplicate any of that.
+     */
+    fun onLutSelected(id: String?) {
+        viewModelScope.launch { cameraSettingsRepository.setSelectedLutId(id) }
+    }
 
     suspend fun takePhoto(): Result<Uri, DataError.Local> = cameraRepository.takePhoto()
 

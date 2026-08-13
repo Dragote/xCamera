@@ -14,7 +14,9 @@ import com.dragote.xcamera.feature.camera.domain.model.ZebraClipping
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.shared.common.domain.model.CameraSettings
+import com.dragote.xcamera.shared.common.domain.model.LutPreset
 import com.dragote.xcamera.shared.common.domain.repository.CameraSettingsRepository
+import com.dragote.xcamera.shared.common.domain.repository.LutRepository
 import com.dragote.xcamera.shared.common.domain.repository.LutResolutionRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
@@ -41,6 +43,7 @@ class CameraViewModelTest {
     private lateinit var cameraRepository: CameraRepository
     private lateinit var cameraSettingsRepository: CameraSettingsRepository
     private lateinit var lutResolutionRepository: LutResolutionRepository
+    private lateinit var lutRepository: LutRepository
     private lateinit var autoIsoFlow: MutableStateFlow<Int?>
     private lateinit var autoExposureTimeFlow: MutableStateFlow<Long?>
     private lateinit var zebraMaskFlow: MutableStateFlow<ZebraMask?>
@@ -49,6 +52,7 @@ class CameraViewModelTest {
     private lateinit var afConvergenceStateFlow: MutableStateFlow<AfConvergenceState?>
     private lateinit var cameraSettingsFlow: MutableStateFlow<CameraSettings>
     private lateinit var resolvingLutIdFlow: MutableStateFlow<String?>
+    private lateinit var lutsFlow: MutableStateFlow<List<LutPreset>>
     private lateinit var viewModel: CameraViewModel
 
     @Before
@@ -56,6 +60,7 @@ class CameraViewModelTest {
         cameraRepository = mockk()
         cameraSettingsRepository = mockk()
         lutResolutionRepository = mockk()
+        lutRepository = mockk()
         autoIsoFlow = MutableStateFlow(null)
         autoExposureTimeFlow = MutableStateFlow(null)
         zebraMaskFlow = MutableStateFlow(null)
@@ -64,6 +69,7 @@ class CameraViewModelTest {
         afConvergenceStateFlow = MutableStateFlow(null)
         cameraSettingsFlow = MutableStateFlow(CameraSettings())
         resolvingLutIdFlow = MutableStateFlow(null)
+        lutsFlow = MutableStateFlow(emptyList())
         every { cameraRepository.observeAutoIso() } returns autoIsoFlow
         every { cameraRepository.observeAutoExposureTime() } returns autoExposureTimeFlow
         every { cameraRepository.observeZebraMask() } returns zebraMaskFlow
@@ -72,12 +78,14 @@ class CameraViewModelTest {
         every { cameraRepository.observeAfConvergenceState() } returns afConvergenceStateFlow
         every { cameraSettingsRepository.observeSettings() } returns cameraSettingsFlow
         every { lutResolutionRepository.observeResolvingLutId() } returns resolvingLutIdFlow
+        every { lutRepository.observeLuts() } returns lutsFlow
         // Stubbed globally (rather than per-test) since the init block's settings collector (below)
         // calls this eagerly the moment the ViewModel is constructed, thanks to MainDispatcherRule's
         // UnconfinedTestDispatcher — every test would otherwise hit this unstubbed call, not just the
         // ones specifically asserting on it.
         coEvery { cameraRepository.setLut(any(), any()) } returns Unit
-        viewModel = CameraViewModel(cameraRepository, cameraSettingsRepository, lutResolutionRepository)
+        coEvery { cameraSettingsRepository.setSelectedLutId(any()) } returns Unit
+        viewModel = CameraViewModel(cameraRepository, cameraSettingsRepository, lutResolutionRepository, lutRepository)
     }
 
     @Test
@@ -964,6 +972,39 @@ class CameraViewModelTest {
             resolvingLutIdFlow.value = null
             assertEquals(false, awaitItem())
         }
+    }
+
+    @Test
+    fun `luts mirrors LutRepository's own catalog`() = runTest {
+        val preset = LutPreset(id = "1", displayName = "Portra", filePath = "/luts/1.cube")
+
+        viewModel.luts.test {
+            assertEquals(emptyList<LutPreset>(), awaitItem())
+
+            lutsFlow.value = listOf(preset)
+            assertEquals(listOf(preset), awaitItem())
+        }
+    }
+
+    @Test
+    fun `onLutSelected persists the id via CameraSettingsRepository`() = runTest {
+        viewModel.onLutSelected("portra")
+
+        coVerify { cameraSettingsRepository.setSelectedLutId("portra") }
+    }
+
+    @Test
+    fun `onLutSelected with null persists OFF`() = runTest {
+        viewModel.onLutSelected(null)
+
+        coVerify { cameraSettingsRepository.setSelectedLutId(null) }
+    }
+
+    @Test
+    fun `onLutSelected only persists selection, never touches intensity`() = runTest {
+        viewModel.onLutSelected("portra")
+
+        coVerify(exactly = 0) { cameraSettingsRepository.setLutIntensityPercent(any()) }
     }
 
     @Test
