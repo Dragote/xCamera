@@ -1,11 +1,13 @@
 package com.dragote.xcamera.feature.camera.ui.component
 
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -34,13 +36,18 @@ import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
  * [ExposingIndicator]'s own small-pill treatment (same background/padding/corner radius) rather than a
  * full-screen loading overlay — this is a brief, background operation, not a blocking one.
  *
- * Unlike [ViewfinderThumbnailChip]/`HistogramOverlay`, this pill's own *position* is fixed by the
- * caller (`ui/CameraScreen`'s `Modifier.align(...)`), not corner-hopping, and its pill shape is
- * deliberately wider than it is tall — rotating the whole pill (background included) 90°/270° the way
- * [ViewfinderThumbnailChip] rotates its square glyph-box would flip it into a tall sliver overflowing
- * past the corner it's pinned near. Instead only the *content* (the spinner + text `Row`) counter-rotates
- * in place, exactly per this component's own name — the pill's own background/position never move or
- * reshape, only what's legible inside it turns to stay upright to the user.
+ * **Corner-hops like [ViewfinderThumbnailChip], not fixed like an earlier version of this component
+ * was** — this app locks `MainActivity` to portrait (see root `AndroidManifest.xml`), so the window
+ * itself never physically rotates; a Compose `Alignment.TopStart` therefore always lands on the same
+ * fixed *device* corner, not on whatever corner currently reads as "top-left" to a user holding the
+ * phone rotated for a landscape shot. [cornerForQuadrant] (same mechanism [ViewfinderThumbnailChip]/
+ * `HistogramOverlay` already use) re-anchors the whole pill to a different Compose corner as the device
+ * rotates, so it stays at the viewfinder's perceived top-left; [counterRotationDegrees] on top of that
+ * keeps the pill's own text upright at each of those corners, the same way it always did.
+ *
+ * [modifier] should size this to the full area it's allowed to roam across corners of (e.g.
+ * `Modifier.fillMaxSize()` over the whole viewfinder), matching [ViewfinderThumbnailChip]'s own calling
+ * convention — not to the pill's own small size.
  */
 @Composable
 fun LutResolvingIndicator(visible: Boolean, modifier: Modifier = Modifier) {
@@ -51,34 +58,50 @@ fun LutResolvingIndicator(visible: Boolean, modifier: Modifier = Modifier) {
         label = "lutResolvingIndicatorAlpha",
     )
 
-    Box(
-        modifier = modifier
-            .alpha(alpha)
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color.Black.copy(alpha = 0.55f))
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.graphicsLayer { rotationZ = counterRotationDegrees(quadrant) },
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(12.dp),
-                strokeWidth = 1.5.dp,
-                color = Color.White,
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(text = "APPLYING LUT…", style = CameraChrome.leverLabelStyle().copy(color = Color.White))
+    Box(modifier = modifier.padding(CornerInset)) {
+        Crossfade(
+            targetState = quadrant,
+            modifier = Modifier.fillMaxSize(),
+            animationSpec = tween(durationMillis = 300, easing = CameraChrome.EaseStandard),
+            label = "lutResolvingIndicatorCorner",
+        ) { activeQuadrant ->
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = cornerForQuadrant(Alignment.TopStart, activeQuadrant),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .alpha(alpha)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.graphicsLayer { rotationZ = counterRotationDegrees(activeQuadrant) },
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            strokeWidth = 1.5.dp,
+                            color = Color.White,
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(text = "APPLYING LUT…", style = CameraChrome.leverLabelStyle().copy(color = Color.White))
+                    }
+                }
+            }
         }
     }
 }
+
+private val CornerInset = 12.dp
 
 @Preview(showBackground = true, backgroundColor = 0xFF0D1210)
 @Composable
 private fun LutResolvingIndicatorPreview() {
     XCameraTheme {
-        Box(modifier = Modifier.padding(24.dp)) {
-            LutResolvingIndicator(visible = true)
+        Box(modifier = Modifier.padding(24.dp).size(300.dp, 200.dp)) {
+            LutResolvingIndicator(visible = true, modifier = Modifier.fillMaxSize())
         }
     }
 }

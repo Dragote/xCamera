@@ -15,10 +15,11 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,7 +27,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -208,28 +208,30 @@ private fun SettingsContent(
 }
 
 /**
- * Color-grading LUT picker (issue #43) — a horizontally scrollable pill row (an unbounded, user-grown
- * list, unlike [PeakingSensitivitySelector]'s fixed three options, so `LazyRow`-style scrolling makes
- * more sense than wrapping) with "OFF" always first, then each imported [LutPreset], then a trailing
- * "+ IMPORT" pill. Reuses the same filled-pill-vs-outlined-text selection language
- * [PeakingSensitivitySelector] established rather than inventing a second one. The intensity
- * [Slider] only appears once a LUT is actually selected — it's meaningless while grading is off.
- * [resolvingLutId] (from `LutResolutionRepository`, `feature:camera`'s side of `setLut`'s file-read/
- * parse work) shows a small spinner on whichever chip's id matches it — "OFF" can never match, see
- * that interface's own doc. [isImportingLut] shows the same spinner treatment on the "+ IMPORT" pill
- * itself, for the separate file-copy step that precedes resolution, and disables re-tapping import
- * while one's already in flight.
+ * Color-grading LUT picker (issue #43) — a wrapping [FlowRow] of pills (an unbounded, user-grown list,
+ * unlike [PeakingSensitivitySelector]'s fixed three options; wraps onto further lines rather than
+ * scrolling horizontally so every imported LUT stays visible/reachable without a scroll gesture) with
+ * "OFF" always first, then each imported [LutPreset], then a trailing "+ IMPORT" pill. Reuses the same
+ * filled-pill-vs-outlined-text selection language [PeakingSensitivitySelector] established rather than
+ * inventing a second one. The intensity [Slider] only appears once a LUT is actually selected — it's
+ * meaningless while grading is off. [resolvingLutId] (from `LutResolutionRepository`, `feature:camera`'s
+ * side of `setLut`'s file-read/parse work) shows a small spinner on whichever chip's id matches it —
+ * "OFF" can never match, see that interface's own doc. [isImportingLut] shows the same spinner treatment
+ * on the "+ IMPORT" pill itself, for the separate file-copy step that precedes resolution, and disables
+ * re-tapping import while one's already in flight.
  *
- * Deletion is a classic iOS-style "jiggle mode" (replacing an earlier long-press-to-delete
- * interaction, which risked conflicting with this row's own [horizontalScroll] drag gesture) — the
- * pencil/check toggle next to the "COLOR LUT" label flips [isEditMode] (pure transient UI state, local
- * to this composable, not worth threading through the ViewModel); while active every imported
- * [LutPreset] chip shakes and tints red (see [LutPill]'s own doc) and tapping one deletes it via
- * [onLutDeleteRequested] instead of selecting it. "OFF"/"+ IMPORT" aren't deletable, so they're just
- * disabled for the duration instead of becoming delete targets. [initialEditMode] exists solely so a
- * `@Preview` can render the edit-mode-active state without reaching into this composable's private
- * `remember` — production call sites never pass it.
+ * Deletion is a classic iOS-style "jiggle mode" (replacing an earlier long-press-to-delete interaction,
+ * which risked conflicting with this row's drag gestures) — the pencil/check toggle next to the "COLOR
+ * LUT" label flips [isEditMode] (pure transient UI state, local to this composable, not worth threading
+ * through the ViewModel); while active every imported [LutPreset] chip shakes and tints red (see
+ * [LutPill]'s own doc) and tapping one deletes it via [onLutDeleteRequested] instead of selecting it.
+ * "OFF"/"+ IMPORT" aren't deletable, so they're just disabled for the duration instead of becoming
+ * delete targets — and deleting the very last LUT while in edit mode auto-exits it (see the
+ * `LaunchedEffect` below), since the toggle that would otherwise turn edit mode back off only renders
+ * for a non-empty list. [initialEditMode] exists solely so a `@Preview` can render the edit-mode-active
+ * state without reaching into this composable's private `remember` — production call sites never pass it.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun LutSelector(
     luts: List<LutPreset>,
@@ -246,10 +248,17 @@ private fun LutSelector(
 ) {
     val haptic = LocalHapticFeedback.current
     var isEditMode by remember { mutableStateOf(initialEditMode) }
+    // Deleting the last remaining LUT while in edit mode would otherwise strand isEditMode at `true`
+    // forever — the toggle button below is only shown for a non-empty list (see its own comment), so
+    // once luts empties out there'd be no way left to flip isEditMode back off, permanently disabling
+    // "OFF"/"+ IMPORT" via LutPill's own `enabled = !isEditMode`.
+    LaunchedEffect(luts.isEmpty()) {
+        if (luts.isEmpty()) isEditMode = false
+    }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
+        FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             LutPill(label = "OFF", isSelected = selectedLutId == null, enabled = !isEditMode) {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
