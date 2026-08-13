@@ -1307,10 +1307,15 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     /**
      * See [_activeLut]'s own doc — [cubeLut] `null` means "no LUT selected," disabling grading
      * entirely for both the live preview (once `ui/CameraScreen` observes this and pushes it into
-     * `CameraPreviewRenderer.setLut`) and the next still capture ([takePhoto]).
+     * `CameraPreviewRenderer.setLut`) and the next still capture ([takePhoto]). [lutId] is only ever
+     * meaningful alongside a non-null [cubeLut] — see [ActiveLut.lutId]'s own doc for what it's for.
      */
-    fun setLut(cubeLut: CubeLut?, intensityPercent: Int) {
-        _activeLut.value = cubeLut?.let { ActiveLut(it, intensityPercent.coerceIn(0, 100)) }
+    fun setLut(lutId: String?, cubeLut: CubeLut?, intensityPercent: Int) {
+        _activeLut.value = if (cubeLut != null && lutId != null) {
+            ActiveLut(lutId, cubeLut, intensityPercent.coerceIn(0, 100))
+        } else {
+            null
+        }
     }
 
     /**

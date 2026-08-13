@@ -454,7 +454,7 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     // collector legitimately still lives here.
     val activeLut by cameraRepository.observeActiveLut().collectAsStateWithLifecycle(initialValue = null)
     LaunchedEffect(activeLut) {
-        renderer.setLut(activeLut?.cubeLut, activeLut?.intensityPercent ?: 0)
+        renderer.setLut(activeLut?.lutId, activeLut?.cubeLut, activeLut?.intensityPercent ?: 0)
     }
 
     // MANUAL_SENSOR/SENSOR_INFO_SENSITIVITY_RANGE/SENSOR_INFO_EXPOSURE_TIME_RANGE and

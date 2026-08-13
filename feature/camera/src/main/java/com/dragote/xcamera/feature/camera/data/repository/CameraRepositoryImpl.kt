@@ -138,7 +138,7 @@ class CameraRepositoryImpl @Inject constructor(
             // "Off" clears the active LUT synchronously — nothing to resolve, so _resolvingLutId
             // never toggles for this path (see LutResolutionRepository's own doc), and there's nothing
             // that could fail either, so _resolutionFailures is untouched too.
-            cameraController.setLut(null, intensityPercent)
+            cameraController.setLut(null, null, intensityPercent)
             return
         }
         _resolvingLutId.value = lutId
@@ -162,7 +162,7 @@ class CameraRepositoryImpl @Inject constructor(
             if (cubeLut == null) {
                 _resolutionFailures.tryEmit(lutId)
             }
-            cameraController.setLut(cubeLut, intensityPercent)
+            cameraController.setLut(lutId, cubeLut, intensityPercent)
         } finally {
             _resolvingLutId.value = null
         }

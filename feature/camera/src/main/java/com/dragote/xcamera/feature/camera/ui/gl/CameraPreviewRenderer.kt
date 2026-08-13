@@ -75,20 +75,41 @@ class CameraPreviewRenderer {
     private var uTextureId = 0
     private var vTextureId = 0
 
-    /** `0` until a LUT has actually been uploaded via [setLut] — [uploadLutIfPending] treats that as
-     *  "no texture object exists yet, allocate one" the same way [textureStorageAllocated] gates the
-     *  Y/U/V planes' own allocate-once behavior. */
+    /**
+     * LRU cache of already-uploaded LUT textures, keyed by `lutId` (issue #43 follow-up) — every
+     * [CubeLut] is now normalized to the same canonical grid size at import time (`feature:settings`'
+     * `LutRepositoryImpl`), so texture *dimensions* never vary between different LUTs any more, which
+     * is what makes reusing a previous LUT's texture object safe (unlike before, when a differently-
+     * sized `.cube` could arrive at any moment and this was documented as not worth the complexity).
+     * A plain access-order [LinkedHashMap] is the entire LRU: [LinkedHashMap.get]/`put` both bump an
+     * entry to "most recently used" for free with `accessOrder = true`, and [LinkedHashMap
+     * .removeEldestEntry] below evicts (GL-deleting the texture as it goes) whichever entry that
+     * leaves least-recently-used once the cache exceeds [MaxCachedLutTextures]. Read/written only on
+     * the render thread, same as every other GL-state field in this class — no synchronization needed.
+     */
+    private val lutTextureCache = object : LinkedHashMap<String, Int>(MaxCachedLutTextures, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>): Boolean {
+            if (size <= MaxCachedLutTextures) return false
+            GLES30.glDeleteTextures(1, intArrayOf(eldest.value), 0)
+            return true
+        }
+    }
+
+    /** Whichever texture id in [lutTextureCache] is currently bound for sampling — `0` means grading
+     *  is off ([lutEnabledUniform] is pushed as `false`). */
     private var lutTextureId = 0
 
-    /** Set by [setLut] (via [handler]) whenever a *different* [CubeLut] arrives — cleared once
-     *  [uploadLutIfPending] has actually uploaded it, so a LUT is only re-uploaded to the GPU when it
-     *  genuinely changes, not on every intensity-only update (see [pendingLutIntensity]). */
+    /** Set by [setLut] (via [handler]) whenever a *different* `lutId` arrives — cleared once
+     *  [uploadLutIfPending] has actually resolved it (a cache hit just rebinds; a miss uploads fresh),
+     *  so a LUT selection is only touched on the GPU when it genuinely changes, not on every intensity-
+     *  only update (see [pendingLutIntensity]). */
+    private var pendingLutId: String? = null
     private var pendingLut: CubeLut? = null
     private var lutPendingUpload = false
 
-    /** Whichever [CubeLut] is currently uploaded to [lutTextureId] — `null` means grading is off
+    /** Whichever `lutId` is currently bound to [lutTextureId] — `null` means grading is off
      *  ([lutEnabledUniform] is pushed as `false`) and [lutTextureId] may be stale/unbound. */
-    private var currentLut: CubeLut? = null
+    private var currentLutId: String? = null
 
     /** 0f..1f blend factor pushed to [lutIntensityUniform] — updated independently of the texture
      *  upload above so dragging the intensity slider never re-uploads the (potentially large) 3D
@@ -197,15 +218,19 @@ class CameraPreviewRenderer {
 
     /**
      * Called from `ui/CameraScreen` whenever `CameraController.activeLut` changes (issue #43) — cheap
-     * to call from any thread, same as [updateViewMetrics]/[updateRotation]. [cubeLut] `null` disables
-     * grading entirely (the preview renders exactly as it does with no LUT); [intensityPercent] (0-100)
-     * is converted to the `[0,1]` blend factor the fragment shader expects. A same-instance [cubeLut]
-     * (structural equality via [CubeLut.equals]) is deliberately *not* re-uploaded — see [pendingLut]'s
-     * own doc for why that matters (an intensity-only slider drag must never re-upload the texture).
+     * to call from any thread, same as [updateViewMetrics]/[updateRotation]. [lutId]/[cubeLut] both
+     * `null` disables grading entirely (the preview renders exactly as it does with no LUT);
+     * [intensityPercent] (0-100) is converted to the `[0,1]` blend factor the fragment shader expects.
+     * The same `lutId` arriving again (an intensity-only slider drag, or simply re-selecting a LUT
+     * already active) is deliberately *not* re-touched on the GPU — see [pendingLutId]'s own doc for
+     * why that matters. Keyed by `lutId` rather than [CubeLut] structural equality (what this used to
+     * compare by) so [uploadLutIfPending] can serve an already-cached texture for a *different*
+     * [CubeLut] instance that happens to be the same LUT re-resolved from disk.
      */
-    fun setLut(cubeLut: CubeLut?, intensityPercent: Int) {
+    fun setLut(lutId: String?, cubeLut: CubeLut?, intensityPercent: Int) {
         renderHandler?.post {
-            if (cubeLut != currentLut) {
+            if (lutId != currentLutId) {
+                pendingLutId = lutId
                 pendingLut = cubeLut
                 lutPendingUpload = true
             }
@@ -331,8 +356,14 @@ class CameraPreviewRenderer {
         programId = 0
         transformDirty = true
         textureStorageAllocated = false
+        // Not explicitly glDeleteTextures'd here, same as yTextureId/uTextureId/vTextureId above never
+        // are — eglDestroyContext already implicitly frees every GL object (including every texture
+        // still sitting in lutTextureCache) that belonged to the just-torn-down context. Only this
+        // class's own Kotlin-side bookkeeping needs resetting so it doesn't leak into the next start().
+        lutTextureCache.clear()
         lutTextureId = 0
-        currentLut = null
+        currentLutId = null
+        pendingLutId = null
         pendingLut = null
         lutPendingUpload = false
         released = true
@@ -381,7 +412,7 @@ class CameraPreviewRenderer {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, vTextureId)
         GLES30.glUniform1i(vTextureUniform, 2)
 
-        val lutActive = currentLut != null && lutTextureId != 0
+        val lutActive = currentLutId != null && lutTextureId != 0
         if (lutActive) {
             GLES30.glActiveTexture(GLES30.GL_TEXTURE3)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTextureId)
@@ -484,32 +515,41 @@ class CameraPreviewRenderer {
     }
 
     /**
-     * Runs on the render thread only (called from [drawFrame]) — [setLut] just flags [pendingLut]/
-     * [lutPendingUpload], the actual `glTexImage3D` upload happens here where a GL context is
-     * guaranteed current. A fresh texture object is always (re-)allocated for a new [CubeLut] rather
-     * than reusing [lutTextureId] via `glTexSubImage3D` the way the Y/U/V planes do — LUT swaps happen
-     * at most a few times per session (a user picking a different preset), nowhere near per-frame, so
-     * the incremental-upload optimization that matters for [uploadTexture] isn't worth the complexity
-     * here. [CubeLut.values] (`[0,1]` floats) are quantized to unsigned bytes — full float precision
-     * isn't visually meaningful for a color-grading LUT and keeps the texture 4x smaller.
+     * Runs on the render thread only (called from [drawFrame]) — [setLut] just flags [pendingLutId]/
+     * [pendingLut]/[lutPendingUpload], the actual GL work happens here where a context is guaranteed
+     * current. Three outcomes per pending change: grading turned off (nothing to upload); a `lutId`
+     * already resident in [lutTextureCache] (issue #43 follow-up — every [CubeLut] is now the same
+     * canonical grid size, so a previous texture for this same `lutId` is always still valid; just
+     * rebind it, zero new GL calls); or a genuinely new `lutId` (allocate + `glTexImage3D` upload,
+     * then cache it). [CubeLut.values] (`[0,1]` floats) are quantized to unsigned bytes — full float
+     * precision isn't visually meaningful for a color-grading LUT and keeps the texture 4x smaller.
      */
     private fun uploadLutIfPending() {
+        if (!lutPendingUpload) return
+        val id = pendingLutId
         val lut = pendingLut
-        if (!lutPendingUpload || lut == null) {
-            if (lutPendingUpload && lut == null) {
-                // setLut(null, ...) — grading turned off. Nothing to upload; drawFrame's own
-                // `currentLut != null` check is what actually disables sampling.
-                currentLut = null
-                lutPendingUpload = false
-            }
+        if (id == null || lut == null) {
+            // setLut(null, null, ...) — grading turned off. Already-uploaded textures are left resident
+            // in lutTextureCache (cheap to keep around in case grading gets flipped back on for a LUT
+            // already seen this session) — drawFrame's own `currentLutId != null` check is what
+            // actually disables sampling.
+            currentLutId = null
+            lutTextureId = 0
+            lutPendingUpload = false
             return
         }
 
-        if (lutTextureId == 0) {
-            val ids = IntArray(1)
-            GLES30.glGenTextures(1, ids, 0)
-            lutTextureId = ids[0]
+        val cachedTextureId = lutTextureCache[id] // get() on this access-order map also marks it MRU
+        if (cachedTextureId != null) {
+            lutTextureId = cachedTextureId
+            currentLutId = id
+            lutPendingUpload = false
+            return
         }
+
+        val ids = IntArray(1)
+        GLES30.glGenTextures(1, ids, 0)
+        val newTextureId = ids[0]
 
         val byteValues = ByteArray(lut.values.size) { i -> (lut.values[i].coerceIn(0f, 1f) * 255f).toInt().toByte() }
         val buffer = ByteBuffer.allocateDirect(byteValues.size).order(ByteOrder.nativeOrder()).apply {
@@ -517,7 +557,7 @@ class CameraPreviewRenderer {
             position(0)
         }
 
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTextureId)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, newTextureId)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
@@ -528,8 +568,11 @@ class CameraPreviewRenderer {
             GLES30.GL_RGB, GLES30.GL_UNSIGNED_BYTE, buffer,
         )
 
-        currentLut = lut
-        pendingLut = null
+        // May trigger removeEldestEntry's own eviction (GL-deleting whichever texture that bumps out)
+        // if this pushes the cache past MaxCachedLutTextures.
+        lutTextureCache[id] = newTextureId
+        lutTextureId = newTextureId
+        currentLutId = id
         lutPendingUpload = false
     }
 
@@ -618,6 +661,11 @@ class CameraPreviewRenderer {
 
     private companion object {
         private const val TAG = "CameraPreviewRenderer"
+
+        /** Cap on [lutTextureCache]'s resident texture count — small on purpose (a user cycling
+         *  through a handful of LUTs in one session, not hundreds); each canonical-size (33³) LUT
+         *  texture is a few hundred KB, so even the max is a trivial amount of GPU memory. */
+        private const val MaxCachedLutTextures = 8
 
         fun directFloatBuffer(values: FloatArray): FloatBuffer =
             ByteBuffer.allocateDirect(values.size * Float.SIZE_BYTES)

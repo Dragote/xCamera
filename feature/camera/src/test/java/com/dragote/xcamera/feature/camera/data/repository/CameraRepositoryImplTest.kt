@@ -257,21 +257,21 @@ class CameraRepositoryImplTest {
 
     @Test
     fun `setLut with a null id clears the controller's active LUT`() = runTest {
-        every { cameraController.setLut(null, 50) } returns Unit
+        every { cameraController.setLut(any(), null, 50) } returns Unit
 
         repository.setLut(null, 50)
 
-        verify { cameraController.setLut(null, 50) }
+        verify { cameraController.setLut(any(), null, 50) }
     }
 
     @Test
     fun `setLut with an unknown id resolves to no LUT`() = runTest {
         every { lutRepository.observeLuts() } returns flowOf(emptyList())
-        every { cameraController.setLut(null, 80) } returns Unit
+        every { cameraController.setLut(any(), null, 80) } returns Unit
 
         repository.setLut("missing-id", 80)
 
-        verify { cameraController.setLut(null, 80) }
+        verify { cameraController.setLut(any(), null, 80) }
     }
 
     @Test
@@ -288,7 +288,7 @@ class CameraRepositoryImplTest {
         every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
         every { lutFileReader.readText(preset.filePath) } returns null
         var resolvingIdDuringSetLut: String? = "not-captured"
-        every { cameraController.setLut(any(), any()) } answers {
+        every { cameraController.setLut(any(), any(), any()) } answers {
             resolvingIdDuringSetLut = (repository.observeResolvingLutId() as StateFlow<String?>).value
         }
 
@@ -300,7 +300,7 @@ class CameraRepositoryImplTest {
 
     @Test
     fun `setLut with a null id never surfaces a resolving id`() = runTest {
-        every { cameraController.setLut(null, 50) } returns Unit
+        every { cameraController.setLut(any(), null, 50) } returns Unit
 
         repository.setLut(null, 50)
 
@@ -311,7 +311,7 @@ class CameraRepositoryImplTest {
     fun `setLut with an unknown id still toggles the resolving id around the call`() = runTest {
         every { lutRepository.observeLuts() } returns flowOf(emptyList())
         var resolvingIdDuringSetLut: String? = "not-captured"
-        every { cameraController.setLut(null, 80) } answers {
+        every { cameraController.setLut(any(), null, 80) } answers {
             resolvingIdDuringSetLut = (repository.observeResolvingLutId() as StateFlow<String?>).value
         }
 
@@ -329,7 +329,7 @@ class CameraRepositoryImplTest {
     @Test
     fun `setLut with an id not found in the LUT list emits a resolution failure`() = runTest {
         every { lutRepository.observeLuts() } returns flowOf(emptyList())
-        every { cameraController.setLut(null, 80) } returns Unit
+        every { cameraController.setLut(any(), null, 80) } returns Unit
 
         repository.observeResolutionFailures().test {
             repository.setLut("missing-id", 80)
@@ -342,7 +342,7 @@ class CameraRepositoryImplTest {
         val preset = LutPreset(id = "1", displayName = "Test", filePath = "/nonexistent/path.cube")
         every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
         every { lutFileReader.readText(preset.filePath) } returns null
-        every { cameraController.setLut(null, 50) } returns Unit
+        every { cameraController.setLut(any(), null, 50) } returns Unit
 
         repository.observeResolutionFailures().test {
             repository.setLut("1", 50)
@@ -355,7 +355,7 @@ class CameraRepositoryImplTest {
         val preset = LutPreset(id = "2", displayName = "Malformed", filePath = "/luts/2.cube")
         every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
         every { lutFileReader.readText(preset.filePath) } returns "not a cube file"
-        every { cameraController.setLut(null, 50) } returns Unit
+        every { cameraController.setLut(any(), null, 50) } returns Unit
 
         repository.observeResolutionFailures().test {
             repository.setLut("2", 50)
@@ -365,7 +365,7 @@ class CameraRepositoryImplTest {
 
     @Test
     fun `setLut with a null id never emits a resolution failure`() = runTest {
-        every { cameraController.setLut(null, 50) } returns Unit
+        every { cameraController.setLut(any(), null, 50) } returns Unit
 
         repository.observeResolutionFailures().test {
             repository.setLut(null, 50)
@@ -378,7 +378,7 @@ class CameraRepositoryImplTest {
         val preset = LutPreset(id = "3", displayName = "Valid", filePath = "/luts/3.cube")
         every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
         every { lutFileReader.readText(preset.filePath) } returns validCubeContent
-        every { cameraController.setLut(any(), 50) } returns Unit
+        every { cameraController.setLut(any(), any(), 50) } returns Unit
 
         repository.observeResolutionFailures().test {
             repository.setLut("3", 50)
@@ -391,7 +391,7 @@ class CameraRepositoryImplTest {
         val preset = LutPreset(id = "3", displayName = "Valid", filePath = "/luts/3.cube")
         every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
         every { lutFileReader.readText(preset.filePath) } returns validCubeContent
-        every { cameraController.setLut(any(), 50) } returns Unit
+        every { cameraController.setLut(any(), any(), 50) } returns Unit
 
         repository.setLut("3", 50)
         repository.setLut("3", 50)
@@ -404,13 +404,13 @@ class CameraRepositoryImplTest {
         val preset = LutPreset(id = "3", displayName = "Valid", filePath = "/luts/3.cube")
         every { lutRepository.observeLuts() } returnsMany listOf(flowOf(listOf(preset)), flowOf(emptyList()))
         every { lutFileReader.readText(preset.filePath) } returns validCubeContent
-        every { cameraController.setLut(any(), 50) } returns Unit
-        every { cameraController.setLut(null, 50) } returns Unit
+        every { cameraController.setLut(any(), any(), 50) } returns Unit
+        every { cameraController.setLut(any(), null, 50) } returns Unit
 
         repository.setLut("3", 50) // resolves and caches
         repository.setLut("3", 50) // preset no longer in the (now-empty) list — must not use the cache
 
-        verify { cameraController.setLut(null, 50) }
+        verify { cameraController.setLut(any(), null, 50) }
     }
 
     private val validCubeContent = """
