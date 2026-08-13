@@ -18,20 +18,27 @@ import com.dragote.xcamera.shared.common.domain.repository.LutRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
 import com.dragote.xcamera.shared.common.domain.model.LutPreset
+import app.cash.turbine.test
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 class CameraRepositoryImplTest {
+
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
 
     private val cameraController = mockk<CameraController>()
     private val lutRepository = mockk<LutRepository> {
@@ -320,5 +327,78 @@ class CameraRepositoryImplTest {
     @Test
     fun `observeResolvingLutId starts out null`() {
         assertNull((repository.observeResolvingLutId() as StateFlow<String?>).value)
+    }
+
+    @Test
+    fun `setLut with an id not found in the LUT list emits a resolution failure`() = runTest {
+        every { lutRepository.observeLuts() } returns flowOf(emptyList())
+        every { cameraController.setLut(null, 80) } returns Unit
+
+        repository.observeResolutionFailures().test {
+            repository.setLut("missing-id", 80)
+            assertEquals("missing-id", awaitItem())
+        }
+    }
+
+    @Test
+    fun `setLut with a preset whose file can't be read emits a resolution failure`() = runTest {
+        val preset = LutPreset(id = "1", displayName = "Test", filePath = "/nonexistent/path.cube")
+        every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
+        every { cameraController.setLut(null, 50) } returns Unit
+
+        repository.observeResolutionFailures().test {
+            repository.setLut("1", 50)
+            assertEquals("1", awaitItem())
+        }
+    }
+
+    @Test
+    fun `setLut with malformed cube content emits a resolution failure`() = runTest {
+        val file = temporaryFolder.newFile("malformed.cube").apply { writeText("not a cube file") }
+        val preset = LutPreset(id = "2", displayName = "Malformed", filePath = file.absolutePath)
+        every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
+        every { cameraController.setLut(null, 50) } returns Unit
+
+        repository.observeResolutionFailures().test {
+            repository.setLut("2", 50)
+            assertEquals("2", awaitItem())
+        }
+    }
+
+    @Test
+    fun `setLut with a null id never emits a resolution failure`() = runTest {
+        every { cameraController.setLut(null, 50) } returns Unit
+
+        repository.observeResolutionFailures().test {
+            repository.setLut(null, 50)
+            expectNoEvents()
+        }
+    }
+
+    @Test
+    fun `setLut that successfully resolves a LUT doesn't emit a resolution failure`() = runTest {
+        val file = temporaryFolder.newFile("valid.cube").apply {
+            writeText(
+                """
+                LUT_3D_SIZE 2
+                0.0 0.0 0.0
+                0.0 0.0 1.0
+                0.0 1.0 0.0
+                0.0 1.0 1.0
+                1.0 0.0 0.0
+                1.0 0.0 1.0
+                1.0 1.0 0.0
+                1.0 1.0 1.0
+                """.trimIndent(),
+            )
+        }
+        val preset = LutPreset(id = "3", displayName = "Valid", filePath = file.absolutePath)
+        every { lutRepository.observeLuts() } returns flowOf(listOf(preset))
+        every { cameraController.setLut(any(), 50) } returns Unit
+
+        repository.observeResolutionFailures().test {
+            repository.setLut("3", 50)
+            expectNoEvents()
+        }
     }
 }

@@ -21,4 +21,17 @@ interface LutResolutionRepository {
      * spinner for.
      */
     fun observeResolvingLutId(): Flow<String?>
+
+    /**
+     * Emits a `LutPreset.id` once whenever `CameraRepository.setLut` was asked to resolve a *non-null*
+     * `lutId` (an actual selection, not the "OFF" `null` path — see [observeResolvingLutId]'s own doc
+     * for why that path never has anything to fail) but ended up with a `null` parsed LUT — whether
+     * because [lutId] wasn't found in the LUT list at all, its file couldn't be read, or its content
+     * failed `.cube` parsing. A one-shot event stream, not sticky state the way [observeResolvingLutId]
+     * is (a `MutableSharedFlow`-backed implementation, not a `StateFlow`) — a failure should surface
+     * exactly once to whoever's collecting (`feature:settings`' `SettingsViewModel`, to auto-clean-up
+     * the broken import and surface a toast), not linger as state a later, unrelated collector would
+     * replay.
+     */
+    fun observeResolutionFailures(): Flow<String>
 }

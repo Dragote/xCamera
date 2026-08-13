@@ -24,7 +24,9 @@ import com.dragote.xcamera.shared.common.domain.result.Result
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -41,6 +43,12 @@ class CameraRepositoryImpl @Inject constructor(
     /** Backs [observeResolvingLutId] — see [LutResolutionRepository]'s own doc for why this only ever
      *  holds a non-null `lutId`, never a "resolving null" state. */
     private val _resolvingLutId = MutableStateFlow<String?>(null)
+
+    /** Backs [observeResolutionFailures] — see [LutResolutionRepository]'s own doc. `extraBufferCapacity
+     *  = 1` (not the default `0`) so a failure emitted with no collector currently subscribed (e.g. the
+     *  Settings screen not on screen at the moment `setLut` runs) isn't just dropped — `tryEmit` below
+     *  would otherwise silently fail against an unbuffered `SharedFlow` with no ready collector. */
+    private val _resolutionFailures = MutableSharedFlow<String>(extraBufferCapacity = 1)
 
     override suspend fun bindCamera(
         lifecycleOwner: LifecycleOwner,
@@ -98,12 +106,17 @@ class CameraRepositoryImpl @Inject constructor(
      * subscription — LUT selection changes are infrequent user actions, not something that needs to
      * react to the *list* changing mid-resolution), then reads + parses that preset's file off disk.
      * `null` (either `lutId` itself, an id not present in the list, an unreadable file, or a malformed
-     * `.cube`) always means "no LUT" to [CameraController.setLut] — never throws.
+     * `.cube`) always means "no LUT" to [CameraController.setLut] — never throws. A non-null [lutId]
+     * that still resolves to a `null` LUT is also reported via [_resolutionFailures] — see
+     * [observeResolutionFailures]'s own doc for why that's the file-type-validation gate for import
+     * (issue #43's follow-up: `feature:settings` can't validate `.cube` content itself without
+     * depending on `feature:camera`).
      */
     override suspend fun setLut(lutId: String?, intensityPercent: Int) {
         if (lutId == null) {
             // "Off" clears the active LUT synchronously — nothing to resolve, so _resolvingLutId
-            // never toggles for this path (see LutResolutionRepository's own doc).
+            // never toggles for this path (see LutResolutionRepository's own doc), and there's nothing
+            // that could fail either, so _resolutionFailures is untouched too.
             cameraController.setLut(null, intensityPercent)
             return
         }
@@ -118,6 +131,9 @@ class CameraRepositoryImpl @Inject constructor(
                     runCatching { File(preset.filePath).readText() }.getOrNull()?.let { content -> parseCubeLut(content) }
                 }
             }
+            if (cubeLut == null) {
+                _resolutionFailures.tryEmit(lutId)
+            }
             cameraController.setLut(cubeLut, intensityPercent)
         } finally {
             _resolvingLutId.value = null
@@ -127,6 +143,8 @@ class CameraRepositoryImpl @Inject constructor(
     override fun observeActiveLut(): Flow<ActiveLut?> = cameraController.activeLut
 
     override fun observeResolvingLutId(): Flow<String?> = _resolvingLutId.asStateFlow()
+
+    override fun observeResolutionFailures(): Flow<String> = _resolutionFailures.asSharedFlow()
 
     override suspend fun takePhoto(): Result<Uri, DataError.Local> = try {
         Result.Success(cameraController.takePhoto())
