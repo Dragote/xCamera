@@ -702,7 +702,10 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                     )
                     LutResolvingIndicator(
                         visible = isLutResolving,
-                        modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
+                        // TopStart, not TopEnd — HistogramOverlay corner-hops through TopEnd (top-right
+                        // in natural/portrait orientation, see cornerForQuadrant), so anchoring this
+                        // pill there too meant the two could visually overlap.
+                        modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
                     )
                     ViewfinderThumbnailChip(
                         photoUri = uiState.lastSavedUri ?: latestGalleryUri,

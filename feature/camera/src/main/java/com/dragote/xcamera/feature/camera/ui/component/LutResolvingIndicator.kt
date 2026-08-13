@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
@@ -32,9 +33,18 @@ import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
  * being applied, so a resolve that took a beat just looked like nothing happened. Mirrors
  * [ExposingIndicator]'s own small-pill treatment (same background/padding/corner radius) rather than a
  * full-screen loading overlay — this is a brief, background operation, not a blocking one.
+ *
+ * Unlike [ViewfinderThumbnailChip]/`HistogramOverlay`, this pill's own *position* is fixed by the
+ * caller (`ui/CameraScreen`'s `Modifier.align(...)`), not corner-hopping, and its pill shape is
+ * deliberately wider than it is tall — rotating the whole pill (background included) 90°/270° the way
+ * [ViewfinderThumbnailChip] rotates its square glyph-box would flip it into a tall sliver overflowing
+ * past the corner it's pinned near. Instead only the *content* (the spinner + text `Row`) counter-rotates
+ * in place, exactly per this component's own name — the pill's own background/position never move or
+ * reshape, only what's legible inside it turns to stay upright to the user.
  */
 @Composable
 fun LutResolvingIndicator(visible: Boolean, modifier: Modifier = Modifier) {
+    val quadrant by rememberDeviceOrientationQuadrant()
     val alpha by animateFloatAsState(
         targetValue = if (visible) 1f else 0f,
         animationSpec = tween(durationMillis = 150, easing = CameraChrome.EaseStandard),
@@ -48,7 +58,10 @@ fun LutResolvingIndicator(visible: Boolean, modifier: Modifier = Modifier) {
             .background(Color.Black.copy(alpha = 0.55f))
             .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.graphicsLayer { rotationZ = counterRotationDegrees(quadrant) },
+        ) {
             CircularProgressIndicator(
                 modifier = Modifier.size(12.dp),
                 strokeWidth = 1.5.dp,
