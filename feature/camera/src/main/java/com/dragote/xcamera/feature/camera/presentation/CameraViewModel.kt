@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -146,6 +147,26 @@ class CameraViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(liveFocusDistanceDiopters = distance)
             }
         }
+
+        // Issue #43 follow-up — this used to be `ui/CameraScreen`'s own `LaunchedEffect(cameraSettings
+        // .selectedLutId, cameraSettings.lutIntensityPercent)`, which only ran while CameraScreen itself
+        // was composed. Compose-destinations navigation removes CameraScreen from composition the moment
+        // the user navigates to SettingsScreen — but this ViewModel (back-stack-scoped) stays alive the
+        // whole time, and Settings is the *only* place a LUT selection/import can happen. That meant the
+        // entire resolve step (file read + .cube parse, including the resolve-failure-driven file-type
+        // validation) never even started while the user was sitting on Settings — it only fired once they
+        // navigated back to the camera screen, which is exactly why resolving looked invisible/instant on
+        // "import" and slow on "navigate back". Living here instead runs for this ViewModel's whole
+        // lifetime regardless of which screen is composed, so resolution now typically completes in the
+        // background while the user is still on Settings. distinctUntilChanged mirrors what the two
+        // LaunchedEffect keys gave for free — an unrelated settings change (e.g. showGrid) must not
+        // re-trigger a resolve.
+        viewModelScope.launch {
+            cameraSettingsRepository.observeSettings()
+                .map { it.selectedLutId to it.lutIntensityPercent }
+                .distinctUntilChanged()
+                .collect { (lutId, intensityPercent) -> setLut(lutId, intensityPercent) }
+        }
     }
 
     fun setFlashMode(flashMode: FlashMode) = cameraRepository.setFlashMode(flashMode)
@@ -172,10 +193,10 @@ class CameraViewModel @Inject constructor(
         cameraRepository.setManualFocusDistance(distanceDiopters)
 
     /** Resolves and caches [CameraUiState]-adjacent LUT selection (issue #43) — see
-     *  `CameraRepository.setLut`'s own doc. `ui/CameraScreen` calls this from a `LaunchedEffect` keyed
-     *  on [cameraSettings]'s `selectedLutId`/`lutIntensityPercent`, mirroring how `setFlashMode` is
-     *  driven off `uiState.flashMode` there. */
-    suspend fun setLut(lutId: String?, intensityPercent: Int) = cameraRepository.setLut(lutId, intensityPercent)
+     *  `CameraRepository.setLut`'s own doc. The `init` block's `cameraSettings`-driven collector is now
+     *  the *only* caller (see its own comment for why that moved off `ui/CameraScreen`'s `LaunchedEffect`)
+     *  — private since there's no longer any legitimate reason for the UI layer to trigger this directly. */
+    private suspend fun setLut(lutId: String?, intensityPercent: Int) = cameraRepository.setLut(lutId, intensityPercent)
 
     suspend fun takePhoto(): Result<Uri, DataError.Local> = cameraRepository.takePhoto()
 

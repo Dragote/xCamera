@@ -72,6 +72,11 @@ class CameraViewModelTest {
         every { cameraRepository.observeAfConvergenceState() } returns afConvergenceStateFlow
         every { cameraSettingsRepository.observeSettings() } returns cameraSettingsFlow
         every { lutResolutionRepository.observeResolvingLutId() } returns resolvingLutIdFlow
+        // Stubbed globally (rather than per-test) since the init block's settings collector (below)
+        // calls this eagerly the moment the ViewModel is constructed, thanks to MainDispatcherRule's
+        // UnconfinedTestDispatcher — every test would otherwise hit this unstubbed call, not just the
+        // ones specifically asserting on it.
+        coEvery { cameraRepository.setLut(any(), any()) } returns Unit
         viewModel = CameraViewModel(cameraRepository, cameraSettingsRepository, lutResolutionRepository)
     }
 
@@ -886,12 +891,35 @@ class CameraViewModelTest {
     }
 
     @Test
-    fun `setLut delegates to the repository`() = runTest {
-        coEvery { cameraRepository.setLut("abc", 70) } returns Unit
-
-        viewModel.setLut("abc", 70)
+    fun `resolves the LUT whenever selectedLutId or lutIntensityPercent changes in settings`() = runTest {
+        cameraSettingsFlow.value = CameraSettings(selectedLutId = "abc", lutIntensityPercent = 70)
 
         coVerify { cameraRepository.setLut("abc", 70) }
+    }
+
+    @Test
+    fun `resolves the LUT again once intensity changes for the same selected LUT`() = runTest {
+        cameraSettingsFlow.value = CameraSettings(selectedLutId = "abc", lutIntensityPercent = 70)
+        cameraSettingsFlow.value = CameraSettings(selectedLutId = "abc", lutIntensityPercent = 40)
+
+        coVerify { cameraRepository.setLut("abc", 70) }
+        coVerify { cameraRepository.setLut("abc", 40) }
+    }
+
+    @Test
+    fun `does not re-resolve the LUT for a settings emission that only changes an unrelated field`() = runTest {
+        cameraSettingsFlow.value = CameraSettings(selectedLutId = "abc", lutIntensityPercent = 70)
+        coVerify(exactly = 1) { cameraRepository.setLut("abc", 70) }
+
+        // showGrid changes, selectedLutId/lutIntensityPercent don't.
+        cameraSettingsFlow.value = CameraSettings(selectedLutId = "abc", lutIntensityPercent = 70, showGrid = true)
+
+        coVerify(exactly = 1) { cameraRepository.setLut("abc", 70) }
+    }
+
+    @Test
+    fun `resolves the initial null-LUT settings state exactly once on ViewModel creation`() = runTest {
+        coVerify(exactly = 1) { cameraRepository.setLut(null, 100) }
     }
 
     @Test

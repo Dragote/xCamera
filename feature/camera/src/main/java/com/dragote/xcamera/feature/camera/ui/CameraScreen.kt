@@ -442,18 +442,16 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
         viewModel.setFlashMode(uiState.flashMode)
     }
 
-    // Issue #43 — resolves CameraSettings.selectedLutId/lutIntensityPercent into an actual parsed LUT
-    // (see CameraRepository.setLut's own doc) whenever either changes. The *result* is pushed into
-    // CameraPreviewRenderer separately, via the observeActiveLut collector below — this effect only
-    // triggers the resolve/cache step, mirroring how uiState.flashMode drives setFlashMode above.
-    LaunchedEffect(cameraSettings.selectedLutId, cameraSettings.lutIntensityPercent) {
-        viewModel.setLut(cameraSettings.selectedLutId, cameraSettings.lutIntensityPercent)
-    }
-
-    // Mirrors the effect above but on the *resolved* side: CameraController.activeLut only updates
-    // once setLut has actually finished reading+parsing the LUT file, so this is what genuinely drives
-    // the live preview's own LUT texture — a separate collector (not chained onto the LaunchedEffect
-    // above) since CameraPreviewRenderer is owned directly by this composable, not by the ViewModel.
+    // Issue #43 follow-up — resolving CameraSettings.selectedLutId/lutIntensityPercent into an actual
+    // parsed LUT (CameraRepository.setLut) is no longer triggered from here: CameraViewModel's own init
+    // block now drives it directly off CameraSettingsRepository.observeSettings(), so it keeps running
+    // for the ViewModel's whole lifetime (including while the user is on SettingsScreen and this
+    // composable isn't even in composition) rather than only while CameraScreen happens to be composed —
+    // see that collector's own comment for the full story. This effect only reacts to the *resolved*
+    // side: CameraController.activeLut only updates once setLut has actually finished reading+parsing
+    // the LUT file, so this is what genuinely drives the live preview's own LUT texture.
+    // CameraPreviewRenderer is a GL object owned directly by this composable (not the ViewModel), so this
+    // collector legitimately still lives here.
     val activeLut by cameraRepository.observeActiveLut().collectAsStateWithLifecycle(initialValue = null)
     LaunchedEffect(activeLut) {
         renderer.setLut(activeLut?.cubeLut, activeLut?.intensityPercent ?: 0)
