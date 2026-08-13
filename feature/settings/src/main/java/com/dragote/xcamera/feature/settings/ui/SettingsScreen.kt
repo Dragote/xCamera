@@ -15,6 +15,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -168,6 +170,11 @@ private fun SettingsContent(
     Column(
         modifier = modifier
             .fillMaxSize()
+            // A wrapping FlowRow shows every imported LUT chip at once (no horizontal scroll) — with
+            // enough imported LUTs that row alone can exceed the screen's height, which without this
+            // verticalScroll would strand the intensity slider and anything below it permanently
+            // off-screen with no way to reach it.
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {

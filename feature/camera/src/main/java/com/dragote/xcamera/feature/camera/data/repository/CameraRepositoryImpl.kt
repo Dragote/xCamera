@@ -51,10 +51,21 @@ class CameraRepositoryImpl @Inject constructor(
      * resolves to a file path at all) before ever consulting this cache, so a stale entry for a
      * since-deleted LUT (`SettingsViewModel.onLutDeleteRequested`, or the resolution-failure auto-
      * cleanup path from issue #43's earlier round) is never served as if it still existed — see
-     * [setLut]'s own doc. A plain unbounded `MutableMap`, no LRU/eviction — a user's LUT library is
-     * realistically tens of entries, not thousands, per this project's minimal-infra preference.
+     * [setLut]'s own doc.
+     *
+     * Access-order [LinkedHashMap] capped at [ResolvedLutCacheCapacity], evicting the least-recently-
+     * used entry once exceeded — mirrors `CameraPreviewRenderer.lutTextureCache`'s own LRU (same
+     * `removeEldestEntry` idiom), just without that one's GL-resource cleanup step: an evicted [CubeLut]
+     * is a plain heap object, dropping the last reference is enough, no explicit release needed. Each
+     * cached entry is a 33³ `FloatArray` (~420KB) since every `.cube` is resampled to the same canonical
+     * size on import — bounding this was worth doing once a user's real usage pattern (trying many
+     * different LUTs across a long session, not just a fixed handful) could otherwise grow this
+     * unboundedly for the lifetime of this `@Singleton`.
      */
-    private val resolvedLutCache = mutableMapOf<String, CubeLut>()
+    private val resolvedLutCache = object : LinkedHashMap<String, CubeLut>(ResolvedLutCacheCapacity, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CubeLut>): Boolean =
+            size > ResolvedLutCacheCapacity
+    }
 
     /** Backs [observeResolvingLutId] — see [LutResolutionRepository]'s own doc for why this only ever
      *  holds a non-null `lutId`, never a "resolving null" state. */
@@ -189,4 +200,12 @@ class CameraRepositoryImpl @Inject constructor(
     override suspend fun latestGalleryPhotoUri(): Uri? = cameraController.latestGalleryPhotoUri()
 
     override fun stopOrientationListener() = cameraController.stopOrientationListener()
+
+    private companion object {
+        /** See [resolvedLutCache]'s own doc — generous relative to `CameraPreviewRenderer`'s 8-slot GPU
+         *  texture cache since a resolved [CubeLut] is much cheaper to hold (~420KB heap vs. a live GPU
+         *  texture), so there's room to remember more distinct LUTs than are ever simultaneously GPU-
+         *  resident before this cache needs to start evicting. */
+        const val ResolvedLutCacheCapacity = 20
+    }
 }
