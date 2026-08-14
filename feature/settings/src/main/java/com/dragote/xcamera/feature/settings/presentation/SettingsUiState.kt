@@ -17,4 +17,8 @@ data class SettingsUiState(
      *  `null` once resolution finishes or nothing's in flight. Drives the spinner on that specific
      *  chip in `ui/SettingsScreen`'s `LutSelector`, not a generic global spinner (issue #43). */
     val resolvingLutId: String? = null,
+    /** "Capture RAW alongside JPEG whenever possible" preference (issue #45 follow-up) — see
+     *  `CameraSettings.captureRawByDefault`'s own doc for why this is a preference, not a hardware
+     *  guarantee. */
+    val captureRawByDefault: Boolean = false,
 )

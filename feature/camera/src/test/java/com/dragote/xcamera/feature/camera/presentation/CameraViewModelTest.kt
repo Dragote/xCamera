@@ -996,7 +996,7 @@ class CameraViewModelTest {
     }
 
     @Test
-    fun `onRawCaptureCapabilityChanged with no capability hides the feature and clears the per-shot choice`() = runTest {
+    fun `onRawCaptureCapabilityChanged with no capability hides the feature`() = runTest {
         val capability = RawCaptureCapability(sensorWidth = 4032, sensorHeight = 3024)
 
         viewModel.uiState.test {
@@ -1005,43 +1005,8 @@ class CameraViewModelTest {
             viewModel.onRawCaptureCapabilityChanged(capability)
             assertTrue(awaitItem().rawCaptureSupported)
 
-            viewModel.onIncludeRawToggled()
-            assertTrue(awaitItem().includeRawInCapture)
-
             viewModel.onRawCaptureCapabilityChanged(null)
-            val updated = awaitItem()
-            assertFalse(updated.rawCaptureSupported)
-            assertFalse(updated.includeRawInCapture)
-        }
-    }
-
-    @Test
-    fun `onIncludeRawToggled flips the per-shot choice while RAW is supported`() = runTest {
-        val capability = RawCaptureCapability(sensorWidth = 4032, sensorHeight = 3024)
-
-        viewModel.uiState.test {
-            awaitItem() // initial
-
-            viewModel.onRawCaptureCapabilityChanged(capability)
-            assertFalse(awaitItem().includeRawInCapture)
-
-            viewModel.onIncludeRawToggled()
-            assertTrue(awaitItem().includeRawInCapture)
-
-            viewModel.onIncludeRawToggled()
-            assertFalse(awaitItem().includeRawInCapture)
-        }
-    }
-
-    @Test
-    fun `onIncludeRawToggled is a no-op while RAW isn't supported`() = runTest {
-        viewModel.uiState.test {
-            val initial = awaitItem()
-            assertFalse(initial.rawCaptureSupported)
-
-            viewModel.onIncludeRawToggled()
-
-            expectNoEvents()
+            assertFalse(awaitItem().rawCaptureSupported)
         }
     }
 

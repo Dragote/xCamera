@@ -62,18 +62,13 @@ data class CameraUiState(
      */
     val liveFocusDistanceDiopters: Float? = null,
     /**
-     * Whether [selectedLens] reports Camera2's `RAW` capability (issue #45) — gates whether the
-     * capture UI offers a "with RAW"/"without RAW" per-shot choice at all. `false` on a lens with no
-     * `RAW` support (e.g. the vast majority of front/ultra-wide/tele auxiliary lenses) — matching this
-     * issue's own non-goal of never surfacing RAW as an error state, just quietly not offered.
+     * Whether [selectedLens] reports Camera2's `RAW` capability (issue #45) — a live per-lens hardware
+     * check, not a user preference. `false` on a lens with no `RAW` support (e.g. the vast majority of
+     * front/ultra-wide/tele auxiliary lenses) — matching this issue's own non-goal of never surfacing
+     * RAW as an error state, just quietly unavailable. `ui/CameraScreen` ANDs this with
+     * `CameraSettings.captureRawByDefault` (the persisted "capture RAW whenever possible" preference,
+     * set on `ui/SettingsScreen` per the issue #45 follow-up that moved this off a per-shot toggle)
+     * before actually requesting a RAW buffer — see `CameraScreen.capture()`'s own doc.
      */
     val rawCaptureSupported: Boolean = false,
-    /**
-     * The per-shot (not persistent-mode) "with RAW" choice — `true` means the *next* `ShutterButton`
-     * tap additionally captures a `.dng`. Always forced back to `false` whenever
-     * [rawCaptureSupported] itself flips to `false` (e.g. switching to a lens without RAW support) —
-     * see `CameraViewModel.onRawCaptureCapabilityChanged` — so a stale "on" choice from a previous
-     * lens can never silently carry over to one that doesn't support it.
-     */
-    val includeRawInCapture: Boolean = false,
 )

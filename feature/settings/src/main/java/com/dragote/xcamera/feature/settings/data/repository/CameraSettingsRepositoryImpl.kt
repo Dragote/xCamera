@@ -27,4 +27,6 @@ class CameraSettingsRepositoryImpl @Inject constructor(
     override suspend fun setSelectedLutId(id: String?) = localDataSource.setSelectedLutId(id)
 
     override suspend fun setLutIntensityPercent(percent: Int) = localDataSource.setLutIntensityPercent(percent)
+
+    override suspend fun setCaptureRawByDefault(enabled: Boolean) = localDataSource.setCaptureRawByDefault(enabled)
 }

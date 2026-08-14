@@ -80,7 +80,6 @@ import com.dragote.xcamera.feature.camera.presentation.CameraViewModel
 import com.dragote.xcamera.feature.camera.ui.component.ExposingIndicator
 import com.dragote.xcamera.feature.camera.ui.component.ExposureDial
 import com.dragote.xcamera.feature.camera.ui.component.FlashLever
-import com.dragote.xcamera.feature.camera.ui.component.RawCaptureLever
 import com.dragote.xcamera.feature.camera.ui.component.FocusDial
 import com.dragote.xcamera.feature.camera.ui.component.FocusRing
 import com.dragote.xcamera.feature.camera.ui.component.FocusTapIndicator
@@ -532,10 +531,15 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     fun capture() {
         coroutineScope.launch {
             viewModel.onCaptureStarted()
-            // includeRawInCapture is already forced back to false whenever rawCaptureSupported is —
-            // see CameraUiState.includeRawInCapture's own doc — so this reads it directly rather than
-            // re-checking rawCaptureSupported here too.
-            when (val result = viewModel.takePhoto(uiState.includeRawInCapture)) {
+            // cameraSettings.captureRawByDefault is only ever a *preference* — feature:settings has no
+            // way to know whether the currently active lens actually supports RAW — so it's ANDed here
+            // with the live per-lens capability check (uiState.rawCaptureSupported, from issue #45's
+            // CameraViewModel.rawCaptureCapability) rather than trusted on its own. This makes turning
+            // the setting on while on a non-RAW lens a silent no-op (per #45's own non-goal: an
+            // unsupported lens is never an error state) and picking up RAW automatically the moment the
+            // user switches to a lens that does support it, with no extra per-shot tap.
+            val includeRaw = cameraSettings.captureRawByDefault && uiState.rawCaptureSupported
+            when (val result = viewModel.takePhoto(includeRaw)) {
                 is Result.Success -> viewModel.onPhotoSaved(result.data)
                 is Result.Error -> viewModel.onCaptureError(result.error.name)
             }
@@ -602,15 +606,6 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                         flashOn = uiState.flashMode == FlashMode.ON,
                         onToggle = viewModel::onFlashModeToggled,
                     )
-                    // Only shown once the active lens actually reports RAW support (issue #45) — never
-                    // an error state for a lens without it, matching manual-ISO/manual-focus's own
-                    // "hide, don't disable" convention for an unsupported capability.
-                    if (uiState.rawCaptureSupported) {
-                        RawCaptureLever(
-                            includeRaw = uiState.includeRawInCapture,
-                            onToggle = viewModel::onIncludeRawToggled,
-                        )
-                    }
                     // Only shown once at least one LUT has been imported — mirrors ui/SettingsScreen's
                     // own luts.isNotEmpty() gating for its edit-mode toggle (see LutDial's own doc).
                     if (luts.isNotEmpty()) {

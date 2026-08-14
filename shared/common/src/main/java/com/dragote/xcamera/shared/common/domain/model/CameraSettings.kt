@@ -15,4 +15,12 @@ data class CameraSettings(
     /** Blend between original and graded color, 0-100. Only meaningful while [selectedLutId] is
      *  non-null; defaults to fully graded so picking a LUT has a visible effect immediately. */
     val lutIntensityPercent: Int = 100,
+    /**
+     * "Capture RAW alongside JPEG whenever possible" (issue #45 follow-up) — a *preference*, not a
+     * hardware guarantee: `feature:settings` has no way to know whether the currently active lens
+     * actually supports `RAW`, so `feature:camera` ANDs this with its own live per-lens
+     * `rawCaptureCapability` check before actually requesting a RAW buffer. Defaults to `false` since
+     * a `.dng` roughly doubles-or-more a capture's storage cost — an opt-in, not an opt-out.
+     */
+    val captureRawByDefault: Boolean = false,
 )

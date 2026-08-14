@@ -336,24 +336,13 @@ class CameraViewModel @Inject constructor(
      * Called whenever [CameraLens.physicalCameraId]/[CameraLens.logicalCameraId]'s RAW capability is
      * (re-)queried for [CameraUiState.selectedLens] (issue #45), mirroring
      * [onManualFocusCapabilityChanged]'s own per-physical-lens re-evaluation-on-lens-switch pattern.
-     * Forces [CameraUiState.includeRawInCapture] back to `false` whenever the new lens doesn't support
-     * RAW at all — a per-shot choice from a previous, RAW-capable lens must never silently carry over
-     * to one that doesn't support it (see [CameraUiState.includeRawInCapture]'s own doc).
+     * This is purely a live hardware-support signal now — `CameraSettings.captureRawByDefault` (set on
+     * `ui/SettingsScreen`) is the actual user-facing "capture RAW" preference; `ui/CameraScreen` ANDs
+     * the two together right before calling [takePhoto], there's no per-shot toggle state left here to
+     * reconcile against a lens switch.
      */
     fun onRawCaptureCapabilityChanged(capability: RawCaptureCapability?) {
-        val current = _uiState.value
-        _uiState.value = current.copy(
-            rawCaptureSupported = capability != null,
-            includeRawInCapture = current.includeRawInCapture && capability != null,
-        )
-    }
-
-    /** `ui/CameraScreen`'s RAW toggle lever calls this on every tap — a no-op (per-shot choice makes
-     *  no sense) on a lens with no [CameraUiState.rawCaptureSupported]. */
-    fun onIncludeRawToggled() {
-        val current = _uiState.value
-        if (!current.rawCaptureSupported) return
-        _uiState.value = current.copy(includeRawInCapture = !current.includeRawInCapture)
+        _uiState.value = _uiState.value.copy(rawCaptureSupported = capability != null)
     }
 
     fun onAeCompensationIndexChanged(index: Int) {

@@ -137,6 +137,7 @@ fun SettingsScreen(
                     onShowHistogramToggled = viewModel::onShowHistogramToggled,
                     onShowHorizonLineToggled = viewModel::onShowHorizonLineToggled,
                     onFocusPeakingSensitivityChanged = viewModel::onFocusPeakingSensitivityChanged,
+                    onCaptureRawByDefaultToggled = viewModel::onCaptureRawByDefaultToggled,
                     onLutSelected = viewModel::onLutSelected,
                     onLutDeleteRequested = viewModel::onLutDeleteRequested,
                     onLutIntensityChanged = viewModel::onLutIntensityChanged,
@@ -161,6 +162,7 @@ private fun SettingsContent(
     onShowHistogramToggled: (Boolean) -> Unit,
     onShowHorizonLineToggled: (Boolean) -> Unit,
     onFocusPeakingSensitivityChanged: (FocusPeakingSensitivity) -> Unit,
+    onCaptureRawByDefaultToggled: (Boolean) -> Unit,
     onLutSelected: (String?) -> Unit,
     onLutDeleteRequested: (String) -> Unit,
     onLutIntensityChanged: (Int) -> Unit,
@@ -196,6 +198,10 @@ private fun SettingsContent(
             label = "HORIZON",
             glyph = LeverGlyph.None,
         )
+        CaptureRawByDefaultSetting(
+            enabled = uiState.captureRawByDefault,
+            onToggle = onCaptureRawByDefaultToggled,
+        )
         PeakingSensitivitySelector(
             selected = uiState.focusPeakingSensitivity,
             onSelected = onFocusPeakingSensitivityChanged,
@@ -210,6 +216,36 @@ private fun SettingsContent(
             onLutDeleteRequested = onLutDeleteRequested,
             onIntensityChanged = onLutIntensityChanged,
             onImportRequested = onImportLutRequested,
+        )
+    }
+}
+
+/**
+ * "Capture RAW alongside JPEG whenever possible" (issue #45 follow-up) — moved here from a per-shot
+ * toggle next to the shutter button on `ui/CameraScreen` per user feedback; this is now a persisted
+ * preference like GRID/HISTOGRAM/HORIZON above, not a per-capture choice. Uses the same unwrapped
+ * [LeverSwitch] look as those three, plus a small caption underneath carrying the "large extra file"
+ * warning issue #45 originally required on the per-shot toggle's own label — still required here since
+ * the setting can silently make every future capture noticeably larger.
+ *
+ * `feature:settings` has no way to know whether the *currently active* lens actually supports `RAW`
+ * (that's a live per-lens hardware check, `CameraViewModel.rawCaptureCapability`) — this toggle only
+ * ever expresses the user's *preference*; `ui/CameraScreen` ANDs it with its own live capability check
+ * before actually requesting a RAW buffer, so turning this on while on a non-RAW lens is a harmless
+ * no-op until the user switches to one that supports it.
+ */
+@Composable
+private fun CaptureRawByDefaultSetting(enabled: Boolean, onToggle: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        LeverSwitch(
+            checked = enabled,
+            onToggle = { onToggle(!enabled) },
+            label = "RAW CAPTURE",
+            glyph = LeverGlyph.None,
+        )
+        Text(
+            text = "Saves an additional .dng file (~25-50MB) alongside the JPEG on lenses that support it.",
+            style = AppChrome.labelStyle(),
         )
     }
 }
@@ -530,6 +566,17 @@ private fun SettingsContentPreview() {
             LeverSwitch(checked = true, onToggle = {}, label = "GRID", glyph = LeverGlyph.Grid)
             LeverSwitch(checked = false, onToggle = {}, label = "HISTOGRAM")
             LeverSwitch(checked = true, onToggle = {}, label = "HISTOGRAM")
+        }
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF201F1D)
+@Composable
+private fun CaptureRawByDefaultSettingPreview() {
+    XCameraTheme {
+        Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            CaptureRawByDefaultSetting(enabled = false, onToggle = {})
+            CaptureRawByDefaultSetting(enabled = true, onToggle = {})
         }
     }
 }
