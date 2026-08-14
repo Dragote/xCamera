@@ -15,6 +15,7 @@ import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.HistogramData
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
+import com.dragote.xcamera.feature.camera.domain.model.RawCaptureCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.shared.common.domain.model.CubeLut
@@ -118,6 +119,9 @@ class CameraRepositoryImpl @Inject constructor(
     override fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability? =
         cameraController.manualFocusCapability(lens)
 
+    override fun rawCaptureCapability(lens: CameraLens?): RawCaptureCapability? =
+        cameraController.rawCaptureCapability(lens)
+
     override fun triggerAutoFocus(displayXFraction: Float, displayYFraction: Float) =
         cameraController.triggerAutoFocus(displayXFraction, displayYFraction)
 
@@ -185,8 +189,8 @@ class CameraRepositoryImpl @Inject constructor(
 
     override fun observeResolutionFailures(): Flow<String> = _resolutionFailures.asSharedFlow()
 
-    override suspend fun takePhoto(): Result<Uri, DataError.Local> = try {
-        Result.Success(cameraController.takePhoto())
+    override suspend fun takePhoto(includeRaw: Boolean): Result<Uri, DataError.Local> = try {
+        Result.Success(cameraController.takePhoto(includeRaw))
     } catch (e: CancellationException) {
         throw e
     } catch (e: IllegalStateException) {

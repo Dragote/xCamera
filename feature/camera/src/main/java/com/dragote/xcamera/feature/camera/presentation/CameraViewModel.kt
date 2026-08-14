@@ -11,6 +11,7 @@ import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.HistogramData
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
+import com.dragote.xcamera.feature.camera.domain.model.RawCaptureCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.model.aeCompensationSteps
 import com.dragote.xcamera.feature.camera.domain.model.isoStopsInRange
@@ -202,6 +203,9 @@ class CameraViewModel @Inject constructor(
     fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability? =
         cameraRepository.manualFocusCapability(lens)
 
+    fun rawCaptureCapability(lens: CameraLens?): RawCaptureCapability? =
+        cameraRepository.rawCaptureCapability(lens)
+
     fun triggerAutoFocus(displayXFraction: Float, displayYFraction: Float) =
         cameraRepository.triggerAutoFocus(displayXFraction, displayYFraction)
 
@@ -226,7 +230,8 @@ class CameraViewModel @Inject constructor(
         viewModelScope.launch { cameraSettingsRepository.setSelectedLutId(id) }
     }
 
-    suspend fun takePhoto(): Result<Uri, DataError.Local> = cameraRepository.takePhoto()
+    suspend fun takePhoto(includeRaw: Boolean = false): Result<Uri, DataError.Local> =
+        cameraRepository.takePhoto(includeRaw)
 
     fun listBackLenses(): List<CameraLens> = cameraRepository.listBackLenses()
 
@@ -325,6 +330,19 @@ class CameraViewModel @Inject constructor(
             manualFocusSupported = capability != null,
             maxFocusDistanceDiopters = capability?.maxFocusDistanceDiopters ?: 0f,
         )
+    }
+
+    /**
+     * Called whenever [CameraLens.physicalCameraId]/[CameraLens.logicalCameraId]'s RAW capability is
+     * (re-)queried for [CameraUiState.selectedLens] (issue #45), mirroring
+     * [onManualFocusCapabilityChanged]'s own per-physical-lens re-evaluation-on-lens-switch pattern.
+     * This is purely a live hardware-support signal now — `CameraSettings.captureRawByDefault` (set on
+     * `ui/SettingsScreen`) is the actual user-facing "capture RAW" preference; `ui/CameraScreen` ANDs
+     * the two together right before calling [takePhoto], there's no per-shot toggle state left here to
+     * reconcile against a lens switch.
+     */
+    fun onRawCaptureCapabilityChanged(capability: RawCaptureCapability?) {
+        _uiState.value = _uiState.value.copy(rawCaptureSupported = capability != null)
     }
 
     fun onAeCompensationIndexChanged(index: Int) {

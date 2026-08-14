@@ -467,6 +467,9 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
         viewModel.onManualIsoCapabilityChanged(viewModel.manualIsoCapability(uiState.selectedLens))
         viewModel.onAeCompensationCapabilityChanged(viewModel.aeCompensationCapability(uiState.selectedLens))
         viewModel.onManualFocusCapabilityChanged(viewModel.manualFocusCapability(uiState.selectedLens))
+        // REQUEST_AVAILABLE_CAPABILITIES_RAW is per-physical-lens too (issue #45) — same re-query-on-
+        // every-lens-switch reasoning as the three capability queries above.
+        viewModel.onRawCaptureCapabilityChanged(viewModel.rawCaptureCapability(uiState.selectedLens))
     }
 
     // Manual mode's *visible* dials appear the instant ModeLever is tapped (manualModeEnabled), but
@@ -528,7 +531,15 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     fun capture() {
         coroutineScope.launch {
             viewModel.onCaptureStarted()
-            when (val result = viewModel.takePhoto()) {
+            // cameraSettings.captureRawByDefault is only ever a *preference* — feature:settings has no
+            // way to know whether the currently active lens actually supports RAW — so it's ANDed here
+            // with the live per-lens capability check (uiState.rawCaptureSupported, from issue #45's
+            // CameraViewModel.rawCaptureCapability) rather than trusted on its own. This makes turning
+            // the setting on while on a non-RAW lens a silent no-op (per #45's own non-goal: an
+            // unsupported lens is never an error state) and picking up RAW automatically the moment the
+            // user switches to a lens that does support it, with no extra per-shot tap.
+            val includeRaw = cameraSettings.captureRawByDefault && uiState.rawCaptureSupported
+            when (val result = viewModel.takePhoto(includeRaw)) {
                 is Result.Success -> viewModel.onPhotoSaved(result.data)
                 is Result.Error -> viewModel.onCaptureError(result.error.name)
             }

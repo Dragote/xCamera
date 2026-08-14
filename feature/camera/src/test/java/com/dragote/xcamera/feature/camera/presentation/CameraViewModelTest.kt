@@ -10,6 +10,7 @@ import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.HistogramData
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
+import com.dragote.xcamera.feature.camera.domain.model.RawCaptureCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraClipping
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
@@ -503,17 +504,28 @@ class CameraViewModelTest {
     @Test
     fun `takePhoto delegates to the repository and passes through a successful Result`() = runTest {
         val uri = mockk<Uri>()
-        coEvery { cameraRepository.takePhoto() } returns Result.Success(uri)
+        coEvery { cameraRepository.takePhoto(false) } returns Result.Success(uri)
 
         val result = viewModel.takePhoto()
 
         assertEquals(Result.Success(uri), result)
-        coVerify { cameraRepository.takePhoto() }
+        coVerify { cameraRepository.takePhoto(false) }
+    }
+
+    @Test
+    fun `takePhoto with includeRaw true delegates the flag to the repository`() = runTest {
+        val uri = mockk<Uri>()
+        coEvery { cameraRepository.takePhoto(true) } returns Result.Success(uri)
+
+        val result = viewModel.takePhoto(includeRaw = true)
+
+        assertEquals(Result.Success(uri), result)
+        coVerify { cameraRepository.takePhoto(true) }
     }
 
     @Test
     fun `takePhoto delegates to the repository and passes through a failed Result`() = runTest {
-        coEvery { cameraRepository.takePhoto() } returns Result.Error(DataError.Local.UNKNOWN)
+        coEvery { cameraRepository.takePhoto(false) } returns Result.Error(DataError.Local.UNKNOWN)
 
         val result = viewModel.takePhoto()
 
@@ -958,6 +970,43 @@ class CameraViewModelTest {
             val updated = awaitItem()
             assertFalse(updated.manualFocusSupported)
             assertEquals(0f, updated.maxFocusDistanceDiopters)
+        }
+    }
+
+    @Test
+    fun `rawCaptureCapability delegates to the repository and returns its result`() {
+        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val capability = RawCaptureCapability(sensorWidth = 4032, sensorHeight = 3024)
+        every { cameraRepository.rawCaptureCapability(lens) } returns capability
+
+        assertEquals(capability, viewModel.rawCaptureCapability(lens))
+        verify { cameraRepository.rawCaptureCapability(lens) }
+    }
+
+    @Test
+    fun `onRawCaptureCapabilityChanged reflects a supported lens`() = runTest {
+        val capability = RawCaptureCapability(sensorWidth = 4032, sensorHeight = 3024)
+
+        viewModel.uiState.test {
+            awaitItem() // initial
+
+            viewModel.onRawCaptureCapabilityChanged(capability)
+            assertTrue(awaitItem().rawCaptureSupported)
+        }
+    }
+
+    @Test
+    fun `onRawCaptureCapabilityChanged with no capability hides the feature`() = runTest {
+        val capability = RawCaptureCapability(sensorWidth = 4032, sensorHeight = 3024)
+
+        viewModel.uiState.test {
+            awaitItem() // initial
+
+            viewModel.onRawCaptureCapabilityChanged(capability)
+            assertTrue(awaitItem().rawCaptureSupported)
+
+            viewModel.onRawCaptureCapabilityChanged(null)
+            assertFalse(awaitItem().rawCaptureSupported)
         }
     }
 

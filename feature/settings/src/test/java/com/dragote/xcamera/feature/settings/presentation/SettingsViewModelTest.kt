@@ -75,6 +75,7 @@ class SettingsViewModelTest {
                 focusPeakingSensitivity = FocusPeakingSensitivity.HIGH,
                 selectedLutId = "abc",
                 lutIntensityPercent = 42,
+                captureRawByDefault = true,
             )
             assertEquals(
                 SettingsUiState(
@@ -84,6 +85,7 @@ class SettingsViewModelTest {
                     focusPeakingSensitivity = FocusPeakingSensitivity.HIGH,
                     selectedLutId = "abc",
                     lutIntensityPercent = 42,
+                    captureRawByDefault = true,
                 ),
                 awaitItem(),
             )
@@ -140,6 +142,13 @@ class SettingsViewModelTest {
         viewModel.onFocusPeakingSensitivityChanged(FocusPeakingSensitivity.LOW)
 
         coVerify { cameraSettingsRepository.setFocusPeakingSensitivity(FocusPeakingSensitivity.LOW) }
+    }
+
+    @Test
+    fun `onCaptureRawByDefaultToggled delegates to the repository`() = runTest {
+        viewModel.onCaptureRawByDefaultToggled(true)
+
+        coVerify { cameraSettingsRepository.setCaptureRawByDefault(true) }
     }
 
     @Test

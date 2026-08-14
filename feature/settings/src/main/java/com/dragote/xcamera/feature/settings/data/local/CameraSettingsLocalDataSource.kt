@@ -26,6 +26,7 @@ class CameraSettingsLocalDataSource @Inject constructor(
     private val focusPeakingSensitivityKey = stringPreferencesKey("focus_peaking_sensitivity")
     private val selectedLutIdKey = stringPreferencesKey("selected_lut_id")
     private val lutIntensityPercentKey = intPreferencesKey("lut_intensity_percent")
+    private val captureRawByDefaultKey = booleanPreferencesKey("capture_raw_by_default")
 
     /** Falls back to an empty [Preferences] on a corrupt preferences file rather than propagating
      *  the read failure — a settings read has no meaningful failure mode a caller could act on, it
@@ -51,6 +52,7 @@ class CameraSettingsLocalDataSource @Inject constructor(
                 selectedLutId = preferences[selectedLutIdKey],
                 lutIntensityPercent = (preferences[lutIntensityPercentKey] ?: CameraSettings().lutIntensityPercent)
                     .coerceIn(0, 100),
+                captureRawByDefault = preferences[captureRawByDefaultKey] ?: CameraSettings().captureRawByDefault,
             )
         }
 
@@ -80,5 +82,9 @@ class CameraSettingsLocalDataSource @Inject constructor(
 
     suspend fun setLutIntensityPercent(percent: Int) {
         dataStore.edit { it[lutIntensityPercentKey] = percent.coerceIn(0, 100) }
+    }
+
+    suspend fun setCaptureRawByDefault(enabled: Boolean) {
+        dataStore.edit { it[captureRawByDefaultKey] = enabled }
     }
 }

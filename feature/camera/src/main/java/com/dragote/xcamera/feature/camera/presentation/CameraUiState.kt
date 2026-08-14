@@ -61,4 +61,14 @@ data class CameraUiState(
      * Read at the *start* of a hold gesture as the distance a rotation adjusts from.
      */
     val liveFocusDistanceDiopters: Float? = null,
+    /**
+     * Whether [selectedLens] reports Camera2's `RAW` capability (issue #45) — a live per-lens hardware
+     * check, not a user preference. `false` on a lens with no `RAW` support (e.g. the vast majority of
+     * front/ultra-wide/tele auxiliary lenses) — matching this issue's own non-goal of never surfacing
+     * RAW as an error state, just quietly unavailable. `ui/CameraScreen` ANDs this with
+     * `CameraSettings.captureRawByDefault` (the persisted "capture RAW whenever possible" preference,
+     * set on `ui/SettingsScreen` per the issue #45 follow-up that moved this off a per-shot toggle)
+     * before actually requesting a RAW buffer — see `CameraScreen.capture()`'s own doc.
+     */
+    val rawCaptureSupported: Boolean = false,
 )

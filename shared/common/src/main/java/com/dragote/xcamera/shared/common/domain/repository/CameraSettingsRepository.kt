@@ -30,4 +30,6 @@ interface CameraSettingsRepository {
     suspend fun setSelectedLutId(id: String?)
 
     suspend fun setLutIntensityPercent(percent: Int)
+
+    suspend fun setCaptureRawByDefault(enabled: Boolean)
 }

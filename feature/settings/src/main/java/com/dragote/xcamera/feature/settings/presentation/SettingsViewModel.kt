@@ -40,6 +40,7 @@ class SettingsViewModel @Inject constructor(
             selectedLutId = settings.selectedLutId,
             lutIntensityPercent = settings.lutIntensityPercent,
             resolvingLutId = resolvingLutId,
+            captureRawByDefault = settings.captureRawByDefault,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -101,6 +102,10 @@ class SettingsViewModel @Inject constructor(
 
     fun onFocusPeakingSensitivityChanged(sensitivity: FocusPeakingSensitivity) {
         viewModelScope.launch { cameraSettingsRepository.setFocusPeakingSensitivity(sensitivity) }
+    }
+
+    fun onCaptureRawByDefaultToggled(enabled: Boolean) {
+        viewModelScope.launch { cameraSettingsRepository.setCaptureRawByDefault(enabled) }
     }
 
     /** `null` selects "OFF" — disables LUT grading entirely (see `CameraSettings.selectedLutId`'s own
