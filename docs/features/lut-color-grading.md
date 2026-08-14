@@ -2,21 +2,20 @@
 
 **Purpose:** Real-time 3D LUT-based color grading (importable custom `.cube` LUTs) applied to both the live preview and captured photos — one of (Not Boring) Camera's not-yet-ported features (see `camera-feasibility-android`).
 
-**Current state:** Not implemented (issue #43). No color grading exists anywhere in the pipeline today — see `docs/features/camera-capture.md` for the current Camera2/GLES capture architecture this builds on.
-
-**Planned scope:**
-- Preview: `.cube` file (ASCII, `LUT_3D_SIZE N` + N³ RGB rows) parsed into a `GL_TEXTURE_3D`, sampled directly in the existing YUV→RGB fragment shader in `CameraPreviewRenderer` — single pass, no extra FBO for preview.
-- Capture: after the existing JPEG capture, decode → run through the same LUT shader offscreen (FBO) → re-encode → write to MediaStore, replacing the current direct-JPEG-to-MediaStore write only when a LUT is active.
-- Import via Storage Access Framework, copied into app-private storage; user-selectable list, "off" bypasses grading entirely.
-- Blend intensity 0–100% between graded and original color.
-- Selected LUT + intensity persisted via `CameraSettings`/`CameraSettingsRepository` (`shared:common`), same pattern as `focusPeakingSensitivity`; UI lives in `feature:settings`.
+**Current state:** Implemented (issue #43). LUT import/library management lives in `feature:settings`; grading itself (GPU sampling + capture-time processing) lives in `feature:camera`.
+- **Import & storage** (`feature:settings`, `LutLocalDataSource`): a `.cube` file picked via SAF `ACTION_OPEN_DOCUMENT` is validated + parsed (`CubeLutParser`, `shared:common`), resampled onto a canonical 33³ grid (`CubeLutResampler`, DaVinci/Lightroom's own default export size), and written to app-private storage in a compact binary format (`CubeLut.toBinary`/`.lutbin`) — never the original ASCII `.cube` text. One file per import; `listLuts()` just scans the directory (no separate metadata DB). `LutRepositoryImpl` exposes list/import/delete as `Result`.
+- **Selection & persistence**: selected LUT id + blend intensity (0–100%) live in `CameraSettings`/`CameraSettingsRepositoryImpl` (DataStore-backed, `feature:settings`), same pattern as `focusPeakingSensitivity`/`captureRawByDefault`; `null` selected id means "off". Picked from a chip list in `SettingsScreen`'s `LutSelector`, with in-place deletion via a jiggle-mode gesture (not long-press), and a quick-access `LutDial` on `CameraScreen`'s own toolbar for switching without leaving the camera screen.
+- **Grading — preview**: `CameraPreviewRenderer` (`ui/gl/`, now GLES 3.0) uploads the resolved `CubeLut` as a `GL_TEXTURE_3D`, sampled in the same fragment shader that already does YUV→RGB, blended against the ungraded color by `intensityPercent`. Uploaded textures are cached keyed by `lutId` so switching between already-seen LUTs in a session doesn't re-upload (every LUT is the same canonical grid size post-resample, so texture dimensions never vary).
+- **Grading — capture**: `LutJpegProcessor` (`data/gl/`) is a separate, per-call offscreen EGL/GLES 3.0 pass (decode → texture → FBO sample/blend → read back → re-encode) run from `CameraController.takePhoto` only when a LUT is active; a capture with no LUT selected is untouched, straight JPEG-to-MediaStore. RAW/DNG output is never graded — only the JPEG companion (see `camera-capture.md`).
+- **Resolution pipeline**: `CameraRepositoryImpl.setLut` resolves a selected id to bytes via `LutFileReader` + `CubeLut` binary parse, with an in-memory, bounded resolve cache; `CameraViewModel` drives resolution (moved off a `CameraScreen`-owned `LaunchedEffect`) and shows a rotation-aware `LutResolvingIndicator` pill on the viewfinder while a switch is in flight; a resolve failure auto-clears the selection (`LutResolutionRepository.observeResolutionFailures`) and is surfaced as an import/selection error.
 
 **Key decisions:**
-- Renderer moves GLES 2.0 → GLES 3.0 for native `GL_TEXTURE_3D` support (GLES 2.0 has no 3D texture type) — costs nothing, GLES 3.0 needs only API 18+, well under minSdk 26.
-- LUT sampled in the same fragment shader that already does YUV→RGB, not a second render pass — avoids extra FBO overhead per preview frame.
-- Capture needs its own offscreen FBO pass (decode → shader → re-encode) since stills go through a separate JPEG `ImageReader`/`capture()` path with no GL involvement today — this is new complexity, not a preview-path reuse.
-- `.cube` chosen as the only supported format — standard/portable LUT interchange format, avoids inventing a proprietary one.
+- Renderer moved GLES 2.0 → GLES 3.0 for native `GL_TEXTURE_3D` support (GLES 2.0 has no 3D texture type) — costs nothing, GLES 3.0 needs only API 18+, well under minSdk 26.
+- LUT sampled in the same fragment shader that already does YUV→RGB for preview, not a second render pass — avoids extra FBO overhead per preview frame; capture still needs its own offscreen FBO pass since stills go through a separate JPEG `ImageReader`/`capture()` path with no GL involvement otherwise.
+- `.cube` chosen as the only *import* format (standard/portable LUT interchange), but never what's persisted — every imported LUT is resampled to a fixed 33³ grid and re-serialized to a compact binary format at import time, so runtime reads are a plain bulk byte read with no text parsing and the GPU texture cache can assume a fixed size across every LUT.
+- `CubeLut` parse/resample/binary-format code lives in `shared:common` (not `feature:camera`) so `feature:settings` (import-time validation/resample) and `feature:camera` (runtime read) share one implementation instead of two.
+- LUT parsing/resolution is kept off the main thread — an early version parsed synchronously on selection and caused a visible UI hang, fixed by moving it off-thread with the resolving-indicator pill covering the latency.
 
 **Open questions:**
-- Whether to ship curated built-in presets (deferred out of issue #43 — import-only is the shippable first slice).
+- Whether to ship curated built-in presets (still deferred — import-only remains the shipped scope).
 - GPU-vendor compatibility beyond the one Pixel 9 Pro device this project has validated GLES rendering on — same residual risk already flagged in `camera-capture.md`, not new to this feature.
