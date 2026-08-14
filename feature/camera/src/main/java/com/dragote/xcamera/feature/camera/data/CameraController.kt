@@ -12,6 +12,7 @@ import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.DngCreator
 import android.hardware.camera2.TotalCaptureResult
 import android.hardware.camera2.params.MeteringRectangle
 import android.hardware.camera2.params.OutputConfiguration
@@ -28,7 +29,9 @@ import android.provider.MediaStore
 import android.util.Size
 import android.view.OrientationEventListener
 import android.view.Surface
+import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
+import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
@@ -42,6 +45,7 @@ import com.dragote.xcamera.feature.camera.domain.model.FocusRegionSizeFraction
 import com.dragote.xcamera.feature.camera.domain.model.HistogramData
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
+import com.dragote.xcamera.feature.camera.domain.model.RawCaptureCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.model.displayFractionToSensorFraction
 import com.dragote.xcamera.shared.common.domain.model.CubeLut
@@ -65,6 +69,7 @@ import kotlin.coroutines.resumeWithException
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
+import java.io.IOException
 import javax.inject.Singleton
 
 /**
@@ -140,6 +145,18 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      * before this rewrite (preview + still), not 3 — see [createCaptureSession].
      */
     private var previewImageReader: ImageReader? = null
+
+    /**
+     * The `RAW_SENSOR` output for a "with RAW" still capture (issue #45) — `null` whenever the
+     * currently bound lens either doesn't report [CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW]
+     * at all (see [rawCaptureCapability]) or the 3-surface (preview + JPEG + RAW) session
+     * configuration wasn't actually verified supported via [CameraDevice.isSessionConfigurationSupported]
+     * when the session was opened (see [openCamera]/[createCaptureSession]) — either way, a lens
+     * reporting the `RAW` capability alone doesn't guarantee this is non-null. `maxImages = 1`: a
+     * single uncompressed `RAW_SENSOR` buffer is already ~20-50MB, and only ever one still capture is
+     * in flight at a time (the shutter is disabled while a capture is already running).
+     */
+    private var rawImageReader: ImageReader? = null
 
     /** Set via [setPreviewFrameListener] — the render-thread [Handler] to post each delivered preview
      *  [Image] onto, paired with [previewFrameListener]. Both `null` until `ui/CameraScreen` registers
@@ -400,6 +417,81 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         }
         pendingCapture?.takeIf { it.isActive }?.resume(bytes)
         pendingCapture = null
+    }
+
+    /**
+     * Completed by [stillCaptureCallback]/[rawImageAvailableListener] (whichever of the two delivers
+     * second) once a "with RAW" still capture's [Image]/[TotalCaptureResult] pair is fully correlated
+     * — see [pendingRawImagesByTimestamp]/[pendingRawResultsByTimestamp]'s own doc for why matching is
+     * done by `CaptureResult.SENSOR_TIMESTAMP`/`Image.getTimestamp()`, not by which callback happens
+     * to fire last. `null` whenever the in-flight still capture didn't request a RAW buffer at all —
+     * both [stillCaptureCallback] and [rawImageAvailableListener] no-op (or, for the latter, just
+     * close the stray [Image]) while this is `null`.
+     */
+    private var pendingRawCapture: CompletableDeferred<Pair<Image, TotalCaptureResult>>? = null
+
+    /**
+     * A single still-capture request targeting both the JPEG and RAW surfaces yields exactly one
+     * [Image] from [rawImageReader] and one [TotalCaptureResult] from [stillCaptureCallback], but
+     * they arrive via two independent async callbacks with no guaranteed order — buffering whichever
+     * arrives first here (keyed by the sensor timestamp both sides independently carry:
+     * `CaptureResult.SENSOR_TIMESTAMP` / `Image.getTimestamp()`) and completing [pendingRawCapture]
+     * once the other half shows up is what lets [captureStillJpeg] correlate them by the frame they
+     * actually both belong to, rather than assuming "whatever result callback fired most recently"
+     * matches "whatever image callback fired most recently" — the explicit risk issue #45 calls out.
+     * In practice at most one entry ever accumulates here (only one still capture is ever in flight at
+     * a time — see [rawImageReader]'s own doc), but keying by timestamp rather than a single mutable
+     * field is what actually makes that safe rather than just assumed.
+     */
+    private val pendingRawImagesByTimestamp = mutableMapOf<Long, Image>()
+
+    /** Mirrors [pendingRawImagesByTimestamp] for the [TotalCaptureResult] side — see that field's own
+     *  doc. */
+    private val pendingRawResultsByTimestamp = mutableMapOf<Long, TotalCaptureResult>()
+
+    /**
+     * Dedicated to still-capture requests (both plain-JPEG and "with RAW") — unlike
+     * [previewCaptureCallback], this only ever does anything while [pendingRawCapture] is non-null,
+     * i.e. the in-flight still capture actually requested a RAW buffer; a no-op for a plain JPEG-only
+     * capture; the JPEG bytes themselves are still delivered via [imageAvailableListener]/
+     * [pendingCapture], independent of this callback. See [pendingRawImagesByTimestamp]'s own doc for
+     * the timestamp-based correlation this performs.
+     */
+    private val stillCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+            val deferred = pendingRawCapture ?: return
+            val timestamp = result.get(CaptureResult.SENSOR_TIMESTAMP) ?: return
+            val image = pendingRawImagesByTimestamp.remove(timestamp)
+            if (image != null) {
+                if (deferred.isActive) deferred.complete(image to result) else image.close()
+            } else {
+                pendingRawResultsByTimestamp[timestamp] = result
+            }
+        }
+    }
+
+    /**
+     * See [pendingRawImagesByTimestamp]'s own doc. `acquireNextImage` (not `acquireLatestImage`,
+     * unlike [previewImageAvailableListener]'s deliberate frame-skipping) — [rawImageReader]'s
+     * `maxImages = 1` and there's exactly one RAW buffer worth having per still capture, never a
+     * backlog of frames to skip through.
+     */
+    private val rawImageAvailableListener = ImageReader.OnImageAvailableListener { reader ->
+        val image = reader.acquireNextImage() ?: return@OnImageAvailableListener
+        val deferred = pendingRawCapture
+        if (deferred == null) {
+            // No RAW capture actually in flight (shouldn't normally happen — see rawImageReader's own
+            // doc — but closing rather than buffering forever is the safe fallback either way).
+            image.close()
+            return@OnImageAvailableListener
+        }
+        val timestamp = image.timestamp
+        val result = pendingRawResultsByTimestamp.remove(timestamp)
+        if (result != null) {
+            if (deferred.isActive) deferred.complete(image to result) else image.close()
+        } else {
+            pendingRawImagesByTimestamp[timestamp] = image
+        }
     }
 
     /**
@@ -711,8 +803,14 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         previewImageReader = previewReader
         analysisRotationDegrees = effectiveCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
 
-        val session = try {
-            createCaptureSession(device, previewReader.surface, reader.surface, currentLens)
+        // A lens reporting RAW at all (see rawCaptureCapability's own doc) is only the first gate —
+        // whether the 3-surface session it needs is actually configurable on this hardware is verified
+        // below in createCaptureSession, per-lens, every time openCamera runs (i.e. on every lens
+        // switch, not just once at app start).
+        val rawCandidateReader = rawCaptureCapability(currentLens)?.let { createRawImageReader(effectiveCharacteristics) }
+
+        val (session, rawIncluded) = try {
+            createCaptureSession(device, previewReader.surface, reader.surface, rawCandidateReader?.surface, currentLens)
         } catch (e: CameraAccessException) {
             device.close()
             cameraDevice = null
@@ -720,6 +818,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
             imageReader = null
             previewReader.close()
             previewImageReader = null
+            rawCandidateReader?.close()
             return@withLock
         } catch (e: IllegalStateException) {
             device.close()
@@ -728,9 +827,20 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
             imageReader = null
             previewReader.close()
             previewImageReader = null
+            rawCandidateReader?.close()
             return@withLock
         }
         captureSession = session
+        // See rawCandidateReader's own local doc above — only actually kept (and its buffers held)
+        // once the session negotiation above confirmed the 3-surface configuration genuinely
+        // configured, otherwise it's released immediately rather than sitting on an idle ~20-50MB
+        // buffer no capture will ever target.
+        if (rawIncluded) {
+            rawImageReader = rawCandidateReader
+        } else {
+            rawCandidateReader?.close()
+            rawImageReader = null
+        }
         startPreviewRepeating(device, session, previewReader.surface)
     }
 
@@ -770,41 +880,102 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
             )
         }
 
+    /**
+     * Returns the opened session alongside whether [rawSurface] actually ended up part of it — a
+     * lens reporting the `RAW` capability (see [rawCaptureCapability]) doesn't by itself guarantee
+     * Camera2 can genuinely configure a 3-surface (preview + JPEG + `RAW_SENSOR`) session on this
+     * hardware, so [rawSurface] non-`null` is only ever a *candidate*, verified via
+     * [CameraDevice.isSessionConfigurationSupported] (issue #45) before being included — on any
+     * failure of that check (including it not being available at all below API 29, or a HAL that
+     * throws [UnsupportedOperationException] for it), this falls back to the plain 2-surface session
+     * exactly as before RAW existed, i.e. "treat as RAW-unavailable" rather than attempting a
+     * configuration that was never confirmed and risking [onConfigureFailed] tearing down the *whole*
+     * session (preview included) over it. Below API 28 ([OutputConfiguration]/[SessionConfiguration]
+     * themselves unavailable), RAW is never attempted at all, for the same reason.
+     */
     private suspend fun createCaptureSession(
         device: CameraDevice,
         previewSurface: Surface,
         stillSurface: Surface,
+        rawSurface: Surface?,
         lens: CameraLens?,
-    ): CameraCaptureSession = suspendCancellableCoroutine { continuation ->
-        val stateCallback = object : CameraCaptureSession.StateCallback() {
-            override fun onConfigured(session: CameraCaptureSession) {
-                if (continuation.isActive) continuation.resume(session)
-            }
-
-            override fun onConfigureFailed(session: CameraCaptureSession) {
-                if (continuation.isActive) {
-                    continuation.resumeWithException(IllegalStateException("Capture session configuration failed"))
-                }
-            }
+    ): Pair<CameraCaptureSession, Boolean> {
+        fun outputConfigFor(surface: Surface) = OutputConfiguration(surface).apply {
+            lens?.physicalCameraId?.let(::setPhysicalCameraId)
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            val previewConfig = OutputConfiguration(previewSurface).apply {
-                lens?.physicalCameraId?.let(::setPhysicalCameraId)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            val session = suspendCancellableCoroutine { continuation ->
+                @Suppress("DEPRECATION")
+                device.createCaptureSession(
+                    listOf(previewSurface, stillSurface),
+                    sessionStateCallback(continuation),
+                    backgroundHandler,
+                )
             }
-            val stillConfig = OutputConfiguration(stillSurface).apply {
-                lens?.physicalCameraId?.let(::setPhysicalCameraId)
-            }
+            return session to false
+        }
+
+        val baseOutputs = listOf(outputConfigFor(previewSurface), outputConfigFor(stillSurface))
+        val rawIncluded = rawSurface != null &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            isRawSessionConfigurationSupported(device, baseOutputs + outputConfigFor(rawSurface))
+        val outputs = if (rawIncluded) baseOutputs + outputConfigFor(rawSurface!!) else baseOutputs
+
+        val session = suspendCancellableCoroutine { continuation ->
             val sessionConfiguration = SessionConfiguration(
                 SessionConfiguration.SESSION_REGULAR,
-                listOf(previewConfig, stillConfig),
+                outputs,
                 ContextCompat.getMainExecutor(context),
-                stateCallback,
+                sessionStateCallback(continuation),
             )
             device.createCaptureSession(sessionConfiguration)
-        } else {
-            @Suppress("DEPRECATION")
-            device.createCaptureSession(listOf(previewSurface, stillSurface), stateCallback, backgroundHandler)
+        }
+        return session to rawIncluded
+    }
+
+    private fun sessionStateCallback(
+        continuation: CancellableContinuation<CameraCaptureSession>,
+    ) = object : CameraCaptureSession.StateCallback() {
+        override fun onConfigured(session: CameraCaptureSession) {
+            if (continuation.isActive) continuation.resume(session)
+        }
+
+        override fun onConfigureFailed(session: CameraCaptureSession) {
+            if (continuation.isActive) {
+                continuation.resumeWithException(IllegalStateException("Capture session configuration failed"))
+            }
+        }
+    }
+
+    /**
+     * The actual "is a 3-surface RAW session supported" check (issue #45) — a static feasibility
+     * query, not a real session attempt, so the [CameraCaptureSession.StateCallback] it's constructed
+     * with is never invoked for this call. Caught broadly (relevant undocumented failure modes vary
+     * by OEM HAL): [CameraAccessException]/[UnsupportedOperationException]/[IllegalArgumentException]
+     * all fall back to "not supported" rather than propagating and failing the *whole* session open —
+     * see [createCaptureSession]'s own doc for why that fallback matters.
+     */
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun isRawSessionConfigurationSupported(device: CameraDevice, outputs: List<OutputConfiguration>): Boolean {
+        val noOpCallback = object : CameraCaptureSession.StateCallback() {
+            override fun onConfigured(session: CameraCaptureSession) = Unit
+            override fun onConfigureFailed(session: CameraCaptureSession) = Unit
+        }
+        val candidateConfiguration = SessionConfiguration(
+            SessionConfiguration.SESSION_REGULAR,
+            outputs,
+            ContextCompat.getMainExecutor(context),
+            noOpCallback,
+        )
+        return try {
+            device.isSessionConfigurationSupported(candidateConfiguration)
+        } catch (e: CameraAccessException) {
+            false
+        } catch (e: UnsupportedOperationException) {
+            false
+        } catch (e: IllegalArgumentException) {
+            false
         }
     }
 
@@ -952,6 +1123,18 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         imageReader = null
         previewImageReader?.close()
         previewImageReader = null
+        rawImageReader?.close()
+        rawImageReader = null
+        // See pendingRawCapture's own doc — an in-flight "with RAW" capture has nothing left to
+        // resolve once the session it was running against is gone; cancelling (rather than leaving it
+        // dangling) lets captureStillJpeg's awaiting caller unwind instead of hanging forever. Any
+        // half-arrived Image already buffered in pendingRawImagesByTimestamp must be closed explicitly
+        // — Camera2 never reclaims an Image the app itself is still holding a reference to.
+        pendingRawCapture?.let { if (it.isActive) it.cancel() }
+        pendingRawCapture = null
+        pendingRawImagesByTimestamp.values.forEach { it.close() }
+        pendingRawImagesByTimestamp.clear()
+        pendingRawResultsByTimestamp.clear()
         _autoExposureTimeNs.value = null
         _autoIso.value = null
         _autoFocusDistanceDiopters.value = null
@@ -1003,6 +1186,23 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         val size = previewOutputSize(currentLens, previewViewWidth, previewViewHeight)
         return ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 2).apply {
             setOnImageAvailableListener(previewImageAvailableListener, backgroundHandler)
+        }
+    }
+
+    /**
+     * The candidate `RAW_SENSOR` output for a "with RAW" still capture (issue #45) — only ever a
+     * *candidate*, see [rawImageReader]'s own doc for why the caller must still confirm the session
+     * negotiation in [createCaptureSession] actually included it before relying on it. `null` if this
+     * lens's [CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP] reports no `RAW_SENSOR` output
+     * sizes at all — shouldn't happen for a lens [rawCaptureCapability] already confirmed reports the
+     * `RAW` capability, but this stays defensive rather than assuming the two characteristics always
+     * agree. `maxImages = 1` — see [rawImageReader]'s own doc.
+     */
+    private fun createRawImageReader(characteristics: CameraCharacteristics): ImageReader? {
+        val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return null
+        val rawSize = map.getOutputSizes(ImageFormat.RAW_SENSOR)?.maxByOrNull { it.width.toLong() * it.height } ?: return null
+        return ImageReader.newInstance(rawSize.width, rawSize.height, ImageFormat.RAW_SENSOR, 1).apply {
+            setOnImageAvailableListener(rawImageAvailableListener, backgroundHandler)
         }
     }
 
@@ -1142,6 +1342,31 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
             ?: return null
         if (minimumFocusDistance <= 0f) return null
         return ManualFocusCapability(maxFocusDistanceDiopters = minimumFocusDistance)
+    }
+
+    /**
+     * `null` return means "hide/never offer the with-RAW capture choice for this lens" (issue #45) —
+     * mirrors [manualIsoCapability]'s own structure exactly: [CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW]
+     * gates it, per-*physical*-lens (not per-device — an ultra-wide/tele auxiliary lens on a
+     * `LOGICAL_MULTI_CAMERA` device can lack `RAW` even when the main sensor has it, via
+     * [characteristicsFor]'s own [CameraLens.physicalCameraId] resolution), and this is a pure static
+     * [CameraCharacteristics] lookup independent of whether a camera is bound yet — re-evaluated by
+     * callers (`ui/CameraScreen`'s `LaunchedEffect(uiState.selectedLens)`) on every lens switch, the
+     * same way [manualIsoCapability]/[manualFocusCapability] already are, not cached once at app
+     * start. This alone does **not** guarantee a "with RAW" capture will actually succeed for this
+     * lens — see [RawCaptureCapability]'s own doc for the additional session-level verification
+     * [openCamera]/[createCaptureSession] perform once a camera is actually bound.
+     */
+    fun rawCaptureCapability(lens: CameraLens?): RawCaptureCapability? {
+        val characteristics = characteristicsFor(lens) ?: return null
+
+        val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: intArrayOf()
+        if (CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW !in capabilities) return null
+
+        val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return null
+        val rawSize = map.getOutputSizes(ImageFormat.RAW_SENSOR)?.maxByOrNull { it.width.toLong() * it.height } ?: return null
+
+        return RawCaptureCapability(sensorWidth = rawSize.width, sensorHeight = rawSize.height)
     }
 
     /**
@@ -1483,75 +1708,186 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      * [lutJpegProcessor]'s offscreen decode -> shader -> re-encode pass before being written —
      * replacing the plain direct-to-MediaStore write only in that case, per this issue's own scope. A
      * `null` result from [LutJpegProcessor.apply] (any processing failure) falls back to the original,
-     * ungraded [bytes] rather than losing the capture — see that class's own doc.
+     * ungraded [bytes] rather than losing the capture — see that class's own doc. LUT grading never
+     * applies to the RAW/DNG output below — it stays unprocessed sensor data, an explicit non-goal of
+     * issue #45.
+     *
+     * [includeRaw] requests an *additional* `.dng` written to `MediaStore` alongside the JPEG (issue
+     * #45) — only actually honored when [rawImageReader] is non-null, i.e. this lens's `RAW`
+     * capability *and* the 3-surface session it needs were both already confirmed when the camera was
+     * bound (see [openCamera]/[createCaptureSession]); requesting RAW on a lens/session that doesn't
+     * actually have it configured silently falls back to a plain JPEG-only capture rather than
+     * throwing, the same "capability absent -> feature quietly unavailable" convention
+     * [manualIsoCapability]/[manualFocusCapability] already follow. A RAW/DNG write failure (disk,
+     * `MediaStore`, or `DngCreator` itself) is swallowed rather than failing this whole call — the
+     * JPEG that already succeeded must not be lost over a failed *bonus* file.
      */
-    suspend fun takePhoto(): Uri {
+    suspend fun takePhoto(includeRaw: Boolean): Uri {
         val device = checkNotNull(cameraDevice) { "Camera not bound yet" }
         val session = checkNotNull(captureSession) { "Camera not bound yet" }
         val reader = checkNotNull(imageReader) { "Camera not bound yet" }
         val characteristics = characteristicsFor(currentLens)
             ?: throw IllegalStateException("No CameraCharacteristics available for the bound lens")
+        val rawReaderForThisShot = rawImageReader.takeIf { includeRaw }
 
-        val bytes = captureStillJpeg(device, session, reader, characteristics)
+        val captured = captureStillJpeg(device, session, reader, characteristics, rawReaderForThisShot)
         val activeLut = _activeLut.value
         val outputBytes = if (activeLut != null) {
             withContext(Dispatchers.Default) {
-                lutJpegProcessor.apply(bytes, activeLut.cubeLut, activeLut.intensityPercent)
-            } ?: bytes
+                lutJpegProcessor.apply(captured.jpegBytes, activeLut.cubeLut, activeLut.intensityPercent)
+            } ?: captured.jpegBytes
         } else {
-            bytes
+            captured.jpegBytes
         }
-        return withContext(Dispatchers.IO) { saveJpegToMediaStore(outputBytes) }
+        val uri = withContext(Dispatchers.IO) { saveJpegToMediaStore(outputBytes) }
+
+        captured.raw?.let { raw ->
+            try {
+                // DngCreator.writeImage does real file/encoder IO — must not run on the caller's
+                // thread, mirroring saveJpegToMediaStore's own Dispatchers.IO above.
+                withContext(Dispatchers.IO) {
+                    saveRawDngToMediaStore(raw, characteristics, jpegOrientation(characteristics))
+                }
+            } catch (e: IOException) {
+                // See this function's own doc — a failed DNG write must not lose the JPEG capture
+                // that already succeeded.
+            } catch (e: IllegalStateException) {
+                // MediaStore insert/output-stream failure — same reasoning as above.
+            } finally {
+                raw.image.close()
+            }
+        }
+        return uri
     }
 
+    /**
+     * A single still-capture request carries both the JPEG and (when [rawReader] is non-null) RAW
+     * targets — Camera2 only guarantees they come from the identical sensor frame when captured
+     * together on one request, which is exactly what [DngCreator] needs matched to the JPEG's own
+     * companion shot. The JPEG side is delivered via the existing [imageAvailableListener]/
+     * [pendingCapture] flow unchanged; the RAW side (when requested) is awaited independently via
+     * [pendingRawCapture], bounded by [RawCaptureTimeoutMs] so a HAL that never delivers one of the
+     * two RAW pieces can't hang a capture forever — see [pendingRawImagesByTimestamp]'s own doc for
+     * how the two are correlated.
+     */
     private suspend fun captureStillJpeg(
         device: CameraDevice,
         session: CameraCaptureSession,
         reader: ImageReader,
         characteristics: CameraCharacteristics,
-    ): ByteArray = suspendCancellableCoroutine { continuation ->
-        pendingCapture = continuation
-        continuation.invokeOnCancellation { if (pendingCapture === continuation) pendingCapture = null }
+        rawReader: ImageReader? = null,
+    ): CapturedStill {
+        val rawDeferred = rawReader?.let { CompletableDeferred<Pair<Image, TotalCaptureResult>>() }
+        pendingRawCapture = rawDeferred
 
-        val manualCapability = if (pendingManualIso != null || pendingManualShutterNs != null) {
-            manualIsoCapability(currentLens)
-        } else {
-            null
-        }
-
-        val request = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
-            addTarget(reader.surface)
-            set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation(characteristics))
-            set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-
-            if (manualCapability != null) {
-                val (iso, shutterNs) = resolveManualExposure(pendingManualIso, pendingManualShutterNs, manualCapability)
-                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-                set(CaptureRequest.SENSOR_SENSITIVITY, iso)
-                set(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterNs)
-            } else {
-                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-                set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, pendingAeCompensation)
+        val jpegBytes = suspendCancellableCoroutine { continuation ->
+            pendingCapture = continuation
+            continuation.invokeOnCancellation {
+                if (pendingCapture === continuation) pendingCapture = null
+                rawDeferred?.cancel()
             }
 
-            applyFocusSettings(this)
+            val manualCapability = if (pendingManualIso != null || pendingManualShutterNs != null) {
+                manualIsoCapability(currentLens)
+            } else {
+                null
+            }
 
-            set(
-                CaptureRequest.FLASH_MODE,
-                if (pendingFlashMode == FlashMode.ON) CaptureRequest.FLASH_MODE_SINGLE else CaptureRequest.FLASH_MODE_OFF,
-            )
-        }.build()
+            val request = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                addTarget(reader.surface)
+                rawReader?.let { addTarget(it.surface) }
+                set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation(characteristics))
+                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
 
-        try {
-            session.capture(request, null, backgroundHandler)
-        } catch (e: CameraAccessException) {
-            pendingCapture = null
-            continuation.resumeWithException(e)
-        } catch (e: IllegalStateException) {
-            pendingCapture = null
-            continuation.resumeWithException(e)
+                if (manualCapability != null) {
+                    val (iso, shutterNs) = resolveManualExposure(pendingManualIso, pendingManualShutterNs, manualCapability)
+                    set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+                    set(CaptureRequest.SENSOR_SENSITIVITY, iso)
+                    set(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterNs)
+                } else {
+                    set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                    set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, pendingAeCompensation)
+                }
+
+                applyFocusSettings(this)
+
+                set(
+                    CaptureRequest.FLASH_MODE,
+                    if (pendingFlashMode == FlashMode.ON) CaptureRequest.FLASH_MODE_SINGLE else CaptureRequest.FLASH_MODE_OFF,
+                )
+            }.build()
+
+            try {
+                session.capture(request, stillCaptureCallback, backgroundHandler)
+            } catch (e: CameraAccessException) {
+                pendingCapture = null
+                pendingRawCapture = null
+                continuation.resumeWithException(e)
+            } catch (e: IllegalStateException) {
+                pendingCapture = null
+                pendingRawCapture = null
+                continuation.resumeWithException(e)
+            }
         }
+
+        val raw = rawDeferred?.let { deferred -> withTimeoutOrNull(RawCaptureTimeoutMs) { deferred.await() } }
+        pendingRawCapture = null
+        if (raw == null && rawDeferred != null) {
+            // Timed out (or was cancelled) with at most a half-arrived pair — drop whatever's left so
+            // it can't leak or wrongly get matched against a later, unrelated capture.
+            pendingRawImagesByTimestamp.values.forEach { it.close() }
+            pendingRawImagesByTimestamp.clear()
+            pendingRawResultsByTimestamp.clear()
+        }
+        return CapturedStill(jpegBytes, raw?.let { (image, result) -> RawCaptureResult(image, result) })
     }
+
+    /**
+     * [totalCaptureResult] and the underlying `RAW_SENSOR` buffer inside [raw] are already matched to
+     * the same captured frame by [captureStillJpeg]'s timestamp correlation — this just feeds them to
+     * [DngCreator], the framework's own spec-valid DNG writer, rather than hand-rolling DNG output.
+     * [orientationDegrees] mirrors [jpegOrientation]'s own value so the DNG rotates for a gallery
+     * viewer exactly the same way its JPEG companion does. Caller closes [raw]'s [Image] — this
+     * function only writes it, matching [saveJpegToMediaStore]'s own "caller owns the bytes" shape.
+     */
+    private fun saveRawDngToMediaStore(raw: RawCaptureResult, characteristics: CameraCharacteristics, orientationDegrees: Int): Uri {
+        val name = "xCamera_${System.currentTimeMillis()}.dng"
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/x-adobe-dng")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Same album as the JPEG companion (see saveJpegToMediaStore) so both land side by
+                // side in the gallery.
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DCIM}/Camera")
+            }
+        }
+        val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+            ?: throw IllegalStateException("MediaStore insert failed for DNG")
+        context.contentResolver.openOutputStream(uri)?.use { out ->
+            DngCreator(characteristics, raw.totalCaptureResult).apply {
+                setOrientation(exifOrientationFor(orientationDegrees))
+            }.writeImage(out, raw.image)
+        } ?: throw IllegalStateException("Couldn't open an output stream for DNG $uri")
+        return uri
+    }
+
+    /** [DngCreator.setOrientation] takes an EXIF orientation constant, not degrees — mirrors
+     *  [jpegOrientation]'s own degrees value into the equivalent [ExifInterface.ORIENTATION_*]. */
+    private fun exifOrientationFor(degrees: Int): Int = when (degrees) {
+        90 -> ExifInterface.ORIENTATION_ROTATE_90
+        180 -> ExifInterface.ORIENTATION_ROTATE_180
+        270 -> ExifInterface.ORIENTATION_ROTATE_270
+        else -> ExifInterface.ORIENTATION_NORMAL
+    }
+
+    /** [captureStillJpeg]'s combined result — [raw] is `null` whenever the shot didn't request (or
+     *  didn't end up with) a RAW buffer. */
+    private class CapturedStill(val jpegBytes: ByteArray, val raw: RawCaptureResult?)
+
+    /** An [image] already matched (by [captureStillJpeg]'s timestamp correlation) to the
+     *  [totalCaptureResult] from the very same captured frame — see [pendingRawImagesByTimestamp]'s
+     *  own doc. Caller owns closing [image]. */
+    private class RawCaptureResult(val image: Image, val totalCaptureResult: TotalCaptureResult)
 
     private fun saveJpegToMediaStore(bytes: ByteArray): Uri {
         val name = "xCamera_${System.currentTimeMillis()}.jpg"
@@ -1656,5 +1992,12 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
          *  the repeating request stuck in `CONTROL_AF_MODE_AUTO` (frozen focus, no continuous tracking)
          *  forever. */
         const val AfAutoModeFallbackTimeoutMs = 2_000L
+
+        /** Bounded safety net for a "with RAW" capture's [pendingRawCapture] await (issue #45) —
+         *  generous relative to how fast a HAL normally delivers both the RAW [Image] and its
+         *  [TotalCaptureResult] after a single capture request, just there so a HAL that never
+         *  delivers one of the two can't hang [captureStillJpeg]'s caller (and therefore the shutter)
+         *  forever; the JPEG side is unaffected either way since it's awaited independently. */
+        const val RawCaptureTimeoutMs = 5_000L
     }
 }

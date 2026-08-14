@@ -12,6 +12,7 @@ import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.HistogramData
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
+import com.dragote.xcamera.feature.camera.domain.model.RawCaptureCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
@@ -124,6 +125,16 @@ interface CameraRepository {
 
     fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability?
 
+    /**
+     * `null` means "never offer a with-RAW capture choice for this lens" (issue #45) — see
+     * `CameraController.rawCaptureCapability`'s own doc for the per-physical-lens gating this mirrors
+     * from [manualIsoCapability]/[manualFocusCapability]. Presence alone doesn't guarantee a
+     * subsequent [takePhoto] call with `includeRaw = true` actually produces a `.dng` — the 3-surface
+     * session it needs is independently verified once a camera is bound, with a silent JPEG-only
+     * fallback if that isn't actually configurable on this hardware.
+     */
+    fun rawCaptureCapability(lens: CameraLens?): RawCaptureCapability?
+
     /** Tap-to-focus (issue #21) — see `CameraController.triggerAutoFocus`'s own doc. */
     fun triggerAutoFocus(displayXFraction: Float, displayYFraction: Float)
 
@@ -162,7 +173,14 @@ interface CameraRepository {
      */
     fun observeActiveLut(): Flow<ActiveLut?>
 
-    suspend fun takePhoto(): Result<Uri, DataError.Local>
+    /**
+     * [includeRaw] requests an additional `.dng` alongside the always-produced JPEG (issue #45) —
+     * `false` behaves exactly as this call did before RAW existed. See `CameraController.takePhoto`'s
+     * own doc for why a RAW request on a lens/session without it actually configured silently falls
+     * back to JPEG-only rather than failing the whole capture, and why a RAW/DNG-specific write
+     * failure doesn't fail an otherwise-successful JPEG capture either.
+     */
+    suspend fun takePhoto(includeRaw: Boolean = false): Result<Uri, DataError.Local>
 
     fun listBackLenses(): List<CameraLens>
 

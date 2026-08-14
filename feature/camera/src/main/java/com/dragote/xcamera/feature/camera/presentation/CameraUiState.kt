@@ -61,4 +61,19 @@ data class CameraUiState(
      * Read at the *start* of a hold gesture as the distance a rotation adjusts from.
      */
     val liveFocusDistanceDiopters: Float? = null,
+    /**
+     * Whether [selectedLens] reports Camera2's `RAW` capability (issue #45) — gates whether the
+     * capture UI offers a "with RAW"/"without RAW" per-shot choice at all. `false` on a lens with no
+     * `RAW` support (e.g. the vast majority of front/ultra-wide/tele auxiliary lenses) — matching this
+     * issue's own non-goal of never surfacing RAW as an error state, just quietly not offered.
+     */
+    val rawCaptureSupported: Boolean = false,
+    /**
+     * The per-shot (not persistent-mode) "with RAW" choice — `true` means the *next* `ShutterButton`
+     * tap additionally captures a `.dng`. Always forced back to `false` whenever
+     * [rawCaptureSupported] itself flips to `false` (e.g. switching to a lens without RAW support) —
+     * see `CameraViewModel.onRawCaptureCapabilityChanged` — so a stale "on" choice from a previous
+     * lens can never silently carry over to one that doesn't support it.
+     */
+    val includeRawInCapture: Boolean = false,
 )

@@ -14,6 +14,7 @@ import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
+import com.dragote.xcamera.feature.camera.domain.model.RawCaptureCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.shared.common.domain.repository.LutRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
@@ -189,7 +190,7 @@ class CameraRepositoryImplTest {
     @Test
     fun `takePhoto wraps a successful capture in Result Success`() = runTest {
         val uri = mockk<Uri>()
-        coEvery { cameraController.takePhoto() } returns uri
+        coEvery { cameraController.takePhoto(false) } returns uri
 
         val result = repository.takePhoto()
 
@@ -198,7 +199,7 @@ class CameraRepositoryImplTest {
 
     @Test
     fun `takePhoto wraps a CameraAccessException in Result Error`() = runTest {
-        coEvery { cameraController.takePhoto() } throws mockk<CameraAccessException>(relaxed = true)
+        coEvery { cameraController.takePhoto(false) } throws mockk<CameraAccessException>(relaxed = true)
 
         val result = repository.takePhoto()
 
@@ -207,7 +208,7 @@ class CameraRepositoryImplTest {
 
     @Test
     fun `takePhoto wraps an unbound-camera IllegalStateException in Result Error`() = runTest {
-        coEvery { cameraController.takePhoto() } throws IllegalStateException("Camera not bound yet")
+        coEvery { cameraController.takePhoto(false) } throws IllegalStateException("Camera not bound yet")
 
         val result = repository.takePhoto()
 
@@ -221,6 +222,45 @@ class CameraRepositoryImplTest {
         every { cameraController.manualFocusCapability(lens) } returns capability
 
         assertEquals(capability, repository.manualFocusCapability(lens))
+    }
+
+    @Test
+    fun `rawCaptureCapability delegates to the controller and returns its result`() {
+        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val capability = RawCaptureCapability(sensorWidth = 4032, sensorHeight = 3024)
+        every { cameraController.rawCaptureCapability(lens) } returns capability
+
+        assertEquals(capability, repository.rawCaptureCapability(lens))
+    }
+
+    @Test
+    fun `rawCaptureCapability delegates to the controller and returns null for an unsupported lens`() {
+        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = "1", zoomRatio = 0.5f)
+        every { cameraController.rawCaptureCapability(lens) } returns null
+
+        assertNull(repository.rawCaptureCapability(lens))
+    }
+
+    @Test
+    fun `takePhoto with includeRaw true delegates the flag to the controller`() = runTest {
+        val uri = mockk<Uri>()
+        coEvery { cameraController.takePhoto(true) } returns uri
+
+        val result = repository.takePhoto(includeRaw = true)
+
+        assertEquals(Result.Success(uri), result)
+        coVerify { cameraController.takePhoto(true) }
+    }
+
+    @Test
+    fun `takePhoto defaults includeRaw to false`() = runTest {
+        val uri = mockk<Uri>()
+        coEvery { cameraController.takePhoto(false) } returns uri
+
+        val result = repository.takePhoto()
+
+        assertEquals(Result.Success(uri), result)
+        coVerify { cameraController.takePhoto(false) }
     }
 
     @Test

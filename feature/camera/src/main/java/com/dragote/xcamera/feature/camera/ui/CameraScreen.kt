@@ -80,6 +80,7 @@ import com.dragote.xcamera.feature.camera.presentation.CameraViewModel
 import com.dragote.xcamera.feature.camera.ui.component.ExposingIndicator
 import com.dragote.xcamera.feature.camera.ui.component.ExposureDial
 import com.dragote.xcamera.feature.camera.ui.component.FlashLever
+import com.dragote.xcamera.feature.camera.ui.component.RawCaptureLever
 import com.dragote.xcamera.feature.camera.ui.component.FocusDial
 import com.dragote.xcamera.feature.camera.ui.component.FocusRing
 import com.dragote.xcamera.feature.camera.ui.component.FocusTapIndicator
@@ -467,6 +468,9 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
         viewModel.onManualIsoCapabilityChanged(viewModel.manualIsoCapability(uiState.selectedLens))
         viewModel.onAeCompensationCapabilityChanged(viewModel.aeCompensationCapability(uiState.selectedLens))
         viewModel.onManualFocusCapabilityChanged(viewModel.manualFocusCapability(uiState.selectedLens))
+        // REQUEST_AVAILABLE_CAPABILITIES_RAW is per-physical-lens too (issue #45) — same re-query-on-
+        // every-lens-switch reasoning as the three capability queries above.
+        viewModel.onRawCaptureCapabilityChanged(viewModel.rawCaptureCapability(uiState.selectedLens))
     }
 
     // Manual mode's *visible* dials appear the instant ModeLever is tapped (manualModeEnabled), but
@@ -528,7 +532,10 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     fun capture() {
         coroutineScope.launch {
             viewModel.onCaptureStarted()
-            when (val result = viewModel.takePhoto()) {
+            // includeRawInCapture is already forced back to false whenever rawCaptureSupported is —
+            // see CameraUiState.includeRawInCapture's own doc — so this reads it directly rather than
+            // re-checking rawCaptureSupported here too.
+            when (val result = viewModel.takePhoto(uiState.includeRawInCapture)) {
                 is Result.Success -> viewModel.onPhotoSaved(result.data)
                 is Result.Error -> viewModel.onCaptureError(result.error.name)
             }
@@ -595,6 +602,15 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                         flashOn = uiState.flashMode == FlashMode.ON,
                         onToggle = viewModel::onFlashModeToggled,
                     )
+                    // Only shown once the active lens actually reports RAW support (issue #45) — never
+                    // an error state for a lens without it, matching manual-ISO/manual-focus's own
+                    // "hide, don't disable" convention for an unsupported capability.
+                    if (uiState.rawCaptureSupported) {
+                        RawCaptureLever(
+                            includeRaw = uiState.includeRawInCapture,
+                            onToggle = viewModel::onIncludeRawToggled,
+                        )
+                    }
                     // Only shown once at least one LUT has been imported — mirrors ui/SettingsScreen's
                     // own luts.isNotEmpty() gating for its edit-mode toggle (see LutDial's own doc).
                     if (luts.isNotEmpty()) {

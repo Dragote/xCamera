@@ -11,6 +11,7 @@ import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.HistogramData
 import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
 import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
+import com.dragote.xcamera.feature.camera.domain.model.RawCaptureCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.model.aeCompensationSteps
 import com.dragote.xcamera.feature.camera.domain.model.isoStopsInRange
@@ -202,6 +203,9 @@ class CameraViewModel @Inject constructor(
     fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability? =
         cameraRepository.manualFocusCapability(lens)
 
+    fun rawCaptureCapability(lens: CameraLens?): RawCaptureCapability? =
+        cameraRepository.rawCaptureCapability(lens)
+
     fun triggerAutoFocus(displayXFraction: Float, displayYFraction: Float) =
         cameraRepository.triggerAutoFocus(displayXFraction, displayYFraction)
 
@@ -226,7 +230,8 @@ class CameraViewModel @Inject constructor(
         viewModelScope.launch { cameraSettingsRepository.setSelectedLutId(id) }
     }
 
-    suspend fun takePhoto(): Result<Uri, DataError.Local> = cameraRepository.takePhoto()
+    suspend fun takePhoto(includeRaw: Boolean = false): Result<Uri, DataError.Local> =
+        cameraRepository.takePhoto(includeRaw)
 
     fun listBackLenses(): List<CameraLens> = cameraRepository.listBackLenses()
 
@@ -325,6 +330,30 @@ class CameraViewModel @Inject constructor(
             manualFocusSupported = capability != null,
             maxFocusDistanceDiopters = capability?.maxFocusDistanceDiopters ?: 0f,
         )
+    }
+
+    /**
+     * Called whenever [CameraLens.physicalCameraId]/[CameraLens.logicalCameraId]'s RAW capability is
+     * (re-)queried for [CameraUiState.selectedLens] (issue #45), mirroring
+     * [onManualFocusCapabilityChanged]'s own per-physical-lens re-evaluation-on-lens-switch pattern.
+     * Forces [CameraUiState.includeRawInCapture] back to `false` whenever the new lens doesn't support
+     * RAW at all — a per-shot choice from a previous, RAW-capable lens must never silently carry over
+     * to one that doesn't support it (see [CameraUiState.includeRawInCapture]'s own doc).
+     */
+    fun onRawCaptureCapabilityChanged(capability: RawCaptureCapability?) {
+        val current = _uiState.value
+        _uiState.value = current.copy(
+            rawCaptureSupported = capability != null,
+            includeRawInCapture = current.includeRawInCapture && capability != null,
+        )
+    }
+
+    /** `ui/CameraScreen`'s RAW toggle lever calls this on every tap — a no-op (per-shot choice makes
+     *  no sense) on a lens with no [CameraUiState.rawCaptureSupported]. */
+    fun onIncludeRawToggled() {
+        val current = _uiState.value
+        if (!current.rawCaptureSupported) return
+        _uiState.value = current.copy(includeRawInCapture = !current.includeRawInCapture)
     }
 
     fun onAeCompensationIndexChanged(index: Int) {
