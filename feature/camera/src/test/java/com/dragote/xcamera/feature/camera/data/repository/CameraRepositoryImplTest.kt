@@ -5,7 +5,7 @@ import android.media.Image
 import android.net.Uri
 import android.os.Handler
 import androidx.lifecycle.LifecycleOwner
-import com.dragote.xcamera.feature.camera.data.CameraController
+import com.dragote.xcamera.feature.camera.data.camera.CameraController
 import com.dragote.xcamera.feature.camera.data.LutFileReader
 import com.dragote.xcamera.feature.camera.domain.model.ActiveLut
 import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
