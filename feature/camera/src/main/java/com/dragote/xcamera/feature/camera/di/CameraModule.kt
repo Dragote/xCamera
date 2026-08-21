@@ -1,7 +1,7 @@
 package com.dragote.xcamera.feature.camera.di
 
 import android.content.Context
-import com.dragote.xcamera.feature.camera.data.CameraController
+import com.dragote.xcamera.feature.camera.data.camera.CameraController
 import com.dragote.xcamera.feature.camera.data.repository.CameraRepositoryImpl
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.shared.common.domain.repository.LutResolutionRepository
