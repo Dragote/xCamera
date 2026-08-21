@@ -291,7 +291,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         val reader = createImageReader(effectiveCharacteristics)
         imageReader = reader
 
-        val previewReader = createPreviewImageReader(effectiveCharacteristics)
+        val previewReader = createPreviewImageReader()
         previewImageReader = previewReader
         frameAnalyzer.setRotationDegrees(effectiveCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0)
 
@@ -587,7 +587,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      * reader; a live preview only ever wants the latest frame, so [FrameAnalyzer.imageAvailableListener]
      * always calls `acquireLatestImage`, never queuing.
      */
-    private fun createPreviewImageReader(characteristics: CameraCharacteristics): ImageReader {
+    private fun createPreviewImageReader(): ImageReader {
         val size = previewOutputSize(currentLens, previewViewWidth, previewViewHeight)
         return ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 2).apply {
             setOnImageAvailableListener(frameAnalyzer.imageAvailableListener, backgroundHandler)

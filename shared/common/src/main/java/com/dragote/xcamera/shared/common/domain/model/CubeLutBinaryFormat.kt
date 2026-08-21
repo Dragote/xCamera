@@ -8,14 +8,13 @@ import java.nio.ByteOrder
  * `size`, each a 4-byte int) followed by [CubeLut.values] as raw `nativeOrder()` floats, no text
  * encoding at all. Used *only* for `feature:settings`' own app-private library storage
  * (`LutLocalDataSource`), never for anything the user picks or sees directly — the ASCII `.cube`
- * format ([parseCubeLut]/[toCubeFileContent]) stays the only format this app ever reads *from* a
- * user-picked file or would ever write back out for interchange/export.
+ * format ([parseCubeLut]) stays the only format this app ever reads *from* a user-picked file.
  *
  * Reading this format is a single bulk byte read into a [FloatArray] with no text-parsing step at all
  * on `CameraRepositoryImpl`'s cold/first-selection path — see `docs/features/lut-color-grading.md` for
  * why this format exists alongside ASCII `.cube`. Since it skips the float→decimal-string→float
- * round-trip [toCubeFileContent]/[parseCubeLut] would otherwise do on every import, it's strictly at
- * least as precise as the text format, never less (see [parseCubeLutBinary] for the read side).
+ * round-trip a text format would otherwise do on every import, it's strictly at least as precise as
+ * the text format, never less (see [parseCubeLutBinary] for the read side).
  *
  * Same "never throws, returns `null` on anything malformed" contract [parseCubeLut] already
  * established — a corrupted/truncated binary file should fail to load, not crash the caller.
