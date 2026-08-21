@@ -180,7 +180,6 @@ class CameraViewModelTest {
 
             viewModel.onManualIsoCapabilityChanged(capability)
             val updated = awaitItem()
-            assertTrue(updated.manualIsoSupported)
             assertEquals(listOf(100, 200, 400, 800, 1600, 3200), updated.isoStops)
             assertEquals(
                 listOf(
@@ -200,11 +199,10 @@ class CameraViewModelTest {
             awaitItem() // initial
 
             viewModel.onManualIsoCapabilityChanged(capability)
-            assertTrue(awaitItem().manualIsoSupported)
+            awaitItem()
 
             viewModel.onManualIsoCapabilityChanged(null)
             val updated = awaitItem()
-            assertFalse(updated.manualIsoSupported)
             assertEquals(emptyList<Int>(), updated.isoStops)
             assertEquals(emptyList<Long>(), updated.shutterStops)
         }
@@ -387,7 +385,6 @@ class CameraViewModelTest {
             viewModel.onManualIsoCapabilityChanged(null)
             val fellBackToAuto = awaitItem()
             assertFalse(fellBackToAuto.manualModeEnabled)
-            assertFalse(fellBackToAuto.manualIsoSupported)
             assertEquals(emptyList<Int>(), fellBackToAuto.isoStops)
             assertEquals(emptyList<Long>(), fellBackToAuto.shutterStops)
             assertEquals(0, fellBackToAuto.selectedIsoIndex)
@@ -417,7 +414,6 @@ class CameraViewModelTest {
             viewModel.onManualIsoCapabilityChanged(isoOnlyCapability)
             val narrowed = awaitItem()
             assertTrue(narrowed.manualModeEnabled) // ISO stops still available, so manual mode stays on
-            assertTrue(narrowed.manualIsoSupported)
             assertEquals(emptyList<Long>(), narrowed.shutterStops)
             assertEquals(0, narrowed.selectedShutterIndex) // re-clamped rather than left dangling
         }

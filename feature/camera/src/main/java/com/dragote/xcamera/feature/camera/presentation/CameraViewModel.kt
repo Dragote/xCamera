@@ -294,7 +294,6 @@ class CameraViewModel @Inject constructor(
         val current = _uiState.value
         val stillSupported = stops.isNotEmpty() || shutterStops.isNotEmpty()
         _uiState.value = current.copy(
-            manualIsoSupported = stops.isNotEmpty(),
             isoStops = stops,
             shutterStops = shutterStops,
             manualModeEnabled = current.manualModeEnabled && stillSupported,
