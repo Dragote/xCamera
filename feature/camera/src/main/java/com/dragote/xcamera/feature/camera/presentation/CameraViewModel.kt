@@ -32,9 +32,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlin.math.abs
 import javax.inject.Inject
 
@@ -68,7 +70,7 @@ class CameraViewModel @Inject constructor(
      * Deliberately its own [StateFlow], not a [CameraUiState] field, for the same reason [zebraMask]
      * is — unlike [zebraMask] this has no enable/disable gate at all (see
      * `CameraRepository.observeHistogramData`'s own doc): it streams for the entire lifetime of the
-     * preview, always-on per issue #29.
+     * preview, always-on.
      */
     val histogramData: StateFlow<HistogramData?> =
         cameraRepository.observeHistogramData().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -76,7 +78,7 @@ class CameraViewModel @Inject constructor(
     /**
      * Deliberately its own [StateFlow], not a [CameraUiState] field, for the same reason [zebraMask]
      * is — `CONTROL_AF_STATE` can update on essentially every capture result. Drives the tap-to-focus
-     * indicator's own appear/hold/fade lifecycle in `ui/CameraScreen` (issue #21 follow-up).
+     * indicator's own appear/hold/fade lifecycle in `ui/CameraScreen`.
      */
     val afConvergenceState: StateFlow<AfConvergenceState?> =
         cameraRepository.observeAfConvergenceState().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -88,7 +90,17 @@ class CameraViewModel @Inject constructor(
      * business sharing a single combined state object with fields that do.
      */
     val cameraSettings: StateFlow<CameraSettings> =
-        cameraSettingsRepository.observeSettings().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CameraSettings())
+        cameraSettingsRepository.observeSettings().stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            // A plain `CameraSettings()` default here would render the wrong (light) minimal-chrome
+            // palette for one frame on every cold start with INVERT CHROME on, before this StateFlow's
+            // async first collection catches up — visible as a flash. A blocking read of DataStore
+            // Preferences' already-on-disk value at ViewModel construction (this runs once, synchronously,
+            // before Compose can render anything that depends on this StateFlow) costs a few ms on cold
+            // start and eliminates the flash entirely.
+            initialValue = runBlocking { cameraSettingsRepository.observeSettings().first() },
+        )
 
     /**
      * Deliberately its own [StateFlow], not a [CameraUiState] field, for the same reason [cameraSettings]
@@ -96,7 +108,7 @@ class CameraViewModel @Inject constructor(
      * since it doesn't need the hardware-facing interface at all — Hilt already binds
      * `CameraRepositoryImpl` to both), a wholly separate repository from `feature:camera`'s own
      * capture-result stream. Mirrors `feature:settings`' `SettingsViewModel` consuming the same
-     * interface for its per-chip spinner (issue #43): this is the viewfinder's own indicator for the
+     * interface for its per-chip spinner: this is the viewfinder's own indicator for the
      * identical resolving window, shown for whenever the user has already navigated back to the camera
      * screen — the common case, since that's where a LUT's actual effect is visible — while a LUT
      * selection is still being read + parsed off disk.
@@ -110,8 +122,8 @@ class CameraViewModel @Inject constructor(
      * is — it comes from [LutRepository] (`feature:settings`' catalog of imported LUTs, injected
      * directly the same way `data.repository.CameraRepositoryImpl` already consumes it to resolve
      * selections), a wholly separate repository from [cameraRepository]'s own capture-result stream.
-     * Exists purely so `ui/CameraScreen`'s `LutDial` (the quick-access toolbar dial, issue #43 follow-up)
-     * can gate its own visibility on "at least one LUT imported" the same way `ui/SettingsScreen`'s own
+     * Exists purely so `ui/CameraScreen`'s `LutDial` (the quick-access toolbar dial) can gate its own
+     * visibility on "at least one LUT imported" the same way `ui/SettingsScreen`'s own
      * edit-mode toggle does — `CameraViewModel` otherwise only ever sees [CameraSettings.selectedLutId],
      * never the underlying catalog.
      */
@@ -165,19 +177,12 @@ class CameraViewModel @Inject constructor(
             }
         }
 
-        // Issue #43 follow-up — this used to be `ui/CameraScreen`'s own `LaunchedEffect(cameraSettings
-        // .selectedLutId, cameraSettings.lutIntensityPercent)`, which only ran while CameraScreen itself
-        // was composed. Compose-destinations navigation removes CameraScreen from composition the moment
-        // the user navigates to SettingsScreen — but this ViewModel (back-stack-scoped) stays alive the
-        // whole time, and Settings is the *only* place a LUT selection/import can happen. That meant the
-        // entire resolve step (file read + .cube parse, including the resolve-failure-driven file-type
-        // validation) never even started while the user was sitting on Settings — it only fired once they
-        // navigated back to the camera screen, which is exactly why resolving looked invisible/instant on
-        // "import" and slow on "navigate back". Living here instead runs for this ViewModel's whole
-        // lifetime regardless of which screen is composed, so resolution now typically completes in the
-        // background while the user is still on Settings. distinctUntilChanged mirrors what the two
-        // LaunchedEffect keys gave for free — an unrelated settings change (e.g. showGrid) must not
-        // re-trigger a resolve.
+        // Lives here (back-stack-scoped, alive regardless of which screen is composed) rather than a
+        // ui/CameraScreen-owned LaunchedEffect so the resolve step (file read + .cube parse, including
+        // resolve-failure-driven file-type validation) runs in the background while the user is still
+        // on SettingsScreen, the only place a LUT selection/import happens — see
+        // docs/features/lut-color-grading.md. distinctUntilChanged means an unrelated settings change
+        // (e.g. showGrid) doesn't re-trigger a resolve.
         viewModelScope.launch {
             cameraSettingsRepository.observeSettings()
                 .map { it.selectedLutId to it.lutIntensityPercent }
@@ -212,15 +217,14 @@ class CameraViewModel @Inject constructor(
     fun setManualFocusDistance(distanceDiopters: Float?) =
         cameraRepository.setManualFocusDistance(distanceDiopters)
 
-    /** Resolves and caches [CameraUiState]-adjacent LUT selection (issue #43) — see
-     *  `CameraRepository.setLut`'s own doc. The `init` block's `cameraSettings`-driven collector is now
-     *  the *only* caller (see its own comment for why that moved off `ui/CameraScreen`'s `LaunchedEffect`)
-     *  — private since there's no longer any legitimate reason for the UI layer to trigger this directly. */
+    /** Resolves and caches [CameraUiState]-adjacent LUT selection — see `CameraRepository.setLut`'s
+     *  own doc. The `init` block's `cameraSettings`-driven collector is the only caller — private since
+     *  there's no legitimate reason for the UI layer to trigger this directly. */
     private suspend fun setLut(lutId: String?, intensityPercent: Int) = cameraRepository.setLut(lutId, intensityPercent)
 
     /**
-     * `ui/CameraScreen`'s `LutDial` (issue #43 follow-up) calls this on every discrete click — `null`
-     * selects "OFF". Mirrors `feature:settings`' `SettingsViewModel.onLutSelected` exactly: both just
+     * `ui/CameraScreen`'s `LutDial` calls this on every discrete click — `null` selects "OFF". Mirrors
+     * `feature:settings`' `SettingsViewModel.onLutSelected` exactly: both just
      * persist the selection via [CameraSettingsRepository.setSelectedLutId], never touch
      * [CameraSettings.lutIntensityPercent] (intensity stays a Settings-screen-only fine-tune). The
      * `init` block's `cameraSettings`-driven collector above is what actually reacts to the change and
@@ -334,7 +338,7 @@ class CameraViewModel @Inject constructor(
 
     /**
      * Called whenever [CameraLens.physicalCameraId]/[CameraLens.logicalCameraId]'s RAW capability is
-     * (re-)queried for [CameraUiState.selectedLens] (issue #45), mirroring
+     * (re-)queried for [CameraUiState.selectedLens], mirroring
      * [onManualFocusCapabilityChanged]'s own per-physical-lens re-evaluation-on-lens-switch pattern.
      * This is purely a live hardware-support signal now — `CameraSettings.captureRawByDefault` (set on
      * `ui/SettingsScreen`) is the actual user-facing "capture RAW" preference; `ui/CameraScreen` ANDs

@@ -10,11 +10,11 @@ package com.dragote.xcamera.shared.common.domain.model
  * of its own — [equals]/[hashCode] below are hand-written so this can still be compared/used in tests
  * and `MutableStateFlow` value checks the way a data class normally would be.
  *
- * Lives in `shared:common` (moved from `feature:camera` in issue #43's follow-up) because both
- * `feature:camera` (real-time preview/capture grading) and `feature:settings` (import-time
- * validation/resampling, see [resampleCubeLut]) need the same parse/resample logic — per this
- * project's "duplication vs. abstraction" convention, cross-feature domain logic belongs here, not
- * duplicated or force-routed through one feature depending on the other.
+ * Lives in `shared:common` because both `feature:camera` (real-time preview/capture grading) and
+ * `feature:settings` (import-time validation/resampling, see [resampleCubeLut]) need the same
+ * parse/resample logic — per this project's "duplication vs. abstraction" convention, cross-feature
+ * domain logic belongs here, not duplicated or force-routed through one feature depending on the
+ * other.
  */
 class CubeLut(val size: Int, val values: FloatArray) {
 

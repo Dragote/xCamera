@@ -2,7 +2,7 @@ package com.dragote.xcamera.feature.camera.domain.model
 
 /**
  * Camera2's own `CaptureResult.CONTROL_AF_STATE` collapsed into the handful of states the
- * tap-to-focus indicator (issue #21 follow-up) actually needs to drive its own lifecycle — not a 1:1
+ * tap-to-focus indicator actually needs to drive its own lifecycle — not a 1:1
  * mirror of every `CONTROL_AF_STATE_*` constant, just "AF is actively searching" vs "AF has settled,
  * successfully or not" vs "no AF cycle is currently running at all". Domain-facing
  * (Camera2-type-free) per this module's data-layer-owns-hardware convention —

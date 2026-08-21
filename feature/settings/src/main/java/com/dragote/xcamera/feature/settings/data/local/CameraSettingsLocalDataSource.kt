@@ -27,6 +27,7 @@ class CameraSettingsLocalDataSource @Inject constructor(
     private val selectedLutIdKey = stringPreferencesKey("selected_lut_id")
     private val lutIntensityPercentKey = intPreferencesKey("lut_intensity_percent")
     private val captureRawByDefaultKey = booleanPreferencesKey("capture_raw_by_default")
+    private val minimalChromeInvertedKey = booleanPreferencesKey("minimal_chrome_inverted")
 
     /** Falls back to an empty [Preferences] on a corrupt preferences file rather than propagating
      *  the read failure — a settings read has no meaningful failure mode a caller could act on, it
@@ -53,6 +54,8 @@ class CameraSettingsLocalDataSource @Inject constructor(
                 lutIntensityPercent = (preferences[lutIntensityPercentKey] ?: CameraSettings().lutIntensityPercent)
                     .coerceIn(0, 100),
                 captureRawByDefault = preferences[captureRawByDefaultKey] ?: CameraSettings().captureRawByDefault,
+                minimalChromeInverted = preferences[minimalChromeInvertedKey]
+                    ?: CameraSettings().minimalChromeInverted,
             )
         }
 
@@ -86,5 +89,9 @@ class CameraSettingsLocalDataSource @Inject constructor(
 
     suspend fun setCaptureRawByDefault(enabled: Boolean) {
         dataStore.edit { it[captureRawByDefaultKey] = enabled }
+    }
+
+    suspend fun setMinimalChromeInverted(enabled: Boolean) {
+        dataStore.edit { it[minimalChromeInvertedKey] = enabled }
     }
 }

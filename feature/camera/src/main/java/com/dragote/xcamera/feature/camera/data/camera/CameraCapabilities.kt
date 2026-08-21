@@ -62,8 +62,8 @@ fun aeCompensationCapabilityFrom(characteristics: CameraCharacteristics): AeComp
 }
 
 /**
- * `null` return means "hide/no-op both tap-to-focus and the manual focus ring for this lens"
- * (issue #21) — [CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE] being exactly `0` is
+ * `null` return means "hide/no-op both tap-to-focus and the manual focus ring for this lens" —
+ * [CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE] being exactly `0` is
  * Camera2's own convention for a fixed-focus lens with no `LENS_FOCUS_DISTANCE` control surface at
  * all, distinct from [manualIsoCapabilityFrom]'s `MANUAL_SENSOR` gate — a lens can support one without
  * the other. Per-physical-lens, not per-device, mirroring [manualIsoCapabilityFrom]'s own reasoning
@@ -78,8 +78,8 @@ fun manualFocusCapabilityFrom(characteristics: CameraCharacteristics): ManualFoc
 }
 
 /**
- * `null` return means "hide/never offer the with-RAW capture choice for this lens" (issue #45) —
- * mirrors [manualIsoCapabilityFrom]'s own structure exactly: [CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW]
+ * `null` return means "hide/never offer the with-RAW capture choice for this lens" — mirrors
+ * [manualIsoCapabilityFrom]'s own structure exactly: [CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW]
  * gates it, per-*physical*-lens (not per-device — an ultra-wide/tele auxiliary lens on a
  * `LOGICAL_MULTI_CAMERA` device can lack `RAW` even when the main sensor has it, via
  * [CameraController.characteristicsFor]'s own physical-camera-id resolution). This alone does **not**

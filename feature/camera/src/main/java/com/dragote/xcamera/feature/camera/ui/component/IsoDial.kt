@@ -9,23 +9,8 @@ import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome.Accent
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
- * One of two independent physical dials shown only while manual mode is engaged (see
- * [ShutterSpeedDial] for the other; `ExposureDial` is what's shown in its place in auto mode). Manual
- * mode itself is now entered/exited only by tapping `ModeLever` (see
- * `CameraViewModel.onManualModeToggled`) — dragging this dial no longer has any manual-mode side
- * effect, since it's only ever reachable once already in manual mode. Camera2's `CONTROL_AE_MODE_OFF`
- * still fixes ISO and shutter speed together (there's no "ISO manual, shutter auto" mode), which is
- * why the two dials still share one manual-mode toggle despite being independent controls.
- *
- * [onDragActiveChanged] is [DialWheel]'s own drag-active signal, passed straight through — `ui/
- * CameraScreen` wires this (and [ShutterSpeedDial]'s own) to `CameraViewModel.setZebraAnalysisEnabled`
- * so the zebra-stripe clipping overlay only computes for as long as a finger is actually on one of
- * the two manual dials (see issue #6).
- *
- * When [isoStops] is empty (`CameraViewModel.onManualIsoCapabilityChanged` found no `MANUAL_SENSOR`
- * support, or a supported-but-unaligned range, for the currently selected lens — e.g. an ultra-wide
- * auxiliary lens on a phone whose main lens does support it), this falls back to a single inert "--"
- * detent, matching [LensDial]'s own placeholder-before-loaded convention.
+ * One of two independent physical dials shown only while manual mode is engaged. A thin [DialWheel]
+ * wrapper, no visuals of its own.
  */
 @Composable
 fun IsoDial(
@@ -58,7 +43,7 @@ fun IsoDial(
     )
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF201F1D)
+@Preview(showBackground = true, backgroundColor = 0xFFFAF6EC)
 @Composable
 private fun IsoDialPreview() {
     XCameraTheme {
@@ -71,7 +56,7 @@ private fun IsoDialPreview() {
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF201F1D)
+@Preview(showBackground = true, backgroundColor = 0xFFFAF6EC)
 @Composable
 private fun IsoDialUnsupportedPreview() {
     XCameraTheme {

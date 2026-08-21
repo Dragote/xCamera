@@ -17,9 +17,9 @@ import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
- * Real rule-of-thirds grid drawn over the viewfinder — two vertical and two horizontal lines at
- * the 1/3 and 2/3 marks, matching the design's `rgba(255,255,255,.28)` hairlines. Fades in/out
- * with [visible] on the same `.25s ease` timing as the GRID lever's own glyph.
+ * Real rule-of-thirds grid drawn over the live viewfinder feed. A functional overlay drawn *over the
+ * camera feed*, not over this identity's own flat body chrome, so it uses a translucent-white hairline
+ * treatment rather than solid black, which could vanish against a dark scene.
  */
 @Composable
 fun ViewfinderGridOverlay(visible: Boolean, modifier: Modifier = Modifier) {
@@ -30,7 +30,7 @@ fun ViewfinderGridOverlay(visible: Boolean, modifier: Modifier = Modifier) {
     )
 
     Canvas(modifier = modifier.fillMaxSize().alpha(alpha)) {
-        val color = Color.White.copy(alpha = 0.28f)
+        val color = Color.White.copy(alpha = 0.32f)
         val stroke = 1.dp.toPx()
         val xThird = size.width / 3f
         val yThird = size.height / 3f

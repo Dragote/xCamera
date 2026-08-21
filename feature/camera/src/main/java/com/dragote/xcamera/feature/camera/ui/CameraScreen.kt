@@ -18,6 +18,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -50,7 +51,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -79,7 +79,7 @@ import com.dragote.xcamera.feature.camera.presentation.CameraUiState
 import com.dragote.xcamera.feature.camera.presentation.CameraViewModel
 import com.dragote.xcamera.feature.camera.ui.component.ExposingIndicator
 import com.dragote.xcamera.feature.camera.ui.component.ExposureDial
-import com.dragote.xcamera.feature.camera.ui.component.FlashLever
+import com.dragote.xcamera.feature.camera.ui.component.FlashToggle
 import com.dragote.xcamera.feature.camera.ui.component.FocusDial
 import com.dragote.xcamera.feature.camera.ui.component.FocusRing
 import com.dragote.xcamera.feature.camera.ui.component.FocusTapIndicator
@@ -89,7 +89,7 @@ import com.dragote.xcamera.feature.camera.ui.component.IsoDial
 import com.dragote.xcamera.feature.camera.ui.component.LensDial
 import com.dragote.xcamera.feature.camera.ui.component.LutDial
 import com.dragote.xcamera.feature.camera.ui.component.LutResolvingIndicator
-import com.dragote.xcamera.feature.camera.ui.component.ModeLever
+import com.dragote.xcamera.feature.camera.ui.component.ModeToggle
 import com.dragote.xcamera.feature.camera.ui.component.SettingsButton
 import com.dragote.xcamera.feature.camera.ui.component.ShutterButton
 import com.dragote.xcamera.feature.camera.ui.component.ShutterSpeedDial
@@ -98,7 +98,7 @@ import com.dragote.xcamera.feature.camera.ui.component.ViewfinderThumbnailChip
 import com.dragote.xcamera.feature.camera.ui.component.ZebraOverlay
 import com.dragote.xcamera.feature.camera.ui.gl.CameraPreviewRenderer
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
-import com.dragote.xcamera.feature.camera.ui.theme.grainTexture
+import com.dragote.xcamera.shared.designsystem.theme.MinimalChrome
 import com.dragote.xcamera.shared.common.domain.result.Result
 import com.dragote.xcamera.shared.designsystem.component.ErrorState
 import com.dragote.xcamera.shared.designsystem.haptics.hapticTick
@@ -144,7 +144,7 @@ private const val AfScanStartGraceMs = 250L
 
 /** How long the tap indicator stays visible once AF has genuinely left [AfConvergenceState.SCANNING]
  *  (converged or given up) — a deliberate held beat so a fast convergence still reads as a real
- *  "locked" moment instead of a flicker, per issue #21's own follow-up requirement. */
+ *  "locked" moment instead of a flicker. */
 private const val FocusIndicatorHoldAfterLockMs = 500L
 
 /** Safety net for the whole tap-indicator lifecycle, in case AF state never reports anything useful
@@ -228,21 +228,20 @@ private fun rememberCameraRepository(): CameraRepository {
 }
 
 /**
- * Full-screen skeuomorphic chrome ported from the "Camera App UI v3" design: a graphite body with
- * FLASH/GRID/MODE levers above the viewfinder and a LENS/shutter/exposure deck below it. The raw
- * [TextureView] preview itself is untouched in layout terms, just re-framed, with a real
- * [ViewfinderGridOverlay] drawn on top of it now. The former "ZOOM" dial is gone — zoom doesn't exist
- * as a feature in xCamera. In its place, to the right of [LensDial]/[ShutterButton] (which stay
- * paired together on the left), the deck shows either a single [ExposureDial] (auto mode — real
- * Camera2 AE exposure compensation) or the independent [IsoDial]+[ShutterSpeedDial] pair (manual
- * mode), never both. MODE ([ModeLever]) is now the *only* way to switch between them — tapping it
- * always calls [CameraViewModel.onManualModeToggled] regardless of current state, which flips
+ * Full-screen skeuomorphic chrome: a graphite body with FLASH/GRID/MODE levers above the viewfinder
+ * and a LENS/shutter/exposure deck below it. The raw [TextureView] preview itself is untouched in
+ * layout terms, just re-framed, with a real [ViewfinderGridOverlay] drawn on top of it. Zoom doesn't
+ * exist as a feature in xCamera. To the right of [LensDial]/[ShutterButton] (which stay paired
+ * together on the left), the deck shows either a single [ExposureDial] (auto mode — real Camera2 AE
+ * exposure compensation) or the independent [IsoDial]+[ShutterSpeedDial] pair (manual mode), never
+ * both. MODE ([ModeToggle]) is the *only* way to switch between them — tapping it always calls
+ * [CameraViewModel.onManualModeToggled] regardless of current state, which flips
  * [CameraUiState.manualModeEnabled] (a no-op if the current lens has no manual ISO/shutter stops to
  * offer). Manual exposure itself still drives through [CameraViewModel.setManualExposure] (Camera2's
  * `CONTROL_AE_MODE_OFF` fixes ISO and shutter speed together, there's no "ISO manual, shutter auto"
  * mode).
  *
- * [FocusDial] (issue #21 UX rework) joins the deck row too, but only on a lens that actually reports
+ * [FocusDial] joins the deck row too, but only on a lens that actually reports
  * manual-focus capability (`CameraUiState.manualFocusSupported`) — unlike the exposure dials it's not
  * a mode-gated swap, it's simply present or absent. It's the *only* control that actually changes the
  * manual focus distance; the viewfinder's own long-press only ever repositions the focus ring/loupe —
@@ -266,11 +265,24 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     val isLutResolving by viewModel.isLutResolving.collectAsStateWithLifecycle()
     val luts by viewModel.luts.collectAsStateWithLifecycle()
 
-    // The live preview no longer goes through a raw Camera2-owned Surface at all — CameraController
-    // owns its own preview ImageReader internally (see its own doc for why) and hands each delivered
-    // frame to this renderer via CameraRepository.setPreviewFrameListener, which draws it onto
+    // Flips the whole chrome identity's body/ink pairing (Settings' "INVERT CHROME" lever).
+    // MinimalChrome.current is a plain object-level mutableStateOf, not a CompositionLocal, because
+    // nearly every camera-chrome component reads CameraChrome.Background/.Ink from inside a Canvas draw
+    // lambda (not a @Composable context) — see MinimalChrome.kt's own doc for why. Setting it here, once
+    // per recomposition, is enough: mutableStateOf's setter already no-ops on an unchanged value, and
+    // Canvas's draw lambda still observes snapshot-state reads for redraw invalidation even though the
+    // lambda itself isn't @Composable.
+    MinimalChrome.current = if (cameraSettings.minimalChromeInverted) {
+        MinimalChrome.Palette.Inverted
+    } else {
+        MinimalChrome.Palette.Normal
+    }
+
+    // The live preview never goes through a raw Camera2-owned Surface — CameraController owns its
+    // own preview ImageReader internally (see its own doc for why) and hands each delivered frame to
+    // this renderer via CameraRepository.setPreviewFrameListener, which draws it onto
     // textureView's SurfaceTexture with app-owned GLES. Both are remembered once, tied to this
-    // composable's lifetime, same as textureView itself always was.
+    // composable's lifetime.
     val renderer = remember { CameraPreviewRenderer() }
     var previewSurfaceTexture by remember { mutableStateOf<SurfaceTexture?>(null) }
     var previewViewSize by remember { mutableStateOf(IntSize.Zero) }
@@ -308,23 +320,23 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     var deckTopY by remember { mutableFloatStateOf(0f) }
     var deckHeight by remember { mutableFloatStateOf(0f) }
 
-    // Manual focus ring state (issue #21, reworked per the FocusDial UX split — see FocusDial's own
-    // doc and the deck row below) — two independent hold signals now feed one derived *loupe source*
+    // Manual focus ring state — see FocusDial's own doc and the deck row below — two independent hold
+    // signals feed one derived *loupe source*
     // center: screenHoldPosition (a long-press directly on the viewfinder, see detectFocusGestures) is
     // the *actual* touch point and wins whenever it's held (the more specific signal); dialHeld
     // (FocusDial, held with no screen hold) falls back to the viewfinder's own center. The ring stays
     // up as long as *either* is held — focusLoupeSourceCenter is only null once both are released.
-    // Rotation itself (and therefore the real manual focus distance) is now driven *exclusively* by
+    // Rotation itself (and therefore the real manual focus distance) is driven *exclusively* by
     // FocusDial — the viewfinder's own long-press only ever repositions where the loupe samples from,
-    // it no longer adjusts focus at all (see the viewfinder's own onHoldStart/onHoldEnd below).
+    // it never adjusts focus itself (see the viewfinder's own onHoldStart/onHoldEnd below).
     var screenHoldPosition by remember { mutableStateOf<Offset?>(null) }
     var dialHeld by remember { mutableStateOf(false) }
     val focusLoupeSourceCenter = screenHoldPosition
         ?: Offset(previewViewSize.width / 2f, previewViewSize.height / 2f).takeIf { dialHeld }
     // The ring itself, however, always *renders* dead-center on the viewfinder regardless of where the
-    // loupe is actually sampling from (on-device-QA follow-up: a ring that visually jumps to the touch
-    // point read as broken/inconsistent) — only its content (focusLoupeBitmap/focusPeakingMask, cropped
-    // around focusLoupeSourceCenter below) reflects the touch point; the ring's own position never does.
+    // loupe is actually sampling from — a ring that visually jumps to the touch point reads as
+    // broken/inconsistent — only its content (focusLoupeBitmap/focusPeakingMask, cropped around
+    // focusLoupeSourceCenter below) reflects the touch point; the ring's own position never does.
     val focusRingDisplayCenter =
         Offset(previewViewSize.width / 2f, previewViewSize.height / 2f).takeIf { focusLoupeSourceCenter != null }
     var focusRingRotationDegrees by remember { mutableFloatStateOf(0f) }
@@ -336,8 +348,8 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     // is the one correct "distance a rotation adjusts from" for the gesture's whole duration.
     var focusHoldStartDistance by remember { mutableFloatStateOf(0f) }
 
-    // Function-scoped (not nested inside the viewfinder's own Box like before) since both the
-    // viewfinder's long-press gesture *and* FocusDial (in the deck row further down) now read/trigger
+    // Function-scoped (not nested inside the viewfinder's own Box) since both the
+    // viewfinder's long-press gesture *and* FocusDial (in the deck row further down) read/trigger
     // these — rememberUpdatedState is what lets a pointerInput closure that never restarts across
     // recompositions (both gestures use a fixed Unit key, see detectFocusGestures/FocusDial's own
     // pointerInput) still read the *current* uiState instead of whatever uiState happened to be in
@@ -345,7 +357,7 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     val latestUiState by rememberUpdatedState(uiState)
     val focusVibrator = rememberHapticTickVibrator()
 
-    // Tap-to-focus's own visual feedback (on-device-QA follow-up to issue #21) — independent lifecycle
+    // Tap-to-focus's own visual feedback — independent lifecycle
     // from the hold-and-rotate ring above: appears at the tap point, stays up while
     // CameraViewModel.afConvergenceState reports SCANNING, then fades a beat after it settles — see
     // the LaunchedEffect(focusTapToken) below.
@@ -356,12 +368,11 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     // this increments on every real tap regardless of position, so it's always a genuinely new key.
     var focusTapToken by remember { mutableStateOf(0) }
 
-    // Ring diameter occupies ~92% of the viewfinder's own shorter dimension (on-device-QA follow-up
-    // to issue #21 — the ring used to be a small, fixed 156dp regardless of viewfinder size, which
-    // read as too small once it was also recentered to the viewfinder's own middle, see
-    // focusRingDisplayCenter's own doc above). Falls back to FocusRing's own default before the TextureView
-    // has been laid out at least once (previewViewSize still zero) — never actually visible that
-    // early, since there's nothing to long-press yet, just keeps this expression total.
+    // Ring diameter occupies ~92% of the viewfinder's own shorter dimension — see
+    // docs/features/camera-capture.md for the sizing rationale. Falls back to FocusRing's own default
+    // before the TextureView has been laid out at least once (previewViewSize still zero) — never
+    // actually visible that early, since there's nothing to long-press yet, just keeps this expression
+    // total.
     val density = LocalDensity.current
     val minViewfinderDimensionPx = minOf(previewViewSize.width, previewViewSize.height)
     val focusRingDiameter = if (minViewfinderDimensionPx > 0) {
@@ -371,8 +382,8 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     }
 
     // Scales the loupe crop radius by the same ratio FocusRing itself scales its ring band/teeth by
-    // (relative to FocusRingReferenceDiameter, the size LoupeCropRadiusPx was originally tuned
-    // against) — otherwise the same small crop gets stretched over a much bigger loupe circle and the
+    // (relative to FocusRingReferenceDiameter, the reference size LoupeCropRadiusPx is tuned against)
+    // — otherwise the same small crop gets stretched over a much bigger loupe circle and the
     // magnified image turns to mush. Dp/Dp division yields a plain Float scale factor.
     val focusRingScale = focusRingDiameter / FocusRingReferenceDiameter
     val loupeCropRadiusPx = (LoupeCropRadiusPx * focusRingScale).roundToInt().coerceAtLeast(LoupeCropRadiusPx)
@@ -421,9 +432,9 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     // CameraController is the sole authority for lifecycle-driven reopen (its own onStateChanged), and
     // previewSurfaceTexture/previewViewSize/selectedLens genuinely don't change across that kind of
     // resume, so there's nothing for this effect to recompute — the renderer re-derives its own crop/
-    // rotation transform from each frame's actually-delivered dimensions regardless (see
-    // CameraPreviewRenderer's own doc for why that's what actually fixes the aspect-ratio bug a much
-    // earlier version of this file tried and failed to work around with a second lifecycle reaction).
+    // rotation transform from each frame's actually-delivered dimensions regardless. See
+    // CameraController's own doc and docs/features/camera-capture.md for why a second,
+    // screen-owned lifecycle reaction here is deliberately avoided.
     LaunchedEffect(previewSurfaceTexture, previewViewSize, uiState.selectedLens) {
         if (previewSurfaceTexture == null) return@LaunchedEffect
         val viewWidth = previewViewSize.width
@@ -444,16 +455,13 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
         viewModel.setFlashMode(uiState.flashMode)
     }
 
-    // Issue #43 follow-up — resolving CameraSettings.selectedLutId/lutIntensityPercent into an actual
-    // parsed LUT (CameraRepository.setLut) is no longer triggered from here: CameraViewModel's own init
-    // block now drives it directly off CameraSettingsRepository.observeSettings(), so it keeps running
-    // for the ViewModel's whole lifetime (including while the user is on SettingsScreen and this
-    // composable isn't even in composition) rather than only while CameraScreen happens to be composed —
-    // see that collector's own comment for the full story. This effect only reacts to the *resolved*
-    // side: CameraController.activeLut only updates once setLut has actually finished reading+parsing
-    // the LUT file, so this is what genuinely drives the live preview's own LUT texture.
-    // CameraPreviewRenderer is a GL object owned directly by this composable (not the ViewModel), so this
-    // collector legitimately still lives here.
+    // Resolving CameraSettings.selectedLutId/lutIntensityPercent into an actual parsed LUT
+    // (CameraRepository.setLut) is driven by CameraViewModel's own init block, not from here — see
+    // docs/features/lut-color-grading.md. This effect only reacts to the *resolved* side:
+    // CameraController.activeLut only updates once setLut has actually finished reading+parsing the LUT
+    // file, so this is what genuinely drives the live preview's own LUT texture. CameraPreviewRenderer
+    // is a GL object owned directly by this composable (not the ViewModel), so this collector
+    // legitimately still lives here.
     val activeLut by cameraRepository.observeActiveLut().collectAsStateWithLifecycle(initialValue = null)
     LaunchedEffect(activeLut) {
         renderer.setLut(activeLut?.lutId, activeLut?.cubeLut, activeLut?.intensityPercent ?: 0)
@@ -467,21 +475,18 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
         viewModel.onManualIsoCapabilityChanged(viewModel.manualIsoCapability(uiState.selectedLens))
         viewModel.onAeCompensationCapabilityChanged(viewModel.aeCompensationCapability(uiState.selectedLens))
         viewModel.onManualFocusCapabilityChanged(viewModel.manualFocusCapability(uiState.selectedLens))
-        // REQUEST_AVAILABLE_CAPABILITIES_RAW is per-physical-lens too (issue #45) — same re-query-on-
+        // REQUEST_AVAILABLE_CAPABILITIES_RAW is per-physical-lens too — same re-query-on-
         // every-lens-switch reasoning as the three capability queries above.
         viewModel.onRawCaptureCapabilityChanged(viewModel.rawCaptureCapability(uiState.selectedLens))
     }
 
-    // Manual mode's *visible* dials appear the instant ModeLever is tapped (manualModeEnabled), but
+    // Manual mode's *visible* dials appear the instant ModeToggle is tapped (manualModeEnabled), but
     // the camera itself doesn't actually lock exposure (CONTROL_AE_MODE_OFF) until 3A has genuinely
-    // gone quiet (manualExposurePinned) — a fixed delay isn't enough here: a small EV nudge settles in
-    // a couple of frames, but a large compensation swing (say auto→manual right after dragging several
-    // stops of EV) can take much longer to actually converge, and a fixed short wait was pinning on a
-    // reading 3A hadn't finished moving toward yet, which is exactly what made the switch visibly jump.
-    // debounce restarts its quiet-window every time either live reading changes, so this only proceeds
-    // once both have genuinely stopped moving; withTimeoutOrNull is a safety net in case 3A never
-    // fully quiets down (e.g. flicker), so this can't stall forever. Cancels itself (via LaunchedEffect's
-    // key) if manual mode is exited again before it fires.
+    // gone quiet (manualExposurePinned) — see docs/features/camera-capture.md for why a fixed delay
+    // isn't used here. debounce restarts its quiet-window every time either live reading changes, so
+    // this only proceeds once both have genuinely stopped moving; withTimeoutOrNull is a safety net in
+    // case 3A never fully quiets down (e.g. flicker), so this can't stall forever. Cancels itself (via
+    // LaunchedEffect's key) if manual mode is exited again before it fires.
     LaunchedEffect(uiState.manualModeEnabled) {
         if (uiState.manualModeEnabled) {
             withTimeoutOrNull(MaxManualPinWaitMs) {
@@ -533,11 +538,11 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
             viewModel.onCaptureStarted()
             // cameraSettings.captureRawByDefault is only ever a *preference* — feature:settings has no
             // way to know whether the currently active lens actually supports RAW — so it's ANDed here
-            // with the live per-lens capability check (uiState.rawCaptureSupported, from issue #45's
+            // with the live per-lens capability check (uiState.rawCaptureSupported, from
             // CameraViewModel.rawCaptureCapability) rather than trusted on its own. This makes turning
-            // the setting on while on a non-RAW lens a silent no-op (per #45's own non-goal: an
-            // unsupported lens is never an error state) and picking up RAW automatically the moment the
-            // user switches to a lens that does support it, with no extra per-shot tap.
+            // the setting on while on a non-RAW lens a silent no-op (an unsupported lens is never an
+            // error state) and picking up RAW automatically the moment the user switches to a lens
+            // that does support it, with no extra per-shot tap.
             val includeRaw = cameraSettings.captureRawByDefault && uiState.rawCaptureSupported
             when (val result = viewModel.takePhoto(includeRaw)) {
                 is Result.Success -> viewModel.onPhotoSaved(result.data)
@@ -546,8 +551,8 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
         }
     }
 
-    // Periodically refreshes the manual-focus ring's loupe crop + focus-peaking highlight (issue #21)
-    // for as long as the hold gesture is active — mirrors the zebra overlay's own "only pay this cost
+    // Periodically refreshes the manual-focus ring's loupe crop + focus-peaking highlight for as long
+    // as the hold gesture is active — mirrors the zebra overlay's own "only pay this cost
     // while actually engaged" pattern. TextureView.getBitmap() snapshots exactly what's currently drawn
     // onto its own SurfaceTexture, which CameraPreviewRenderer draws the live preview into via GLES, so
     // this reflects real, current preview content rather than a separate capture path. Runs on the main
@@ -569,7 +574,7 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
         }
     }
 
-    // Tap-to-focus indicator lifecycle (on-device-QA follow-up to issue #21) — restarts fresh on every
+    // Tap-to-focus indicator lifecycle — restarts fresh on every
     // real tap via focusTapToken (see its own doc for why a plain Offset key isn't enough). Bounded
     // end-to-end by MaxAfIndicatorWaitMs so hardware that never reports CONTROL_AF_STATE meaningfully
     // still fades the indicator out eventually rather than leaving it stuck on screen.
@@ -591,7 +596,9 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
         focusTapVisible = false
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(CameraChrome.BodyGradient).grainTexture(alpha = 0.35f)) {
+    // Flat body fill, no grain texture — see ui/theme/CameraChrome.kt's own doc for the identity's
+    // color tokens.
+    Box(modifier = Modifier.fillMaxSize().background(CameraChrome.Background)) {
         Column(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)) {
                 Spacer(modifier = Modifier.height(24.dp))
@@ -602,7 +609,7 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                     SettingsButton(
                         onClick = { navigator.navigate(Direction(SettingsRoutes.SETTINGS_SCREEN)) },
                     )
-                    FlashLever(
+                    FlashToggle(
                         flashOn = uiState.flashMode == FlashMode.ON,
                         onToggle = viewModel::onFlashModeToggled,
                     )
@@ -615,7 +622,7 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                             onLutSelected = viewModel::onLutSelected,
                         )
                     }
-                    ModeLever(
+                    ModeToggle(
                         manual = uiState.manualModeEnabled,
                         onToggle = viewModel::onManualModeToggled,
                     )
@@ -623,6 +630,9 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                 Seam(modifier = Modifier.padding(top = 16.dp, start = 12.dp, end = 12.dp))
             }
 
+            // A thin black-stroke frame (CameraChrome.StrokeWidth/StrokeColor) with the flat body
+            // color showing through the 9dp gap — the live camera feed itself provides the visual
+            // weight this region needs.
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -630,7 +640,7 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                     .padding(horizontal = 18.dp)
                     .padding(top = 14.dp)
                     .clip(RoundedCornerShape(24.dp))
-                    .background(CameraChrome.ViewfinderBezelGradient)
+                    .border(CameraChrome.StrokeWidth, CameraChrome.ViewfinderBezelColor, RoundedCornerShape(24.dp))
                     .padding(9.dp),
             ) {
                 val viewConfiguration = LocalViewConfiguration.current
@@ -642,9 +652,9 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                         .background(CameraChrome.ViewfinderInsetColor)
                         .then(
                             // No gesture detector at all on a lens with no manual-focus capability —
-                            // both tap-to-focus and the hold-to-position ring are hidden/no-op together
-                            // (issue #21's own capability gate). Keyed on manualFocusSupported alone
-                            // (not the whole uiState) so an in-progress gesture never gets cancelled
+                            // both tap-to-focus and the hold-to-position ring are hidden/no-op together.
+                            // Keyed on manualFocusSupported alone (not the whole uiState) so an
+                            // in-progress gesture never gets cancelled
                             // mid-flight by an unrelated state change — see latestUiState above for how
                             // the gesture still reads fresh values without restarting on every change.
                             if (uiState.manualFocusSupported) {
@@ -667,13 +677,12 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                                             focusTapToken++
                                         },
                                         onHoldStart = { position ->
-                                            // The viewfinder's own long-press now only repositions the
-                                            // ring/loupe — it no longer adjusts focus distance at all
-                                            // (that moved to FocusDial, in the deck row below, per the
-                                            // #21 UX rework). Uses the real touch point directly —
-                                            // reversed from the prior "always centered" behavior, which
-                                            // is now only what happens when the *dial* alone is held
-                                            // (see screenHoldPosition/dialHeld's own doc above).
+                                            // The viewfinder's own long-press only repositions the
+                                            // ring/loupe — it never adjusts focus distance; that's owned
+                                            // by FocusDial, in the deck row below. Uses the real touch
+                                            // point directly — the ring only centers on the viewfinder
+                                            // when the *dial* alone is held (see screenHoldPosition/
+                                            // dialHeld's own doc above).
                                             screenHoldPosition = position
                                             focusLoupeBitmap = null
                                             focusPeakingMask = null
@@ -758,7 +767,7 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(CameraChrome.DeckGradient)
+                    .background(CameraChrome.DeckColor)
                     .onGloballyPositioned {
                         deckTopY = it.positionInRoot().y
                         deckHeight = it.size.height.toFloat()
@@ -776,13 +785,12 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                         onLensSelected = viewModel::onLensSelected,
                         modifier = Modifier.weight(1f),
                     )
-                    // Only occupies a slot when the current lens actually supports manual focus (same
-                    // capability gate the rest of #21 already uses) — mirrors ExposureOrManualDials'
-                    // own conditional-content pattern below, just at the whole-dial level rather than
-                    // swapping between two dial sets. Hold-without-touching-the-screen centers the ring
-                    // on the viewfinder (dialHeld, see its own doc above); rotating/dragging here is the
-                    // *only* thing that actually changes the focus value now — the viewfinder's own
-                    // long-press only repositions the ring.
+                    // Only occupies a slot when the current lens actually supports manual focus — mirrors
+                    // ExposureOrManualDials' own conditional-content pattern below, just at the
+                    // whole-dial level rather than swapping between two dial sets.
+                    // Hold-without-touching-the-screen centers the ring on the viewfinder (dialHeld,
+                    // see its own doc above); rotating/dragging here is the *only* thing that actually
+                    // changes the focus value — the viewfinder's own long-press only repositions the ring.
                     if (uiState.manualFocusSupported) {
                         FocusDial(
                             focusDistanceDiopters = uiState.liveFocusDistanceDiopters ?: 0f,
@@ -832,19 +840,6 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
                         modifier = Modifier.weight(2f),
                         backgroundTopY = deckTopY,
                         backgroundHeight = deckHeight,
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .padding(bottom = 10.dp)
-                        .fillMaxWidth(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(width = 130.dp, height = 5.dp)
-                            .clip(RoundedCornerShape(3.dp))
-                            .background(Color.White.copy(alpha = 0.22f)),
                     )
                 }
             }
@@ -900,7 +895,7 @@ private fun ExposureOrManualDials(
     var closing by remember { mutableStateOf(true) }
     val targetManual by rememberUpdatedState(uiState.manualModeEnabled)
 
-    // Drives CameraController's zebra-stripe analysis stream (see issue #6) — any one of the three
+    // Drives CameraController's zebra-stripe analysis stream — any one of the three
     // exposure dials' own drag gesture (DialWheel.onDragActiveChanged) is enough to turn it on; it's
     // off unless at least one is actively being dragged. Only IsoDial/ShutterSpeedDial are mounted at
     // once in manual mode, and only ExposureDial in auto mode (see the Box below), so at most one of
@@ -988,32 +983,33 @@ private fun ExposureOrManualDials(
     }
 }
 
-private val SeamBrush = Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.75f), Color.White.copy(alpha = 0.09f)))
-
+/**
+ * Section divider between the top toolbar / viewfinder / bottom deck — a flat [CameraChrome.StrokeColor]
+ * hairline.
+ */
 @Composable
 private fun Seam(modifier: Modifier = Modifier) {
-    Box(modifier = modifier.fillMaxWidth().height(2.dp).background(SeamBrush))
+    Box(modifier = modifier.fillMaxWidth().height(CameraChrome.StrokeWidth).background(CameraChrome.StrokeColor))
 }
 
-// previewFillTransform (the android.graphics.Matrix-based center-crop applied via
-// TextureView.setTransform) was deleted here — the live preview is no longer targeted at a
-// SurfaceTexture-backed Surface Camera2 writes into directly, so there's no Matrix for this file to
-// compute at all anymore. CameraPreviewRenderer computes the equivalent crop/rotation transform
-// itself, as a GL matrix, from each frame's actually-delivered Image dimensions — see its own doc.
+// CameraPreviewRenderer computes the preview's crop/rotation transform as a GL matrix, from each
+// frame's actually-delivered Image dimensions — see its own doc. There's no android.graphics.Matrix
+// for this file to compute, since the live preview is never targeted directly at a
+// SurfaceTexture-backed Surface.
 
-/* ── Manual focus (issue #21): tap-to-focus + hold-to-position ring gesture ───────────────────── */
+/* ── Manual focus: tap-to-focus + hold-to-position ring gesture ───────────────────── */
 
 /**
- * Distinguishes a simple tap (short press, negligible movement) from a long-press-and-hold (issue
- * #21's manual focus ring) on the same gesture, mirroring `DialWheel`'s own `awaitEachGesture` +
+ * Distinguishes a simple tap (short press, negligible movement) from a long-press-and-hold (the
+ * manual focus ring) on the same gesture, mirroring `DialWheel`'s own `awaitEachGesture` +
  * `awaitFirstDown` structure. A drag that moves past [viewConfigurationTouchSlopPx] before the
  * long-press threshold elapses is neither — it's ignored outright (this screen has no pan/swipe
  * gesture over the viewfinder for this to conflict with).
  *
- * While holding, this no longer tracks rotation at all (that moved to `FocusDial`, per the #21 UX
- * rework) — [onHoldStart] fires once with the touch point, then this just waits for release
- * ([onHoldEnd]), consuming pointer events for the hold's whole duration so nothing else on the
- * viewfinder can interpret them meanwhile.
+ * While holding, this doesn't track rotation at all — that's owned by `FocusDial` instead —
+ * [onHoldStart] fires once with the touch point, then this just waits for release ([onHoldEnd]),
+ * consuming pointer events for the hold's whole duration so nothing else on the viewfinder can
+ * interpret them meanwhile.
  */
 private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectFocusGestures(
     viewConfigurationLongPressMs: Long,

@@ -35,7 +35,7 @@ class LutLocalDataSourceTest {
     }
 
     /** A fresh [ByteArrayInputStream] per call (not a single shared instance `every { } returns ...`
-     *  would give) — [LutLocalDataSource.importLut] now fully reads the stream once to validate/
+     *  would give) — [LutLocalDataSource.importLut] fully reads the stream once to validate/
      *  resample it, so a test that imports the same [uri] twice (e.g. distinct-id checks) needs a
      *  genuinely rewindable source, matching what a real `ContentResolver.openInputStream` call
      *  gives on each invocation. */

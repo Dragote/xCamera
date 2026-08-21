@@ -11,6 +11,7 @@ dependencies {
     implementation(project(":shared:designsystem"))
     implementation(project(":shared:navigation"))
     implementation(libs.androidx.exifinterface)
+    implementation(libs.androidx.material.icons.extended)
 
     testImplementation(project(":shared:testing"))
 }

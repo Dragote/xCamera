@@ -71,10 +71,9 @@ import com.dragote.xcamera.feature.settings.presentation.SettingsUiState
 import com.dragote.xcamera.feature.settings.presentation.SettingsViewModel
 import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import com.dragote.xcamera.shared.common.domain.model.LutPreset
-import com.dragote.xcamera.shared.designsystem.component.LeverSwitch
-import com.dragote.xcamera.shared.designsystem.component.LeverGlyph
 import com.dragote.xcamera.shared.designsystem.component.LoadingIndicator
-import com.dragote.xcamera.shared.designsystem.theme.AppChrome
+import com.dragote.xcamera.shared.designsystem.component.Toggle
+import com.dragote.xcamera.shared.designsystem.theme.MinimalChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 import com.dragote.xcamera.shared.navigation.SettingsRoutes
 import com.ramcosta.composedestinations.annotation.Destination
@@ -111,18 +110,28 @@ fun SettingsScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(AppChrome.BodyGradient)) {
+    Box(modifier = Modifier.fillMaxSize().background(MinimalChrome.Background)) {
         Scaffold(
             containerColor = Color.Transparent,
             topBar = {
                 TopAppBar(
-                    title = { Text("SETTINGS") },
+                    // valueStyle(), not labelStyle() — this is a screen title, not a small control
+                    // caption, and MinimalChrome has no separate "title" scale of its own yet.
+                    title = { Text("SETTINGS", style = MinimalChrome.valueStyle()) },
                     navigationIcon = {
                         IconButton(onClick = navigator::navigateUp) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = MinimalChrome.Ink,
+                            )
                         }
                     },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        titleContentColor = MinimalChrome.Ink,
+                        navigationIconContentColor = MinimalChrome.Ink,
+                    ),
                 )
             },
         ) { innerPadding ->
@@ -138,6 +147,7 @@ fun SettingsScreen(
                     onShowHorizonLineToggled = viewModel::onShowHorizonLineToggled,
                     onFocusPeakingSensitivityChanged = viewModel::onFocusPeakingSensitivityChanged,
                     onCaptureRawByDefaultToggled = viewModel::onCaptureRawByDefaultToggled,
+                    onMinimalChromeInvertedToggled = viewModel::onMinimalChromeInvertedToggled,
                     onLutSelected = viewModel::onLutSelected,
                     onLutDeleteRequested = viewModel::onLutDeleteRequested,
                     onLutIntensityChanged = viewModel::onLutIntensityChanged,
@@ -150,9 +160,9 @@ fun SettingsScreen(
 }
 
 /**
- * Places the same [LeverSwitch] toggle FLASH/GRID/MODE use directly on the screen's own
- * [AppChrome.BodyGradient] — no wrapping card/recess around each one, mirroring exactly how
- * `feature:camera`'s toolbar Row presents `FlashLever`/`ModeLever`.
+ * Places the same [Toggle] (wrapped as [LabeledToggle]) that FLASH/MODE use in `feature:camera`'s own
+ * toolbar directly on the screen's own [MinimalChrome.Background] — no wrapping card/recess around each
+ * one, mirroring exactly how that toolbar `Row` presents its own toggles.
  */
 @Composable
 private fun SettingsContent(
@@ -163,12 +173,24 @@ private fun SettingsContent(
     onShowHorizonLineToggled: (Boolean) -> Unit,
     onFocusPeakingSensitivityChanged: (FocusPeakingSensitivity) -> Unit,
     onCaptureRawByDefaultToggled: (Boolean) -> Unit,
+    onMinimalChromeInvertedToggled: (Boolean) -> Unit,
     onLutSelected: (String?) -> Unit,
     onLutDeleteRequested: (String) -> Unit,
     onLutIntensityChanged: (Int) -> Unit,
     onImportLutRequested: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Live INVERT CHROME preview: feature:camera's own CameraScreen.CameraContent sets this same
+    // MinimalChrome.current from CameraSettings.minimalChromeInverted once per recomposition (see its
+    // own doc for why a plain object-level mutableStateOf, not a CompositionLocal). This screen reads
+    // it the same way, so flipping the lever below gives instant visible feedback right here, not just
+    // on the next visit to the camera screen.
+    MinimalChrome.current = if (uiState.minimalChromeInverted) {
+        MinimalChrome.Palette.Inverted
+    } else {
+        MinimalChrome.Palette.Normal
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -180,27 +202,29 @@ private fun SettingsContent(
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
-        LeverSwitch(
+        LabeledToggle(
             checked = uiState.showGrid,
             onToggle = { onShowGridToggled(!uiState.showGrid) },
             label = "GRID",
-            glyph = LeverGlyph.Grid,
         )
-        LeverSwitch(
+        LabeledToggle(
             checked = uiState.showHistogram,
             onToggle = { onShowHistogramToggled(!uiState.showHistogram) },
             label = "HISTOGRAM",
-            glyph = LeverGlyph.None,
         )
-        LeverSwitch(
+        LabeledToggle(
             checked = uiState.showHorizonLine,
             onToggle = { onShowHorizonLineToggled(!uiState.showHorizonLine) },
             label = "HORIZON",
-            glyph = LeverGlyph.None,
         )
         CaptureRawByDefaultSetting(
             enabled = uiState.captureRawByDefault,
             onToggle = onCaptureRawByDefaultToggled,
+        )
+        LabeledToggle(
+            checked = uiState.minimalChromeInverted,
+            onToggle = { onMinimalChromeInvertedToggled(!uiState.minimalChromeInverted) },
+            label = "INVERT CHROME",
         )
         PeakingSensitivitySelector(
             selected = uiState.focusPeakingSensitivity,
@@ -221,12 +245,42 @@ private fun SettingsContent(
 }
 
 /**
- * "Capture RAW alongside JPEG whenever possible" (issue #45 follow-up) — moved here from a per-shot
- * toggle next to the shutter button on `ui/CameraScreen` per user feedback; this is now a persisted
- * preference like GRID/HISTOGRAM/HORIZON above, not a per-capture choice. Uses the same unwrapped
- * [LeverSwitch] look as those three, plus a small caption underneath carrying the "large extra file"
- * warning issue #45 originally required on the per-shot toggle's own label — still required here since
- * the setting can silently make every future capture noticeably larger.
+ * [Toggle] plus a [MinimalChrome.labelStyle] caption underneath, centered and spaced exactly like
+ * [Toggle]'s own already-reserved-but-unused 7.dp `Column` spacing — this screen is the first
+ * `MinimalChrome` call site to actually need an external label alongside a plain boolean [Toggle] (every
+ * `feature:camera` use of [Toggle] so far carries its own `knobContent` instead, e.g. an icon or A/M
+ * letter, and needs no separate label), so per this repo's duplication convention it stays local to this
+ * file rather than being promoted anywhere else yet — five call sites *within this one file* (GRID/
+ * HISTOGRAM/HORIZON/RAW CAPTURE/INVERT CHROME below) is what makes it worth factoring out at all.
+ */
+@Composable
+private fun LabeledToggle(checked: Boolean, onToggle: () -> Unit, label: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Toggle(checked = checked, onToggle = onToggle)
+        Text(text = label, style = MinimalChrome.labelStyle())
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFFFAF6EC)
+@Composable
+private fun LabeledTogglePreview() {
+    XCameraTheme {
+        Row(modifier = Modifier.padding(24.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+            LabeledToggle(checked = false, onToggle = {}, label = "GRID")
+            LabeledToggle(checked = true, onToggle = {}, label = "GRID")
+        }
+    }
+}
+
+/**
+ * "Capture RAW alongside JPEG whenever possible" — a persisted preference like GRID/HISTOGRAM/HORIZON
+ * above, not a per-capture choice; see `docs/features/camera-capture.md` for the full RAW pipeline.
+ * Uses the same unwrapped [LabeledToggle] look as those three, plus a small caption underneath warning
+ * that the setting can silently make every future capture noticeably larger.
  *
  * `feature:settings` has no way to know whether the *currently active* lens actually supports `RAW`
  * (that's a live per-lens hardware check, `CameraViewModel.rawCaptureCapability`) — this toggle only
@@ -237,21 +291,20 @@ private fun SettingsContent(
 @Composable
 private fun CaptureRawByDefaultSetting(enabled: Boolean, onToggle: (Boolean) -> Unit, modifier: Modifier = Modifier) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        LeverSwitch(
+        LabeledToggle(
             checked = enabled,
             onToggle = { onToggle(!enabled) },
             label = "RAW CAPTURE",
-            glyph = LeverGlyph.None,
         )
         Text(
             text = "Saves an additional .dng file (~25-50MB) alongside the JPEG on lenses that support it.",
-            style = AppChrome.labelStyle(),
+            style = MinimalChrome.labelStyle(),
         )
     }
 }
 
 /**
- * Color-grading LUT picker (issue #43) — a wrapping [FlowRow] of pills (an unbounded, user-grown list,
+ * Color-grading LUT picker — a wrapping [FlowRow] of pills (an unbounded, user-grown list,
  * unlike [PeakingSensitivitySelector]'s fixed three options; wraps onto further lines rather than
  * scrolling horizontally so every imported LUT stays visible/reachable without a scroll gesture) with
  * "OFF" always first, then each imported [LutPreset], then a trailing "+ IMPORT" pill. Reuses the same
@@ -263,8 +316,7 @@ private fun CaptureRawByDefaultSetting(enabled: Boolean, onToggle: (Boolean) -> 
  * on the "+ IMPORT" pill itself, for the separate file-copy step that precedes resolution, and disables
  * re-tapping import while one's already in flight.
  *
- * Deletion is a classic iOS-style "jiggle mode" (replacing an earlier long-press-to-delete interaction,
- * which risked conflicting with this row's drag gestures) — the pencil/check toggle next to the "COLOR
+ * Deletion is a classic iOS-style "jiggle mode" — the pencil/check toggle next to the "COLOR
  * LUT" label flips [isEditMode] (pure transient UI state, local to this composable, not worth threading
  * through the ViewModel); while active every imported [LutPreset] chip shakes and tints red (see
  * [LutPill]'s own doc) and tapping one deletes it via [onLutDeleteRequested] instead of selecting it.
@@ -332,9 +384,8 @@ private fun LutSelector(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(text = "COLOR LUT", style = AppChrome.labelStyle())
-            // No point offering edit mode over an empty list — mirrors the old onLongClick gating,
-            // which only ever existed on an actual LutPreset chip in the first place.
+            Text(text = "COLOR LUT", style = MinimalChrome.labelStyle())
+            // No point offering edit mode over an empty list.
             if (luts.isNotEmpty()) {
                 IconButton(
                     onClick = {
@@ -346,7 +397,7 @@ private fun LutSelector(
                     Icon(
                         imageVector = if (isEditMode) Icons.Filled.Check else Icons.Filled.Edit,
                         contentDescription = if (isEditMode) "Done editing LUTs" else "Edit LUTs",
-                        tint = if (isEditMode) MaterialTheme.colorScheme.error else AppChrome.LabelColor,
+                        tint = if (isEditMode) MaterialTheme.colorScheme.error else MinimalChrome.Ink,
                         modifier = Modifier.size(16.dp),
                     )
                 }
@@ -409,16 +460,16 @@ private fun LutPill(
             .background(
                 when {
                     isEditMode -> destructiveColor.copy(alpha = 0.22f)
-                    isSelected -> AppChrome.Accent
+                    isSelected -> MinimalChrome.Ink
                     else -> Color.Transparent
                 },
             )
             .border(
-                width = 1.dp,
+                width = MinimalChrome.StrokeWidth,
                 color = when {
                     isEditMode -> destructiveColor.copy(alpha = 0.7f)
                     isSelected -> Color.Transparent
-                    else -> AppChrome.LabelColor.copy(alpha = 0.4f)
+                    else -> MinimalChrome.Ink
                 },
                 shape = RoundedCornerShape(8.dp),
             )
@@ -427,7 +478,7 @@ private fun LutPill(
                 enabled = enabled && !isBusy,
                 role = Role.RadioButton,
                 // In edit mode a tap always fires (that's the delete gesture, even on the already-
-                // selected chip); otherwise mirrors the old no-op-on-reselect behavior.
+                // selected chip); otherwise re-tapping the already-selected chip is a no-op.
                 onClick = { if (isEditMode || !isSelected) onClick() },
             )
             .padding(horizontal = 14.dp, vertical = 8.dp),
@@ -436,11 +487,11 @@ private fun LutPill(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = label,
-                style = AppChrome.valueStyle(
+                style = MinimalChrome.valueStyle(
                     when {
                         isEditMode -> destructiveColor
-                        isSelected -> Color.White
-                        else -> AppChrome.ValueColor
+                        isSelected -> MinimalChrome.Background
+                        else -> MinimalChrome.Ink
                     },
                 ),
             )
@@ -449,7 +500,7 @@ private fun LutPill(
                 CircularProgressIndicator(
                     modifier = Modifier.size(12.dp),
                     strokeWidth = 1.5.dp,
-                    color = if (isSelected) Color.White else AppChrome.ValueColor,
+                    color = if (isSelected) MinimalChrome.Background else MinimalChrome.Ink,
                 )
             }
         }
@@ -487,12 +538,12 @@ private fun LutIntensitySlider(percent: Int, onIntensityChanged: (Int) -> Unit, 
             onValueChangeFinished = { onIntensityChanged(localValue.toInt()) },
             valueRange = 0f..100f,
             colors = SliderDefaults.colors(
-                thumbColor = AppChrome.Accent,
-                activeTrackColor = AppChrome.Accent,
-                inactiveTrackColor = AppChrome.LabelColor.copy(alpha = 0.3f),
+                thumbColor = MinimalChrome.Ink,
+                activeTrackColor = MinimalChrome.Ink,
+                inactiveTrackColor = MinimalChrome.Ink.copy(alpha = 0.3f),
             ),
         )
-        Text(text = "INTENSITY ${localValue.toInt()}%", style = AppChrome.labelStyle())
+        Text(text = "INTENSITY ${localValue.toInt()}%", style = MinimalChrome.labelStyle())
     }
 }
 
@@ -512,12 +563,25 @@ private fun displayNameFor(context: android.content.Context, uri: Uri): String {
     return queried ?: uri.lastPathSegment ?: "LUT"
 }
 
-/** LOW/MEDIUM/HIGH segmented picker for [FocusPeakingSensitivity] — the settings screen's first
- *  non-boolean control, so (per this repo's duplication convention) built local to this file rather
- *  than promoted to `shared:designsystem` until a second multi-option setting needs the same shape.
- *  Segments styled as filled pills (selected) vs. outlined text (unselected) using the same
- *  [AppChrome] mono type/accent [LeverSwitch] uses, so it reads as part of the same control family
- *  even though the interaction shape (radio group, not a two-position toggle) is different. */
+/**
+ * LOW/MEDIUM/HIGH segmented picker for [FocusPeakingSensitivity] — the settings screen's first
+ * non-boolean control, so (per this repo's duplication convention) built local to this file rather
+ * than promoted to `shared:designsystem` until a second multi-option setting needs the same shape.
+ * Segments styled as filled pills (selected) vs. outlined text (unselected) using the same
+ * [MinimalChrome] mono type/ink tokens [LabeledToggle] uses, so it reads as part of the same control
+ * family even though the interaction shape (radio group, not a two-position toggle) is different.
+ *
+ * Deliberately not built on `shared:designsystem`'s `SteppedToggle` — `SteppedToggle` is a 3-fixed-
+ * detent, value-rides-in-the-knob control, and on the surface LOW/MEDIUM/HIGH looks like exactly what
+ * it's for (see `LensDial`'s UW/W/T). It doesn't fit here, though: `SteppedToggle` has no external
+ * label row (see its own doc — the value rides *inside* the always-filled knob instead, which is what
+ * lets it drop `DialWheel`'s separate value/label text), so there's nowhere for "LOW"/"MEDIUM"/"HIGH"
+ * themselves to render — only a single short token fits inside the knob, and `LensDial`'s own UW/W/T is
+ * exactly that: 1-2 characters, not a whole word. Forcing these three words to fit there (abbreviating
+ * to L/M/H, say) would trade away the one thing this control is actually for — reading which
+ * sensitivity is picked at a glance — to reuse a shape that doesn't carry it. A hand-rolled pill row,
+ * styled to [MinimalChrome]'s ink-stroke-outline/ink-filled language below, carries it instead.
+ */
 @Composable
 private fun PeakingSensitivitySelector(
     selected: FocusPeakingSensitivity,
@@ -532,10 +596,10 @@ private fun PeakingSensitivitySelector(
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .background(if (isSelected) AppChrome.Accent else Color.Transparent)
+                        .background(if (isSelected) MinimalChrome.Ink else Color.Transparent)
                         .border(
-                            width = 1.dp,
-                            color = if (isSelected) Color.Transparent else AppChrome.LabelColor.copy(alpha = 0.4f),
+                            width = MinimalChrome.StrokeWidth,
+                            color = if (isSelected) Color.Transparent else MinimalChrome.Ink,
                             shape = RoundedCornerShape(8.dp),
                         )
                         .semantics { this.selected = isSelected }
@@ -548,29 +612,31 @@ private fun PeakingSensitivitySelector(
                 ) {
                     Text(
                         text = option.name,
-                        style = AppChrome.valueStyle(if (isSelected) Color.White else AppChrome.ValueColor),
+                        style = MinimalChrome.valueStyle(if (isSelected) MinimalChrome.Background else MinimalChrome.Ink),
                     )
                 }
             }
         }
-        Text(text = "PEAKING SENSITIVITY", style = AppChrome.labelStyle())
+        Text(text = "PEAKING SENSITIVITY", style = MinimalChrome.labelStyle())
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF201F1D)
+@Preview(showBackground = true, backgroundColor = 0xFFFAF6EC)
 @Composable
 private fun SettingsContentPreview() {
     XCameraTheme {
         Row(modifier = Modifier.padding(24.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-            LeverSwitch(checked = false, onToggle = {}, label = "GRID", glyph = LeverGlyph.Grid)
-            LeverSwitch(checked = true, onToggle = {}, label = "GRID", glyph = LeverGlyph.Grid)
-            LeverSwitch(checked = false, onToggle = {}, label = "HISTOGRAM")
-            LeverSwitch(checked = true, onToggle = {}, label = "HISTOGRAM")
+            LabeledToggle(checked = false, onToggle = {}, label = "GRID")
+            LabeledToggle(checked = true, onToggle = {}, label = "GRID")
+            LabeledToggle(checked = false, onToggle = {}, label = "HISTOGRAM")
+            LabeledToggle(checked = true, onToggle = {}, label = "HISTOGRAM")
+            LabeledToggle(checked = false, onToggle = {}, label = "INVERT CHROME")
+            LabeledToggle(checked = true, onToggle = {}, label = "INVERT CHROME")
         }
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF201F1D)
+@Preview(showBackground = true, backgroundColor = 0xFFFAF6EC)
 @Composable
 private fun CaptureRawByDefaultSettingPreview() {
     XCameraTheme {
@@ -581,7 +647,7 @@ private fun CaptureRawByDefaultSettingPreview() {
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF201F1D)
+@Preview(showBackground = true, backgroundColor = 0xFFFAF6EC)
 @Composable
 private fun PeakingSensitivitySelectorPreview() {
     XCameraTheme {
@@ -593,7 +659,7 @@ private fun PeakingSensitivitySelectorPreview() {
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF201F1D)
+@Preview(showBackground = true, backgroundColor = 0xFFFAF6EC)
 @Composable
 private fun LutSelectorPreview() {
     val luts = listOf(

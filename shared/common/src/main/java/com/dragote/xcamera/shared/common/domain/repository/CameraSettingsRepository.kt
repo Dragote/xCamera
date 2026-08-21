@@ -32,4 +32,6 @@ interface CameraSettingsRepository {
     suspend fun setLutIntensityPercent(percent: Int)
 
     suspend fun setCaptureRawByDefault(enabled: Boolean)
+
+    suspend fun setMinimalChromeInverted(enabled: Boolean)
 }

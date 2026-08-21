@@ -11,22 +11,7 @@ import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
  * Shown in place of [IsoDial]/[ShutterSpeedDial] while auto mode is active — real Camera2 AE
- * exposure compensation (`CONTROL_AE_EXPOSURE_COMPENSATION`), the standard +/- EV brightness bias on
- * top of full auto-metering. Auto-exposure still freely picks ISO/shutter itself; this only biases
- * what it converges toward. Unlike manual ISO/shutter, this works independently of `MANUAL_SENSOR`
- * support (see `CameraViewModel.onAeCompensationCapabilityChanged`), so it can be available even on
- * lenses where [IsoDial]/[ShutterSpeedDial] would show their own unsupported "--" placeholder.
- *
- * When [aeCompensationStops] is empty (`CONTROL_AE_COMPENSATION_RANGE` was exactly `[0,0]` — Camera2's
- * own "not supported" convention, or no capability data yet for the currently selected lens), this
- * falls back to a single inert "--" detent, matching [LensDial]/[IsoDial]'s own placeholder
- * convention.
- *
- * [onDragActiveChanged] mirrors [IsoDial]/[ShutterSpeedDial]'s own — `ui/CameraScreen` wires it to
- * `CameraViewModel.setZebraAnalysisEnabled` too, so the zebra-stripe clipping overlay (issue #6) also
- * lights up while dragging this dial, not just the manual-mode pair. Note this only actually shows
- * anything on a lens that *also* has `MANUAL_SENSOR` (see `CameraController.zebraBitmap`'s own doc) —
- * a lens with AE compensation but no manual sensor support has no zebra capture to drive it.
+ * exposure compensation. A thin [DialWheel] wrapper, no visuals of its own.
  */
 @Composable
 fun ExposureDial(
@@ -60,7 +45,7 @@ fun ExposureDial(
     )
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF201F1D)
+@Preview(showBackground = true, backgroundColor = 0xFFFAF6EC)
 @Composable
 private fun ExposureDialPreview() {
     XCameraTheme {
@@ -74,7 +59,7 @@ private fun ExposureDialPreview() {
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF201F1D)
+@Preview(showBackground = true, backgroundColor = 0xFFFAF6EC)
 @Composable
 private fun ExposureDialUnsupportedPreview() {
     XCameraTheme {

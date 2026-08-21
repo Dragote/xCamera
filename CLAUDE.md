@@ -75,6 +75,14 @@ Every reusable Compose UI element — `feature/*/ui/component/*` composables and
 
 Don't extract a shared abstraction the first time you write something — write it inline/local to whatever needs it. The **second** time the exact same logic is needed elsewhere, extract it into a shared function/composable/module rather than copying it again (tightened 2026-08-06 from an earlier "duplicate until a third occurrence" rule — two identical copies is already enough proof the pattern is real, and the third-copy version was letting real duplication sit for too long, e.g. `feature/camera/ui/component/FocusDial.kt` byte-for-byte copying `DialWheel.kt`'s value/label `Text` styling before issue #25 extracted `DialText.kt`). This applies at whatever scope the two occurrences share — same-package `internal` (e.g. `DialText.kt`, or `DialWheel`'s own `drawBarrel`/`drawWell`) if both live in one feature module, `shared:common`/`shared:designsystem` if they cross module boundaries (see the `MainDispatcherRule`/haptics-vibrator examples elsewhere in this file). One occurrence: leave it alone. Two occurrences of the *same* thing: extract. Two *similar-but-not-identical* things (e.g. `DialWheel`'s click-detent gesture vs. `FocusDial`'s continuous-drag gesture): duplication is legitimate — don't force a shared abstraction over a genuinely different interaction model just because the surrounding chrome looks similar.
 
+## Comment conventions
+
+Comments describe the component's current state and behavior only — never its history. No "used to be X", "previously did Y", "replaced Z", "ported from `legacy/...`", "as of <date>", or narrated bug-investigation timelines ("on-device testing found... then we tried... turned out to be..."). That kind of material belongs in commit messages and, for anything worth a permanent record, `docs/features/<feature>.md` — never in a comment sitting next to the code, since a comment about the past goes stale the moment the code changes again and nobody's obligated to touch it.
+
+What a comment *should* say: a short, present-tense "why" for a genuinely non-obvious constraint (a HAL quirk this code works around, an invariant a type alone can't express, a reason the obvious simpler approach doesn't work) — 1-3 lines is normal, longer only if the constraint itself is genuinely that dense to state. If a component is complex enough that its full rationale doesn't fit in a few lines, keep the short version inline and point to `docs/features/<feature>.md` for the rest (e.g. `// see docs/features/camera-capture.md`) rather than writing the long version in the comment itself.
+
+Applies to every comment, long or short, in every module — not just KDoc class docs. When touching a comment for an unrelated reason, fix it to match this if it doesn't already.
+
 ## DI rules
 
 - Hilt modules live in each module's own `di/` package, `@InstallIn(SingletonComponent::class)` unless there's a specific reason for a narrower scope.

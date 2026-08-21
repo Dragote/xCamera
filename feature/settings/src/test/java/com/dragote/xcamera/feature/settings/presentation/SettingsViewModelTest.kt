@@ -76,6 +76,7 @@ class SettingsViewModelTest {
                 selectedLutId = "abc",
                 lutIntensityPercent = 42,
                 captureRawByDefault = true,
+                minimalChromeInverted = true,
             )
             assertEquals(
                 SettingsUiState(
@@ -86,6 +87,7 @@ class SettingsViewModelTest {
                     selectedLutId = "abc",
                     lutIntensityPercent = 42,
                     captureRawByDefault = true,
+                    minimalChromeInverted = true,
                 ),
                 awaitItem(),
             )
@@ -149,6 +151,13 @@ class SettingsViewModelTest {
         viewModel.onCaptureRawByDefaultToggled(true)
 
         coVerify { cameraSettingsRepository.setCaptureRawByDefault(true) }
+    }
+
+    @Test
+    fun `onMinimalChromeInvertedToggled delegates to the repository`() = runTest {
+        viewModel.onMinimalChromeInvertedToggled(true)
+
+        coVerify { cameraSettingsRepository.setMinimalChromeInverted(true) }
     }
 
     @Test

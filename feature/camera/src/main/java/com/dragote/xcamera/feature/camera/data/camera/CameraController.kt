@@ -50,45 +50,30 @@ import kotlin.math.abs
 import javax.inject.Singleton
 
 /**
- * Raw `android.hardware.camera2` wrapper: opens a [CameraDevice], configures one
+ * Raw `android.hardware.camera2` wrapper: opens a [CameraDevice] and configures one
  * [CameraCaptureSession] with two independent output surfaces — a private preview
  * [android.media.ImageReader] ([previewImageReader], `YUV_420_888`) and a private still
- * [android.media.ImageReader] ([imageReader], JPEG) — and issues genuinely separate Camera2 requests
- * against each — a live-updatable [CameraCaptureSession.setRepeatingRequest] for the preview reader
- * (see [PreviewRequestController.buildPreviewRequest]), and a one-off [CameraCaptureSession.capture] for
+ * [android.media.ImageReader] ([imageReader], JPEG) — driven by genuinely separate Camera2 requests:
+ * a live-updatable [CameraCaptureSession.setRepeatingRequest] for the preview reader (see
+ * [PreviewRequestController.buildPreviewRequest]), and a one-off [CameraCaptureSession.capture] for
  * the still reader (see [StillCaptureController.takePhoto]) that carries the real, preview-uncapped
  * user-selected manual exposure when manual mode is active. The two share no mutable request state —
  * they only both read the same pending manual ISO/shutter cache owned by [previewRequestController].
  *
- * This class itself owns only the device/session lifecycle (open/close, lens resolution, output-reader
+ * This class owns only the device/session lifecycle (open/close, lens resolution, output-reader
  * creation) — see this package's other files for the collaborators it composes:
  * [PreviewRequestController] (preview repeating request + manual exposure/focus/AF state machine),
  * [FrameAnalyzer] (zebra/histogram live analysis), [StillCaptureController] (JPEG/RAW capture +
  * MediaStore save), [DeviceOrientationTracker] (physical device rotation for `JPEG_ORIENTATION`),
  * [BackLensEnumerator] (lens discovery/zoom-ratio computation), and the pure capability-query functions
- * in `CameraCapabilities.kt`. Everything below still depends on the opened device/session this class
- * owns, which is why the split kept device/session lifecycle itself here rather than extracting it too.
+ * in `CameraCapabilities.kt`.
  *
  * The live preview is *rendered*, not just captured, by this class's own surrounding infrastructure:
  * [setPreviewFrameListener] hands each delivered preview [Image] to a caller-supplied listener/
  * [Handler] (in practice, `ui/CameraScreen`'s `CameraPreviewRenderer`, which draws it onto the
- * on-screen `TextureView` via app-owned GLES) — see that class's own doc for why the live preview
- * deliberately isn't targeted at a caller-supplied `SurfaceTexture`-backed `Surface` the way it used
- * to be: an `ImageReader`'s dimensions are a hard, verifiable construction-time contract, unlike a
- * `SurfaceTexture`'s requested buffer size, which this device's Camera2 HAL was found not to always
- * honor across a session reopen (see `docs/features/camera-capture.md`'s history of that bug).
- *
- * This replaces an earlier CameraX (`Preview`/`ImageCapture` use case)-based implementation. CameraX's
- * `Camera2Interop`/`Camera2CameraControl` only exposes session-wide dynamic `CaptureRequestOptions`
- * overrides — there is no supported way to keep a fast repeating preview request running while
- * submitting an independent still-capture request with unrelated exposure parameters through that
- * API, since both are merged through the same session-wide override surface before being submitted
- * to the camera's single serialized executor. That coupling is what caused long manual shutter
- * speeds (2s/4s/8s+) to visibly freeze the live viewfinder and, at the longest speeds, to fail
- * capture outright once several long-exposure repeating frames backed up in the HAL ahead of the
- * still request. Managing the `CameraCaptureSession` directly removes that coupling entirely: the
- * preview's repeating request and a still capture's one-off request are independent Camera2 requests
- * from the start, so there is nothing for a manual exposure choice to back up behind.
+ * on-screen `TextureView` via app-owned GLES) — an `ImageReader`'s dimensions are a hard, verifiable
+ * construction-time contract, unlike a `SurfaceTexture`'s requested buffer size (see
+ * `docs/features/camera-capture.md` for the rationale).
  *
  * Kept out of the ViewModel since [bindCamera] inherently needs a Compose `LifecycleOwner`, which is
  * a ui-layer-adjacent type — see CLAUDE.md's data-layer-owns-hardware convention.
@@ -146,27 +131,25 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     private var previewImageReader: ImageReader? = null
 
     /**
-     * The `RAW_SENSOR` output for a "with RAW" still capture (issue #45) — `null` whenever the
-     * currently bound lens either doesn't report [CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW]
-     * at all (see [rawCaptureCapability]) or the 3-surface (preview + JPEG + RAW) session
-     * configuration wasn't actually verified supported via [CameraDevice.isSessionConfigurationSupported]
-     * when the session was opened (see [openCamera]/[createCaptureSession]) — either way, a lens
-     * reporting the `RAW` capability alone doesn't guarantee this is non-null. `maxImages = 1`: a
-     * single uncompressed `RAW_SENSOR` buffer is already ~20-50MB, and only ever one still capture is
-     * in flight at a time (the shutter is disabled while a capture is already running).
+     * The `RAW_SENSOR` output for a "with RAW" still capture — `null` whenever the currently bound
+     * lens either doesn't report [CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW] at all
+     * (see [rawCaptureCapability]) or the 3-surface (preview + JPEG + RAW) session configuration
+     * wasn't actually verified supported via [CameraDevice.isSessionConfigurationSupported] when the
+     * session was opened (see [openCamera]/[createCaptureSession]) — either way, a lens reporting the
+     * `RAW` capability alone doesn't guarantee this is non-null. `maxImages = 1`: a single
+     * uncompressed `RAW_SENSOR` buffer is already ~20-50MB, and only ever one still capture is in
+     * flight at a time (the shutter is disabled while a capture is already running).
      */
     private var rawImageReader: ImageReader? = null
 
-    /** Cached from [bindCamera]'s parameters — the `TextureView`'s own measured pixel size, needed to
-     *  compute [previewOutputSize] internally now that there's no caller-supplied, already-sized
-     *  `Surface` to size a stream against. */
+    /** Cached from [bindCamera]'s parameters — the `TextureView`'s own measured pixel size, used to
+     *  compute [previewOutputSize] for the preview [ImageReader]. */
     private var previewViewWidth = 0
     private var previewViewHeight = 0
 
     /**
      * Set once by the first [bindCamera] call and cleared by [unbindCamera] — the signal
-     * [onStateChanged]/[openCamera] gate on to know there's something to (re)bind, now that there's
-     * no caller-supplied `Surface` whose mere presence used to mean that.
+     * [onStateChanged]/[openCamera] gate on to know there's something to (re)bind.
      */
     private var isBound = false
 
@@ -177,13 +160,12 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      * continues on the HAL/driver side; without waiting for the real `onClosed()` signal, a reopen of
      * the *same* camera ID (the only path that can happen — see [openCamera]'s own doc) can race an
      * incompletely-released previous instance of that ID, a known Camera2 pitfall (Google's own
-     * `Camera2Basic` sample explicitly gates its next open behind exactly this kind of wait). On-device
-     * testing traced a live-preview aspect-ratio bug specifically to `ON_STOP`→`ON_START` reopens of
-     * the same camera ID — this wait is the fix. Captured as a local inside [openCameraDevice] and
-     * assigned here so the specific device instance that eventually calls back into it is unambiguous
-     * even if a *newer* open has already replaced this field by the time an old device's `onClosed`
-     * fires (shouldn't happen given [cameraLock] serializes opens after this field's own await
-     * completes, but the local capture makes that not load-bearing for correctness).
+     * `Camera2Basic` sample explicitly gates its next open behind exactly this kind of wait). Captured
+     * as a local inside [openCameraDevice] and assigned here so the specific device instance that
+     * eventually calls back into it is unambiguous even if a *newer* open has already replaced this
+     * field by the time an old device's `onClosed` fires (shouldn't happen given [cameraLock]
+     * serializes opens after this field's own await completes, but the local capture makes that not
+     * load-bearing for correctness).
      */
     private var deviceClosedSignal: CompletableDeferred<Unit>? = null
 
@@ -217,9 +199,8 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      *
      * [previewViewWidth]/[previewViewHeight] are the on-screen `TextureView`'s own measured pixel
      * dimensions — this class computes/owns the actual preview [ImageReader] ([previewImageReader])
-     * internally from them (see [previewOutputSize]/[createPreviewImageReader]) rather than accepting
-     * an already-sized `Surface` the way it used to; see this class's own doc for why. Register a
-     * frame consumer via [setPreviewFrameListener] separately to actually see any pixels.
+     * internally from them (see [previewOutputSize]/[createPreviewImageReader]). Register a frame
+     * consumer via [setPreviewFrameListener] separately to actually see any pixels.
      *
      * Camera2 has no lifecycle-aware bind/unbind equivalent to CameraX's `bindToLifecycle`, so this
      * registers as a [LifecycleEventObserver] on [lifecycleOwner]'s lifecycle to open the device/
@@ -396,13 +377,13 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      * lens reporting the `RAW` capability (see [rawCaptureCapability]) doesn't by itself guarantee
      * Camera2 can genuinely configure a 3-surface (preview + JPEG + `RAW_SENSOR`) session on this
      * hardware, so [rawSurface] non-`null` is only ever a *candidate*, verified via
-     * [CameraDevice.isSessionConfigurationSupported] (issue #45) before being included — on any
-     * failure of that check (including it not being available at all below API 29, or a HAL that
-     * throws [UnsupportedOperationException] for it), this falls back to the plain 2-surface session
-     * exactly as before RAW existed, i.e. "treat as RAW-unavailable" rather than attempting a
-     * configuration that was never confirmed and risking [onConfigureFailed] tearing down the *whole*
-     * session (preview included) over it. Below API 28 ([OutputConfiguration]/[SessionConfiguration]
-     * themselves unavailable), RAW is never attempted at all, for the same reason.
+     * [CameraDevice.isSessionConfigurationSupported] before being included — on any failure of that
+     * check (including it not being available at all below API 29, or a HAL that throws
+     * [UnsupportedOperationException] for it), this falls back to the plain 2-surface session, i.e.
+     * treats RAW as unavailable for this bind rather than attempting a configuration that was never
+     * confirmed and risking [onConfigureFailed] tearing down the *whole* session (preview included)
+     * over it. Below API 28 ([OutputConfiguration]/[SessionConfiguration] themselves unavailable), RAW
+     * is never attempted at all, for the same reason.
      */
     private suspend fun createCaptureSession(
         device: CameraDevice,
@@ -412,7 +393,9 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         lens: CameraLens?,
     ): Pair<CameraCaptureSession, Boolean> {
         fun outputConfigFor(surface: Surface) = OutputConfiguration(surface).apply {
-            lens?.physicalCameraId?.let(::setPhysicalCameraId)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                lens?.physicalCameraId?.let { setPhysicalCameraId(it) }
+            }
         }
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
@@ -460,8 +443,8 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     }
 
     /**
-     * The actual "is a 3-surface RAW session supported" check (issue #45) — a static feasibility
-     * query, not a real session attempt, so the [CameraCaptureSession.StateCallback] it's constructed
+     * The actual "is a 3-surface RAW session supported" check — a static feasibility query, not a
+     * real session attempt, so the [CameraCaptureSession.StateCallback] it's constructed
      * with is never invoked for this call. Caught broadly (relevant undocumented failure modes vary
      * by OEM HAL): [CameraAccessException]/[UnsupportedOperationException]/[IllegalArgumentException]
      * all fall back to "not supported" rather than propagating and failing the *whole* session open —
@@ -539,18 +522,52 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         val hadDevice = cameraDevice != null
         cameraDevice?.close()
         cameraDevice = null
-        imageReader?.close()
-        imageReader = null
-        previewImageReader?.close()
-        previewImageReader = null
-        rawImageReader?.close()
-        rawImageReader = null
+        closeImageReaders()
         stillCaptureController.onSessionClosed()
         previewRequestController.resetConvergenceState()
         frameAnalyzer.reset()
         if (hadDevice) {
             withTimeoutOrNull(CameraCloseTimeoutMs) { deviceClosedSignal?.await() }
         }
+    }
+
+    /**
+     * Closes [imageReader]/[previewImageReader]/[rawImageReader] as a task run on
+     * [backgroundHandler]'s own `Looper` instead of directly on this (main-thread) coroutine — every
+     * `OnImageAvailableListener` registered on these readers ([FrameAnalyzer.imageAvailableListener],
+     * [StillCaptureController.imageAvailableListener]/`rawImageAvailableListener`) is also delivered on
+     * that same `Looper`, so posting the close there rather than calling it from another thread means it
+     * can only ever run before a queued callback starts or after one finishes, never *during* one — a
+     * `Looper` processes one message at a time. See `docs/features/camera-capture.md`'s key decisions for
+     * why calling `close()` from a different thread was previously able to invalidate a buffer a callback
+     * was mid-read on. Bounded by [ImageReaderCloseTimeoutMs] as a safety net (the close itself is a
+     * near-instant native call) rather than the expected path, so a wedged background thread can't hang
+     * every future rebind. Fields are nulled synchronously, before the actual `close()` runs, so nothing
+     * else on the main thread can observe a reader that's about to become invalid.
+     */
+    private suspend fun closeImageReaders() {
+        val readers = listOfNotNull(imageReader, previewImageReader, rawImageReader)
+        imageReader = null
+        previewImageReader = null
+        rawImageReader = null
+        if (readers.isEmpty()) return
+
+        val handler = backgroundHandler
+        if (handler == null) {
+            readers.forEach { it.close() }
+            return
+        }
+
+        val closed = CompletableDeferred<Unit>()
+        val posted = handler.post {
+            readers.forEach { it.close() }
+            closed.complete(Unit)
+        }
+        if (!posted) {
+            readers.forEach { it.close() }
+            return
+        }
+        withTimeoutOrNull(ImageReaderCloseTimeoutMs) { closed.await() }
     }
 
     private fun resolveLogicalCameraId(lens: CameraLens?): String? = lens?.logicalCameraId ?: defaultBackCameraId()
@@ -578,8 +595,8 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     }
 
     /**
-     * The candidate `RAW_SENSOR` output for a "with RAW" still capture (issue #45) — only ever a
-     * *candidate*, see [rawImageReader]'s own doc for why the caller must still confirm the session
+     * The candidate `RAW_SENSOR` output for a "with RAW" still capture — only ever a *candidate*,
+     * see [rawImageReader]'s own doc for why the caller must still confirm the session
      * negotiation in [createCaptureSession] actually included it before relying on it. `null` if this
      * lens's [CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP] reports no `RAW_SENSOR` output
      * sizes at all — shouldn't happen for a lens [rawCaptureCapability] already confirmed reports the
@@ -603,9 +620,8 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      * sensor's own native pixel-array coordinate convention, which for essentially every phone's back
      * camera is landscape (a physically-rotated sensor) regardless of how the device is held — so
      * matching is done against the width/height-swapped target. `CameraPreviewRenderer`'s own crop
-     * transform makes the same swap assumption on the consuming side. Now internal-only —
-     * `ui/CameraScreen` no longer calls this directly (there's no `Surface` for it to size), it's used
-     * solely by [createPreviewImageReader].
+     * transform makes the same swap assumption on the consuming side. Internal-only, used solely by
+     * [createPreviewImageReader].
      */
     private fun previewOutputSize(lens: CameraLens?, targetWidth: Int, targetHeight: Int): Size {
         if (targetWidth <= 0 || targetHeight <= 0) return FallbackPreviewSize
@@ -774,6 +790,11 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
          *  generous relative to how fast a real close normally completes, just there so a device that
          *  never calls back can't wedge every future reopen behind an unbounded await. */
         const val CameraCloseTimeoutMs = 1_500L
+
+        /** Bounded wait for [closeImageReaders]'s posted close task to run on [backgroundHandler] —
+         *  see that function's own doc; generous relative to how fast closing an `ImageReader` actually
+         *  takes, just there so a wedged background thread can't wedge every future rebind. */
+        const val ImageReaderCloseTimeoutMs = 500L
 
         /** Preview stream resolution cap — plenty for a full-screen viewfinder, keeps frame cost down. */
         const val MaxPreviewDimension = 1920

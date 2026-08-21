@@ -32,6 +32,11 @@ import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
+ * A functional overlay over the live viewfinder feed carrying real shadow/highlight-clip information,
+ * so [CameraChrome.ZebraShadow]/[CameraChrome.ZebraHighlight] deliberately stay real hues under this
+ * otherwise-monochrome chrome (see this module's own design-agent brief on when color is allowed to
+ * survive a flat pass).
+ *
  * Diagonal-stripe clipping overlay — flags [ZebraMask.cells] classified [ZebraClipping.SHADOW]
  * (crushed blacks) or [ZebraClipping.HIGHLIGHT] (blown whites) while the ISO/shutter dial is being
  * dragged (see `CameraViewModel.zebraMask`, driven by `CameraController.setZebraAnalysisEnabled`).
@@ -39,7 +44,7 @@ import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
  * of *round*-rects (rather than sharp [Rect]s — softens the grid's inherently blocky cell edges
  * instead of reading as a hard mosaic), the highlight cells into another, each `clipPath`ed and
  * filled with one repeating diagonal `Brush.linearGradient` — plain Skia geometry, no per-cell
- * bitmap/shader work (see issue #6's own perf reasoning).
+ * bitmap/shader work.
  *
  * The stripe brush's own offset advances every frame while [mask] is non-`null` ([marchPhase]),
  * giving the classic "marching" scrolling-stripe look pro monitors use rather than a static pattern

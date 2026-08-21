@@ -10,22 +10,8 @@ import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome.Accent
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
- * One of two independent physical dials shown only while manual mode is engaged (see [IsoDial] for
- * the other; `ExposureDial` is what's shown in its place in auto mode). Manual mode itself is now
- * entered/exited only by tapping `ModeLever` (see `CameraViewModel.onManualModeToggled`) — dragging
- * this dial no longer has any manual-mode side effect, since it's only ever reachable once already in
- * manual mode. Camera2's `CONTROL_AE_MODE_OFF` still fixes ISO and shutter speed together (there's no
- * "ISO manual, shutter auto" mode), which is why the two dials still share one manual-mode toggle
- * despite being independent controls.
- *
- * [onDragActiveChanged] is [DialWheel]'s own drag-active signal, passed straight through — see
- * [IsoDial]'s own doc for how `ui/CameraScreen` uses this to drive the zebra-stripe clipping overlay
- * (issue #6).
- *
- * When [shutterStops] is empty (`CameraViewModel.onManualIsoCapabilityChanged` found no
- * `MANUAL_SENSOR` support, or a supported-but-unaligned exposure-time range, for the currently
- * selected lens), this falls back to a single inert "--" detent, matching [LensDial]'s own
- * placeholder-before-loaded convention.
+ * One of two independent physical dials shown only while manual mode is engaged. A thin [DialWheel]
+ * wrapper, no visuals of its own.
  */
 @Composable
 fun ShutterSpeedDial(
@@ -58,7 +44,7 @@ fun ShutterSpeedDial(
     )
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF201F1D)
+@Preview(showBackground = true, backgroundColor = 0xFFFAF6EC)
 @Composable
 private fun ShutterSpeedDialPreview() {
     XCameraTheme {
@@ -71,7 +57,7 @@ private fun ShutterSpeedDialPreview() {
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF201F1D)
+@Preview(showBackground = true, backgroundColor = 0xFFFAF6EC)
 @Composable
 private fun ShutterSpeedDialUnsupportedPreview() {
     XCameraTheme {

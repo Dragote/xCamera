@@ -126,7 +126,7 @@ interface CameraRepository {
     fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability?
 
     /**
-     * `null` means "never offer a with-RAW capture choice for this lens" (issue #45) — see
+     * `null` means "never offer a with-RAW capture choice for this lens" — see
      * `CameraController.rawCaptureCapability`'s own doc for the per-physical-lens gating this mirrors
      * from [manualIsoCapability]/[manualFocusCapability]. Presence alone doesn't guarantee a
      * subsequent [takePhoto] call with `includeRaw = true` actually produces a `.dng` — the 3-surface
@@ -135,10 +135,10 @@ interface CameraRepository {
      */
     fun rawCaptureCapability(lens: CameraLens?): RawCaptureCapability?
 
-    /** Tap-to-focus (issue #21) — see `CameraController.triggerAutoFocus`'s own doc. */
+    /** Tap-to-focus — see `CameraController.triggerAutoFocus`'s own doc. */
     fun triggerAutoFocus(displayXFraction: Float, displayYFraction: Float)
 
-    /** Hold-and-rotate manual focus ring (issue #21) — see `CameraController.setManualFocusDistance`'s
+    /** Hold-and-rotate manual focus ring — see `CameraController.setManualFocusDistance`'s
      *  own doc. */
     fun setManualFocusDistance(distanceDiopters: Float?)
 
@@ -151,7 +151,7 @@ interface CameraRepository {
 
     /**
      * Live `CONTROL_AF_STATE`, translated to [AfConvergenceState] — meant to be collected directly by
-     * whatever drives the tap-to-focus indicator's own visibility (issue #21 follow-up), not folded
+     * whatever drives the tap-to-focus indicator's own visibility, not folded
      * into `CameraUiState` for the same high-frequency-emission reason [observeZebraMask] isn't. `null`
      * before the first frame lands, or on a device that doesn't report this key at all.
      */
@@ -161,8 +161,8 @@ interface CameraRepository {
      * Resolves [lutId] (a `CameraSettings.selectedLutId`, `null` meaning "off") to an actual parsed
      * LUT via `LutRepository` (`shared:common`, implemented by `feature:settings`) and
      * `CubeLutParser`, then caches it on `CameraController` for both the live preview (see
-     * [observeActiveLut]) and the next still capture ([takePhoto]) — issue #43. `suspend` since
-     * resolving means reading + parsing a file off disk.
+     * [observeActiveLut]) and the next still capture ([takePhoto]). `suspend` since resolving means
+     * reading + parsing a file off disk.
      */
     suspend fun setLut(lutId: String?, intensityPercent: Int)
 
@@ -174,11 +174,11 @@ interface CameraRepository {
     fun observeActiveLut(): Flow<ActiveLut?>
 
     /**
-     * [includeRaw] requests an additional `.dng` alongside the always-produced JPEG (issue #45) —
-     * `false` behaves exactly as this call did before RAW existed. See `CameraController.takePhoto`'s
-     * own doc for why a RAW request on a lens/session without it actually configured silently falls
-     * back to JPEG-only rather than failing the whole capture, and why a RAW/DNG-specific write
-     * failure doesn't fail an otherwise-successful JPEG capture either.
+     * [includeRaw] requests an additional `.dng` alongside the always-produced JPEG — `false` captures
+     * JPEG only. See `CameraController.takePhoto`'s own doc for why a RAW request on a lens/session
+     * without it actually configured silently falls back to JPEG-only rather than failing the whole
+     * capture, and why a RAW/DNG-specific write failure doesn't fail an otherwise-successful JPEG
+     * capture either.
      */
     suspend fun takePhoto(includeRaw: Boolean = false): Result<Uri, DataError.Local>
 

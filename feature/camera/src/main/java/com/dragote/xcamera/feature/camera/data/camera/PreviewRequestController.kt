@@ -28,8 +28,8 @@ import kotlin.math.roundToInt
 
 /**
  * Owns the live preview's repeating-request state machine: the cached pending manual ISO/shutter/
- * focus/AF-region/AE-compensation values (issue #21's tap-to-focus and hold-and-rotate manual focus
- * ring, the manual exposure dials), building both the preview's own [CaptureRequest] ([buildPreviewRequest])
+ * focus/AF-region/AE-compensation values (tap-to-focus and the hold-and-rotate manual focus ring, the
+ * manual exposure dials), building both the preview's own [CaptureRequest] ([buildPreviewRequest])
  * and — via [applyExposure]/[applyFocusSettings], also called directly by
  * [StillCaptureController.captureStillJpeg] — the exposure/focus portion of a still-capture request, and
  * the live auto-converged [autoIso]/[autoExposureTimeNs]/[autoFocusDistanceDiopters]/[afConvergenceState]
@@ -53,12 +53,12 @@ class PreviewRequestController(
     private var pendingManualShutterNs: Long? = null
 
     /**
-     * Non-null while a manual-focus hold gesture (issue #21) is active or has just released — locks
+     * Non-null while a manual-focus hold gesture is active or has just released — locks
      * `CONTROL_AF_MODE_OFF` + `LENS_FOCUS_DISTANCE` at this exact value on both the preview's repeating
      * request and the next still capture (see [applyFocusSettings]), same "cached pending value,
-     * reapplied on every request" pattern [pendingManualIso]/[pendingManualShutterNs] already use. Per
-     * the issue's own "release-to-lock" requirement, releasing the hold does *not* clear this — only
-     * [triggerAutoFocus] (a fresh tap) does, resuming continuous AF.
+     * reapplied on every request" pattern [pendingManualIso]/[pendingManualShutterNs] already use.
+     * Releasing the hold does *not* clear this — only [triggerAutoFocus] (a fresh tap) does, resuming
+     * continuous AF.
      */
     private var pendingManualFocusDiopters: Float? = null
 
@@ -77,28 +77,16 @@ class PreviewRequestController(
      * `true` from the moment [triggerAutoFocus] fires until the triggered scan actually settles (see
      * [captureCallback]'s own check) — while `true`, [applyFocusSettings] keeps the *repeating* request
      * in `CONTROL_AF_MODE_AUTO` too (not just the one-off trigger capture), not
-     * `CONTROL_AF_MODE_CONTINUOUS_PICTURE`.
+     * `CONTROL_AF_MODE_CONTINUOUS_PICTURE`. `AUTO` is required for `CONTROL_AF_TRIGGER_START` to force
+     * a genuine re-scan toward a newly-set `CONTROL_AF_REGIONS` on this hardware — see
+     * `docs/features/camera-capture.md` for the HAL finding behind this.
      *
-     * This exists because of a confirmed on-device HAL behavior (Pixel 9 Pro, `caiman_beta`, see
-     * `docs/features/camera-capture.md`'s own history of this bug): issuing `CONTROL_AF_TRIGGER_START`
-     * while the request is *already* `CONTROL_AF_MODE_CONTINUOUS_PICTURE` does not force a genuine
-     * re-scan toward the newly-set `CONTROL_AF_REGIONS` on this hardware — `CaptureResult
-     * .CONTROL_AF_STATE` was observed jumping directly from `PASSIVE_FOCUSED` to `FOCUSED_LOCKED` in a
-     * single frame with `LENS_FOCUS_DISTANCE` bit-for-bit unchanged, i.e. the trigger just locked
-     * whatever continuous AF had already passively settled on and ignored the new region entirely.
-     * `CONTROL_AF_MODE_AUTO` reliably forces a real `ACTIVE_SCAN` toward the current region on trigger
-     * instead — the standard, HAL-compatible tap-to-focus idiom (real Camera2 AF only moves the lens on
-     * a trigger while in `AUTO` mode; `CONTINUOUS_PICTURE`'s trigger-locks-current-passive-result
-     * behavior on this hardware turned out to be the actual bug, not a `CameraController` logic error).
-     *
-     * A single frame in `AUTO` mode isn't enough for the scan to actually complete, so this has to stay
+     * A single frame in `AUTO` mode isn't enough for the scan to actually complete, so this stays
      * `true` — keeping the *repeating* request in `AUTO` too — until [captureCallback] observes the
      * state settle into [AfConvergenceState.FOCUSED]/[AfConvergenceState.NOT_FOCUSED], at which point it
      * flips back to `false` and calls [onRepeatingRequestNeedsRefresh] once more to resume
-     * `CONTINUOUS_PICTURE` for ongoing tracking — matching the issue's own "then resumes continuous
-     * AF/AE convergence" requirement (staying in `AUTO` forever would freeze focus, not track).
-     * [afTriggerToken] bounds how long this can stay `true` in case a HAL never reports a settled state
-     * at all.
+     * `CONTINUOUS_PICTURE` for ongoing tracking. [afTriggerToken] bounds how long this can stay `true`
+     * in case a HAL never reports a settled state at all.
      */
     private var pendingAfModeAuto = false
 
@@ -171,13 +159,12 @@ class PreviewRequestController(
      * preview's repeating request carries a forced capped-manual exposure (see [applyExposure]), not a
      * genuine AE convergence value — so this must skip updating [_autoIso]/[_autoExposureTimeNs] in
      * that case, otherwise the ISO/shutter dials' live auto-tracking would both get fed a bogus "auto"
-     * value that's actually just whatever the preview cap forced. AF is a separate axis (issue #21) and
+     * value that's actually just whatever the preview cap forced. AF is a separate axis and
      * deliberately does *not* get the same gating: [applyFocusSettings] applies [pendingManualFocusDiopters]
      * to the preview request verbatim, with no preview-only cap/rescale the way manual exposure gets, so
      * [_autoFocusDistanceDiopters] stays accurate either way and is updated unconditionally below —
-     * gating it the same way ISO/shutter are would just freeze `ui/component/FocusDial`'s own value
-     * readout the instant a manual hold began, which is exactly the bug on-device testing caught (see
-     * `docs/features/camera-capture.md`).
+     * gating it the same way ISO/shutter are would freeze `ui/component/FocusDial`'s own value readout
+     * the instant a manual hold began.
      */
     val captureCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureCompleted(
@@ -273,9 +260,9 @@ class PreviewRequestController(
 
     /**
      * Plain auto-exposure (`CONTROL_AE_MODE_ON`) when manual mode is off. While manual mode is on,
-     * this reproduces the live-feedback-but-safe preview behavior manual mode always had before the
-     * Camera2 migration: `CONTROL_AE_MODE_OFF` with the *real* selected exposure further capped at
-     * [PreviewMaxExposureTimeNs] so the preview frame rate never degrades, with `SENSOR_SENSITIVITY`
+     * this reproduces live feedback safely: `CONTROL_AE_MODE_OFF` with the *real* selected exposure
+     * further capped at [PreviewMaxExposureTimeNs] so the preview frame rate never degrades, with
+     * `SENSOR_SENSITIVITY`
      * boosted to compensate for the brightness the cap costs — see [applyExposure]'s own `previewSafe`
      * branch. This is a completely independent request from [StillCaptureController.captureStillJpeg]'s
      * still-capture request — the only thing shared between them is reading the same
@@ -332,8 +319,8 @@ class PreviewRequestController(
     }
 
     /**
-     * AF is an independent axis from AE (see [applyExposure]) — issue #21's tap-to-focus and
-     * hold-and-rotate manual focus ring both drive `CONTROL_AF_MODE`/`LENS_FOCUS_DISTANCE`/
+     * AF is an independent axis from AE (see [applyExposure]) — tap-to-focus and the hold-and-rotate
+     * manual focus ring both drive `CONTROL_AF_MODE`/`LENS_FOCUS_DISTANCE`/
      * `CONTROL_AF_REGIONS`, orthogonal to whichever ISO/shutter mode is active. Shared between
      * [buildPreviewRequest] and [StillCaptureController.captureStillJpeg] so a locked manual focus
      * distance (or an active tap-to-focus region) applies identically to both the live preview and the
@@ -373,11 +360,9 @@ class PreviewRequestController(
      * centered on the tap ([FocusRegionSizeFraction] of the active array's own width/height) and pushed
      * as `CONTROL_AF_REGIONS` alongside a one-off `CONTROL_AF_TRIGGER_START` capture, both in
      * `CONTROL_AF_MODE_AUTO` — **not** `CONTINUOUS_PICTURE` — see [pendingAfModeAuto]'s own doc for why
-     * `AUTO` is required here for a real lens movement to happen on this hardware (confirmed via
-     * on-device `CaptureResult.CONTROL_AF_STATE`/`LENS_FOCUS_DISTANCE` logging, not a guess — see
-     * `docs/features/camera-capture.md`). Always clears [pendingManualFocusDiopters] first — a tap
-     * always resumes AF, overriding whatever manual focus lock a previous hold gesture may have left in
-     * place, matching the issue's own "until the next tap or hold" wording. A no-op on a lens with no
+     * `AUTO` is required here for a real lens movement on this hardware. Always clears
+     * [pendingManualFocusDiopters] first — a tap always resumes AF, overriding whatever manual focus
+     * lock a previous hold gesture may have left in place. A no-op on a lens with no
      * [manualFocusCapability], or before a session is actually open (nothing to focus yet — [device]/
      * [session]/[surface] all supplied by [CameraController], which is the one that knows whether a
      * session is currently open).
@@ -452,13 +437,13 @@ class PreviewRequestController(
     }
 
     /**
-     * Drives the hold-and-rotate manual focus ring (issue #21): [distanceDiopters] non-`null` locks
+     * Drives the hold-and-rotate manual focus ring: [distanceDiopters] non-`null` locks
      * `CONTROL_AF_MODE_OFF` + `LENS_FOCUS_DISTANCE` at that value on both the preview's repeating
      * request and the next still capture (see [applyFocusSettings]) — called on every rotation tick
      * while the ring is held, and left at whatever value it was last called with once the finger
-     * releases (this function itself is never called with `null` on release — "commit/lock" per the
-     * issue is simply *not clearing* [pendingManualFocusDiopters], the same way manual exposure has no
-     * separate "commit" step beyond having already set the pending value). `null` resumes continuous
+     * releases (this function itself is never called with `null` on release — "commit/lock" is simply
+     * *not clearing* [pendingManualFocusDiopters], the same way manual exposure has no separate
+     * "commit" step beyond having already set the pending value). `null` resumes continuous
      * AF — only [triggerAutoFocus] (a fresh tap) does that today. Immediately live-updates the preview's
      * repeating request via [onRepeatingRequestNeedsRefresh], mirroring [setManualExposure].
      */
@@ -474,9 +459,8 @@ class PreviewRequestController(
      * Cached in [pendingManualIso]/[pendingManualShutterNs] so it's reapplied to the next still capture
      * regardless of lens rebinds in between. Also immediately live-updates the preview's repeating
      * request via [onRepeatingRequestNeedsRefresh] (a no-op if no session is open yet) so the viewfinder
-     * visually reflects every dial tick, capped to a preview-safe exposure time — see [applyExposure]
-     * for why that's safe now in a way it wasn't through CameraX's session-wide `CaptureRequestOptions`:
-     * this only ever touches the preview's own repeating request,
+     * visually reflects every dial tick, capped to a preview-safe exposure time — see [applyExposure].
+     * This only ever touches the preview's own repeating request;
      * [StillCaptureController.captureStillJpeg]'s still-capture request is built completely
      * independently and is never affected by it.
      */
@@ -525,18 +509,16 @@ class PreviewRequestController(
          * can land. 1/15s keeps manual-mode preview comfortably fluid (a frame rate a dim-light
          * *auto*-exposure preview already commonly runs at) while still long enough that the
          * `SENSOR_SENSITIVITY` compensation needed to match brightness rarely needs to leave a flagship
-         * sensor's usable ISO range. Unlike the pre-Camera2-migration version of this same mechanism,
-         * this only ever affects the preview's own repeating request — the still capture in
-         * [StillCaptureController.captureStillJpeg] always uses the real, uncapped selected shutter
-         * speed, with no shared Camera2-level state between the two requests.
+         * sensor's usable ISO range. This only ever affects the preview's own repeating request — the
+         * still capture in [StillCaptureController.captureStillJpeg] always uses the real, uncapped
+         * selected shutter speed, with no shared Camera2-level state between the two requests.
          */
         const val PreviewMaxExposureTimeNs = 1_000_000_000L / 15
 
         /** Bounded safety net for [pendingAfModeAuto] — see that field's own doc. Generous relative to
-         *  how fast a triggered AF scan actually settles on-device (observed well under a second on a
-         *  Pixel 9 Pro), just there so a HAL that never reports a settled `CONTROL_AF_STATE` can't leave
-         *  the repeating request stuck in `CONTROL_AF_MODE_AUTO` (frozen focus, no continuous tracking)
-         *  forever. */
+         *  how fast a triggered AF scan actually settles on real hardware, just there so a HAL that
+         *  never reports a settled `CONTROL_AF_STATE` can't leave the repeating request stuck in
+         *  `CONTROL_AF_MODE_AUTO` (frozen focus, no continuous tracking) forever. */
         const val AfAutoModeFallbackTimeoutMs = 2_000L
     }
 }

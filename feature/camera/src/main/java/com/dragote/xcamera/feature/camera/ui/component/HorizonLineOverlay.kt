@@ -26,6 +26,9 @@ import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 import kotlin.math.abs
 
 /**
+ * Draws over the live viewfinder feed at [CameraChrome.HistogramMarkColor] (near-white, for
+ * legibility against arbitrary scene content).
+ *
  * Artificial-horizon indicator drawn as a single hairline broken into three thirds — a static outer
  * left/right pair that never moves, and a dynamic center third that tracks the device's real-world
  * roll. The center third is sized/positioned to sit exactly inside [ViewfinderGridOverlay]'s own
@@ -34,19 +37,15 @@ import kotlin.math.abs
  * its own thirds the same way the grid computes its own dividers, it doesn't read the grid's visibility
  * at all.
  *
- * **Why the static thirds get no rotation at all — the bug this design fixes.** An earlier version of
- * this file rotated the *whole* line (all three segments) by [quadrant]'s own
- * [counterRotationDegrees] so the static reference would keep reading as horizontal through a 90° turn
- * into landscape. That broke the grid-matching property this file exists for: [ViewfinderGridOverlay]
- * itself applies *no* orientation compensation whatsoever — its dividers are always plain
- * `size.width/3`/`size.height/3` lines, fixed to the frame's own edges (correct for a rule-of-thirds
- * grid, which composes against the photo rectangle, not gravity). Rotating this file's segments by the
- * quadrant term while the grid never rotates meant the two only coincidentally lined up in portrait
- * (quadrant 0 ⇒ zero rotation ⇒ nothing moved); in landscape (quadrant 90/270) a real ~90° rotation
- * carried the segments away from the grid's fixed divider positions entirely.
+ * **Why the static thirds get no rotation at all.** [ViewfinderGridOverlay] applies *no* orientation
+ * compensation whatsoever — its dividers are always plain `size.width/3`/`size.height/3` lines, fixed
+ * to the frame's own edges (correct for a rule-of-thirds grid, which composes against the photo
+ * rectangle, not gravity). Rotating this line's segments by the device's quadrant angle instead would
+ * only coincidentally line up with the grid in portrait — see `docs/features/camera-capture.md` for
+ * why that approach doesn't work in landscape.
  *
- * The fix: instead of rotating a fixed X-axis layout by the quadrant angle, [HorizonLines] picks its
- * drawing axis directly from [quadrant] — X (thirds of `size.width`, laid out at `y = center.y`) in
+ * Instead, [HorizonLines] picks its drawing axis directly from [quadrant] — X (thirds of
+ * `size.width`, laid out at `y = center.y`) in
  * portrait/upside-down (0°/180°, where the grid's *vertical* dividers are the relevant reference), Y
  * (thirds of `size.height`, laid out at `x = center.x`) in landscape (90°/270°, where the grid's
  * *horizontal* dividers become the ones a landscape-holding viewer perceives as columns — the frame
@@ -68,8 +67,8 @@ import kotlin.math.abs
  * ([flashAlpha]) — positive confirmation beyond just the geometry lining up.
  *
  * All three segments share one [HorizonLineStrokeWidth]/[BaseLineAlpha] at rest — there's no separate
- * "thick" line, unlike the two-overlapping-lines design this file originally replaced — so the only
- * things distinguishing the center third are (a) it moves and (b) the level-alignment flash.
+ * "thick" line, so the only things distinguishing the center third are (a) it moves and (b) the
+ * level-alignment flash.
  */
 @Composable
 fun HorizonLineOverlay(modifier: Modifier = Modifier) {
@@ -97,8 +96,8 @@ fun HorizonLineOverlay(modifier: Modifier = Modifier) {
     var residualRollDegrees by remember { mutableStateOf(0f) }
     LaunchedEffect(orientation) {
         val residual = angularDistance(orientation.smoothedOrientationDegrees, orientation.quadrant)
-        // Negated to match counterRotationDegrees's own sign convention elsewhere in this file's
-        // history (a positive raw deviation needs a negative/counter rotation to visually cancel it).
+        // Negated to match counterRotationDegrees's own sign convention elsewhere in this file (a
+        // positive raw deviation needs a negative/counter rotation to visually cancel it).
         residualRollDegrees = -residual
 
         val isLevel = if (wasLevel) abs(residual) < LevelExitThresholdDegrees else abs(residual) < LevelEnterThresholdDegrees
@@ -176,19 +175,18 @@ private fun HorizonLines(
  *  inset, per the feature request that the line "spans the frame." */
 private val LineSideMargin = 24.dp
 
-/** Shared by all three segments — there's no separate "thick" line anymore, see this file's own class
- *  doc. */
+/** Shared by all three segments — there's no separate "thick" line, see this file's own class doc. */
 private val HorizonLineStrokeWidth = 1.5.dp
 
 /** Base color all three segments render at outside the momentary level flash — same tint
  *  [HistogramOverlay]'s own baseline marks use. */
 private val LineColor = CameraChrome.HistogramMarkColor
 
-/** Resting alpha (matches the old static reference line's own dimness). */
+/** Resting alpha. */
 private const val BaseLineAlpha = 0.4f
 
-/** Peak alpha the line flashes to for [FlashFadeDurationMs] right as the device becomes level (matches
- *  the old dynamic line's own brightness) before fading back down to [BaseLineAlpha]. */
+/** Peak alpha the line flashes to for [FlashFadeDurationMs] right as the device becomes level, before
+ *  fading back down to [BaseLineAlpha]. */
 private const val LevelFlashAlpha = 0.9f
 
 /** How long the level flash takes to fade back down — "a fraction of a second" per the feature request,

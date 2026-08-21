@@ -39,9 +39,9 @@ import kotlin.coroutines.resumeWithException
 import java.io.IOException
 
 /**
- * Still-capture (JPEG + optional RAW/DNG, issue #45) and MediaStore-save half of [CameraController]:
- * issues the still-capture `CaptureRequest`, correlates its JPEG/RAW halves, applies the active LUT
- * (issue #43) to the JPEG, and writes both files to `MediaStore`. Split out as "given an opened
+ * Still-capture (JPEG + optional RAW/DNG) and MediaStore-save half of [CameraController]: issues the
+ * still-capture `CaptureRequest`, correlates its JPEG/RAW halves, applies the active LUT to the JPEG,
+ * and writes both files to `MediaStore`. Split out as "given an opened
  * device/session/readers (supplied per-call by [CameraController], which owns their lifecycle), capture
  * a photo" — [previewRequestController] is a direct collaborator reference (not a lambda) since exposure/
  * focus request-building is genuinely shared logic ([PreviewRequestController.applyExposure]/
@@ -64,12 +64,31 @@ class StillCaptureController(
     /** Resolved by [captureStillJpeg] once the pending still capture's JPEG bytes are delivered. */
     private var pendingCapture: CancellableContinuation<ByteArray>? = null
 
+    /**
+     * Unlike [FrameAnalyzer.imageAvailableListener]'s continuous stream, a still capture has exactly
+     * one pending [Image] to correlate with the [pendingCapture] continuation, so an
+     * [IllegalStateException] here (see `CameraController.closeImageReaders`'s own doc for how a buffer
+     * can go inaccessible) can't be silently skipped the way a dropped preview frame can — there's no
+     * next frame coming to retry against, and leaving [pendingCapture] unresolved would hang whatever
+     * called [captureStillJpeg] forever. Failing the continuation instead surfaces as a normal capture
+     * failure through [CameraRepositoryImpl.takePhoto]'s existing `IllegalStateException` handling.
+     */
     val imageAvailableListener = ImageReader.OnImageAvailableListener { reader ->
-        val image = reader.acquireLatestImage()
+        val image = try {
+            reader.acquireLatestImage()
+        } catch (e: IllegalStateException) {
+            pendingCapture?.takeIf { it.isActive }?.resumeWithException(e)
+            pendingCapture = null
+            return@OnImageAvailableListener
+        }
         if (image == null) return@OnImageAvailableListener
         val bytes = try {
             val buffer = image.planes[0].buffer
             ByteArray(buffer.remaining()).also { buffer.get(it) }
+        } catch (e: IllegalStateException) {
+            pendingCapture?.takeIf { it.isActive }?.resumeWithException(e)
+            pendingCapture = null
+            return@OnImageAvailableListener
         } finally {
             image.close()
         }
@@ -96,8 +115,8 @@ class StillCaptureController(
      * `CaptureResult.SENSOR_TIMESTAMP` / `Image.getTimestamp()`) and completing [pendingRawCapture]
      * once the other half shows up is what lets [captureStillJpeg] correlate them by the frame they
      * actually both belong to, rather than assuming "whatever result callback fired most recently"
-     * matches "whatever image callback fired most recently" — the explicit risk issue #45 calls out.
-     * In practice at most one entry ever accumulates here (only one still capture is ever in flight at
+     * matches "whatever image callback fired most recently". In practice at most one entry ever
+     * accumulates here (only one still capture is ever in flight at
      * a time — the shutter is disabled while a capture is already running), but keying by timestamp
      * rather than a single mutable field is what actually makes that safe rather than just assumed.
      */
@@ -135,7 +154,16 @@ class StillCaptureController(
      * backlog of frames to skip through.
      */
     val rawImageAvailableListener = ImageReader.OnImageAvailableListener { reader ->
-        val image = reader.acquireNextImage() ?: return@OnImageAvailableListener
+        // Unlike imageAvailableListener's JPEG side, a missing RAW buffer here doesn't need to fail the
+        // whole capture — captureStillJpeg's own RawCaptureTimeoutMs bound already treats "RAW never
+        // arrived" as "capture without RAW" (see pendingRawCapture's own doc), so an IllegalStateException
+        // acquiring it (see CameraController.closeImageReaders's own doc) is just folded into that same
+        // existing fallback rather than needing its own handling.
+        val image = try {
+            reader.acquireNextImage()
+        } catch (e: IllegalStateException) {
+            null
+        } ?: return@OnImageAvailableListener
         val deferred = pendingRawCapture
         if (deferred == null) {
             // No RAW capture actually in flight (shouldn't normally happen — see CameraController's
@@ -154,7 +182,7 @@ class StillCaptureController(
     }
 
     /**
-     * The currently active LUT + blend intensity (issue #43), `null` meaning grading is off — set via
+     * The currently active LUT + blend intensity, `null` meaning grading is off — set via
      * [setLut] (in practice, `CameraRepositoryImpl` resolving `CameraSettings.selectedLutId` through
      * `LutRepository` and `CubeLutParser`, this class never does that resolution itself). Two
      * independent consumers read this: `ui/CameraScreen` collects it to push into
@@ -193,25 +221,23 @@ class StillCaptureController(
      * Issues the still-capture request and writes the resulting JPEG to `MediaStore`. While manual
      * exposure is active, the real (preview-uncapped) ISO/shutter the user selected is carried
      * directly on this one-off request via [PreviewRequestController.applyExposure] — completely
-     * independent of whatever the live preview's repeating request is doing (see [CameraController]'s
-     * own doc for why that decoupling is the whole point of the Camera2 migration).
+     * independent of whatever the live preview's repeating request is doing.
      *
-     * When [_activeLut] is non-null (issue #43), the raw JPEG is additionally run through
-     * [lutJpegProcessor]'s offscreen decode -> shader -> re-encode pass before being written —
-     * replacing the plain direct-to-MediaStore write only in that case, per this issue's own scope. A
-     * `null` result from [LutJpegProcessor.apply] (any processing failure) falls back to the original,
-     * ungraded [bytes] rather than losing the capture — see that class's own doc. LUT grading never
-     * applies to the RAW/DNG output below — it stays unprocessed sensor data, an explicit non-goal of
-     * issue #45.
+     * When [_activeLut] is non-null, the raw JPEG is additionally run through [lutJpegProcessor]'s
+     * offscreen decode -> shader -> re-encode pass before being written, replacing the plain
+     * direct-to-MediaStore write only in that case. A `null` result from [LutJpegProcessor.apply]
+     * (any processing failure) falls back to the original, ungraded [bytes] rather than losing the
+     * capture — see that class's own doc. LUT grading never applies to the RAW/DNG output below — it
+     * stays unprocessed sensor data.
      *
-     * [includeRaw] requests an *additional* `.dng` written to `MediaStore` alongside the JPEG (issue
-     * #45) — only actually honored when [rawReader] is non-null, i.e. [CameraController] already
-     * confirmed this lens's `RAW` capability *and* the 3-surface session it needs when the camera was
-     * bound; requesting RAW on a lens/session that doesn't actually have it configured silently falls
-     * back to a plain JPEG-only capture rather than throwing, the same "capability absent -> feature
-     * quietly unavailable" convention the capability queries already follow. A RAW/DNG write failure
-     * (disk, `MediaStore`, or `DngCreator` itself) is swallowed rather than failing this whole call —
-     * the JPEG that already succeeded must not be lost over a failed *bonus* file.
+     * [includeRaw] requests an *additional* `.dng` written to `MediaStore` alongside the JPEG — only
+     * actually honored when [rawReader] is non-null, i.e. [CameraController] already confirmed this
+     * lens's `RAW` capability *and* the 3-surface session it needs when the camera was bound;
+     * requesting RAW on a lens/session that doesn't actually have it configured silently falls back to
+     * a plain JPEG-only capture rather than throwing, the same "capability absent -> feature quietly
+     * unavailable" convention the capability queries already follow. A RAW/DNG write failure (disk,
+     * `MediaStore`, or `DngCreator` itself) is swallowed rather than failing this whole call — the
+     * JPEG that already succeeded must not be lost over a failed *bonus* file.
      */
     suspend fun takePhoto(
         device: CameraDevice,
@@ -443,8 +469,8 @@ class StillCaptureController(
     }
 
     private companion object {
-        /** Bounded safety net for a "with RAW" capture's [pendingRawCapture] await (issue #45) —
-         *  generous relative to how fast a HAL normally delivers both the RAW [Image] and its
+        /** Bounded safety net for a "with RAW" capture's [pendingRawCapture] await — generous
+         *  relative to how fast a HAL normally delivers both the RAW [Image] and its
          *  [TotalCaptureResult] after a single capture request, just there so a HAL that never
          *  delivers one of the two can't hang [captureStillJpeg]'s caller (and therefore the shutter)
          *  forever; the JPEG side is unaffected either way since it's awaited independently. */
