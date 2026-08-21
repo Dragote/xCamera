@@ -12,7 +12,7 @@ xCamera is a multi-module native Android app (Kotlin + Jetpack Compose) built on
 |---|---|---|
 | `:app` | Application/Activity shell, Hilt entry point, root nav graph aggregation | all `shared:*` and `feature:*` modules |
 | `:shared:common` | Cross-cutting infra: dispatchers, `Result`/`DataError`, base `UseCase`, shared `OkHttpClient`/`Json` | — |
-| `:shared:designsystem` | Compose theme (`XCameraTheme`) + reusable UI (`LoadingIndicator`, `ErrorState`, `EmptyState`) | — |
+| `:shared:designsystem` | Compose theme (`XCameraTheme`) + reusable UI (`LoadingIndicator`, `ErrorState`) | — |
 | `:feature:camera` | The actual product feature — CameraX-based capture, start destination of the app | `shared:common`, `shared:designsystem` |
 
 Feature modules never depend on each other directly — cross-feature communication goes through `shared:common` domain contracts (none needed yet). Camera hardware access (`Camera2`/`CameraX`) conventions specific to `feature:camera` are documented in `.claude/agents/camera-engineer.md`, not duplicated here.
