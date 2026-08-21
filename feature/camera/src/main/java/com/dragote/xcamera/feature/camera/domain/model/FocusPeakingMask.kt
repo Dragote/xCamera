@@ -6,7 +6,7 @@ import kotlin.math.max
 
 /**
  * Loupe-local edge/focus-assist highlight (Pixel-style focus peaking) — computed once per refreshed
- * magnified loupe crop while a manual-focus hold gesture is in progress (issue #21), never for the full
+ * magnified loupe crop while a manual-focus hold gesture is in progress, never for the full
  * viewfinder: continuous/always-on focus peaking across the whole preview is an explicit non-goal (see
  * `docs/features/camera-capture.md`). [columns]x[rows] grid — callers (see `ui/CameraScreen`'s
  * `focusPeakingMaskFromBitmap`) size it one cell per source pixel so [FocusRing] can render it as a

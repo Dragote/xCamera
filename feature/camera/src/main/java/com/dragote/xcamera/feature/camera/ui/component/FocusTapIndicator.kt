@@ -22,18 +22,11 @@ import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
- * Tap-to-focus's own visual feedback (issue #21 follow-up) — a bracket-cornered AF box centered on
- * the tap point, matching the app's existing `CameraChrome.Accent` tint. This composable only knows
- * how to fade [visible] in/out at whatever [position] it's last been given — the same "external state
- * drives a fade, this just renders it" shape [FocusRing]/`ZebraOverlay` already use — it doesn't know
- * *why* [visible] is true or false.
- *
- * `ui/CameraScreen`'s own `LaunchedEffect` owns that lifecycle: [visible] flips `true` the instant a
- * tap fires, stays `true` for as long as `CameraViewModel.afConvergenceState` reports
- * [com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState.SCANNING], then stays `true` a
- * short beat longer once AF settles (so a fast convergence still reads as a deliberate "locked" pause
- * rather than a flicker) before flipping back to `false` — driven by Camera2's own real AF state, not
- * a fixed timer guessing how long convergence takes.
+ * Tap-to-focus's own visual feedback. Draws over the live viewfinder feed, so it uses a
+ * white-bracket-with-black-outline treatment instead of flattening straight to [CameraChrome.Ink] —
+ * a plain black mark risks disappearing against a dark scene the same way a plain white one would
+ * against a bright one; drawing both keeps it visible either way while staying inside this identity's
+ * black/white-only palette.
  */
 @Composable
 fun FocusTapIndicator(position: Offset?, visible: Boolean, modifier: Modifier = Modifier) {
@@ -52,12 +45,14 @@ fun FocusTapIndicator(position: Offset?, visible: Boolean, modifier: Modifier = 
     }
 }
 
-/** Four corner brackets (not a full outline — reads as a lighter, more "viewfinder AF box"-like mark)
- *  around [center], plus a small centered dot marking the exact metering point. */
+/** Four corner brackets (not a full outline) around [center], plus a small centered dot — each stroke
+ *  drawn twice, a slightly thicker black pass behind a thinner white pass, so the mark holds up against
+ *  both bright and dark live-preview content. */
 private fun DrawScope.drawAfBracketBox(center: Offset) {
     val halfSize = BoxSize.toPx() / 2f
     val cornerLength = CornerLength.toPx()
-    val stroke = 2.dp.toPx()
+    val outerStroke = 3.dp.toPx()
+    val innerStroke = 1.5.dp.toPx()
     val left = center.x - halfSize
     val top = center.y - halfSize
     val right = center.x + halfSize
@@ -71,10 +66,12 @@ private fun DrawScope.drawAfBracketBox(center: Offset) {
     )
     corners.forEach { points ->
         for (i in 0 until points.size - 1) {
-            drawLine(color = CameraChrome.Accent, start = points[i], end = points[i + 1], strokeWidth = stroke)
+            drawLine(color = Color.Black, start = points[i], end = points[i + 1], strokeWidth = outerStroke)
+            drawLine(color = Color.White, start = points[i], end = points[i + 1], strokeWidth = innerStroke)
         }
     }
-    drawCircle(color = CameraChrome.Accent, radius = 2.dp.toPx(), center = center)
+    drawCircle(color = Color.Black, radius = 2.5.dp.toPx(), center = center)
+    drawCircle(color = Color.White, radius = 1.3.dp.toPx(), center = center)
 }
 
 private val BoxSize = 72.dp

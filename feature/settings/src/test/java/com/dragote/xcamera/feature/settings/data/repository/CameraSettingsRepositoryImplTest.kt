@@ -136,6 +136,18 @@ class CameraSettingsRepositoryImplTest {
     }
 
     @Test
+    fun `setMinimalChromeInverted persists and is reflected by observeSettings`() = runTest {
+        val repository = buildRepository()
+
+        repository.observeSettings().test {
+            assertEquals(CameraSettings(), awaitItem())
+
+            repository.setMinimalChromeInverted(true)
+            assertEquals(CameraSettings(minimalChromeInverted = true), awaitItem())
+        }
+    }
+
+    @Test
     fun `each setter's write is independent of the other two settings`() = runTest {
         val repository = buildRepository()
 

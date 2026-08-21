@@ -5,7 +5,7 @@ package com.dragote.xcamera.feature.camera.domain.model
  * adjust `LENS_FOCUS_DISTANCE` — `CameraController.manualFocusCapability` returns `null` outright
  * for a fixed-focus lens (`CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE == 0`), gating both
  * tap-to-focus's AF-region trigger and the hold-and-rotate manual focus ring off entirely for that
- * lens (issue #21) — not just the manual ring on its own, since a fixed-focus lens has no
+ * lens — not just the manual ring on its own, since a fixed-focus lens has no
  * `LENS_FOCUS_DISTANCE` control surface of any kind for either gesture to drive.
  *
  * Deliberately separate from [ManualIsoCapability] — `LENS_INFO_MINIMUM_FOCUS_DISTANCE` is its own

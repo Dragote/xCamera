@@ -41,6 +41,7 @@ class SettingsViewModel @Inject constructor(
             lutIntensityPercent = settings.lutIntensityPercent,
             resolvingLutId = resolvingLutId,
             captureRawByDefault = settings.captureRawByDefault,
+            minimalChromeInverted = settings.minimalChromeInverted,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -67,7 +68,7 @@ class SettingsViewModel @Inject constructor(
     val isImportingLut: StateFlow<Boolean> = _isImportingLut.asStateFlow()
 
     init {
-        // Issue #43 follow-up: a LUT selection that resolves to a null CubeLut (unsupported file type
+        // A LUT selection that resolves to a null CubeLut (unsupported file type
         // on import, or a file that went missing/corrupt afterward — see LutResolutionRepository's own
         // doc) is cleaned up automatically rather than left as a permanently-broken chip. Ordering here
         // matters: selection is cleared *before* the file is deleted, so a deliberate delete of the
@@ -106,6 +107,10 @@ class SettingsViewModel @Inject constructor(
 
     fun onCaptureRawByDefaultToggled(enabled: Boolean) {
         viewModelScope.launch { cameraSettingsRepository.setCaptureRawByDefault(enabled) }
+    }
+
+    fun onMinimalChromeInvertedToggled(enabled: Boolean) {
+        viewModelScope.launch { cameraSettingsRepository.setMinimalChromeInverted(enabled) }
     }
 
     /** `null` selects "OFF" — disables LUT grading entirely (see `CameraSettings.selectedLutId`'s own

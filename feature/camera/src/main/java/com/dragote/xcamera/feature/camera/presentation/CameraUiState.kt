@@ -44,7 +44,7 @@ data class CameraUiState(
     val aeCompensationStepEv: Float = 0f,
     val selectedAeCompensationIndex: Int = 0,
     /**
-     * Whether [selectedLens] reports/adjusts `LENS_FOCUS_DISTANCE` (issue #21) — gates both
+     * Whether [selectedLens] reports/adjusts `LENS_FOCUS_DISTANCE` — gates both
      * tap-to-focus's AF-region trigger and the hold-and-rotate manual focus ring; `false` on a
      * fixed-focus lens (`LENS_INFO_MINIMUM_FOCUS_DISTANCE == 0`).
      */
@@ -62,13 +62,12 @@ data class CameraUiState(
      */
     val liveFocusDistanceDiopters: Float? = null,
     /**
-     * Whether [selectedLens] reports Camera2's `RAW` capability (issue #45) — a live per-lens hardware
-     * check, not a user preference. `false` on a lens with no `RAW` support (e.g. the vast majority of
-     * front/ultra-wide/tele auxiliary lenses) — matching this issue's own non-goal of never surfacing
-     * RAW as an error state, just quietly unavailable. `ui/CameraScreen` ANDs this with
-     * `CameraSettings.captureRawByDefault` (the persisted "capture RAW whenever possible" preference,
-     * set on `ui/SettingsScreen` per the issue #45 follow-up that moved this off a per-shot toggle)
-     * before actually requesting a RAW buffer — see `CameraScreen.capture()`'s own doc.
+     * Whether [selectedLens] reports Camera2's `RAW` capability — a live per-lens hardware check, not
+     * a user preference. `false` on a lens with no `RAW` support (e.g. the vast majority of
+     * front/ultra-wide/tele auxiliary lenses) — RAW is never surfaced as an error state, just quietly
+     * unavailable. `ui/CameraScreen` ANDs this with `CameraSettings.captureRawByDefault` (the
+     * persisted "capture RAW whenever possible" preference, set on `ui/SettingsScreen`) before actually
+     * requesting a RAW buffer — see `CameraScreen.capture()`'s own doc.
      */
     val rawCaptureSupported: Boolean = false,
 )

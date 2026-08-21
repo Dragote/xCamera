@@ -11,15 +11,11 @@ import java.nio.ByteOrder
  * format ([parseCubeLut]/[toCubeFileContent]) stays the only format this app ever reads *from* a
  * user-picked file or would ever write back out for interchange/export.
  *
- * Exists because loading a LUT used to mean re-parsing tens of thousands of `LUT_3D_SIZE`-grid text
- * rows (string split + float parse per row) every time it wasn't already in
- * `CameraRepositoryImpl.resolvedLutCache` — real, user-visible latency on a cold/first selection even
- * after every `.cube` was already normalized onto one small [CanonicalLutSize][com.dragote.xcamera
- * .feature.settings.data.local.LutLocalDataSource] (issue #43 follow-up). Reading this format back is
- * a single bulk byte read into a [FloatArray] with no parsing step at all — and, since it skips the
- * float→decimal-string→float round-trip [toCubeFileContent]/[parseCubeLut] would otherwise do on every
- * import, it's strictly at least as precise as the text format was, never less (see [parseCubeLutBinary]
- * for the read side).
+ * Reading this format is a single bulk byte read into a [FloatArray] with no text-parsing step at all
+ * on `CameraRepositoryImpl`'s cold/first-selection path — see `docs/features/lut-color-grading.md` for
+ * why this format exists alongside ASCII `.cube`. Since it skips the float→decimal-string→float
+ * round-trip [toCubeFileContent]/[parseCubeLut] would otherwise do on every import, it's strictly at
+ * least as precise as the text format, never less (see [parseCubeLutBinary] for the read side).
  *
  * Same "never throws, returns `null` on anything malformed" contract [parseCubeLut] already
  * established — a corrupted/truncated binary file should fail to load, not crash the caller.

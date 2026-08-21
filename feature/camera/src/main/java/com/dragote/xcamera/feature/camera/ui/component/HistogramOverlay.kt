@@ -22,6 +22,10 @@ import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 import kotlin.math.sqrt
 
 /**
+ * Draws over the *live viewfinder feed*, not this identity's own flat body chrome, so
+ * [CameraChrome.HistogramMarkColor]/[CameraChrome.ZebraShadow]/[CameraChrome.ZebraHighlight] stay real
+ * hues (see those tokens' own doc) rather than flattening to black/white.
+ *
  * Always-on tonal readout of [data] (see `CameraViewModel.histogramData`'s own doc for why this is
  * always-on, unlike [ZebraOverlay]'s dial-drag gate).
  *
@@ -36,11 +40,9 @@ import kotlin.math.sqrt
  *
  * The rotation happens *inside* [HistogramMarks]'s own `Canvas` draw scope (`DrawScope.rotate`), not
  * as a `Modifier.rotate` wrapped around an always-96x48dp-laid-out box — a `Modifier`-level rotation
- * only transforms how the box *paints*, it doesn't change what size the layout system thinks the box
- * is, so a 96x48dp box rotated 90° in place would still be *positioned* using its unrotated 96x48dp
- * bounds while visually occupying a 48x96dp footprint, pushing part of it off-screen once anchored
- * near a corner with only [CornerInset] of margin (this was a real, shipped bug: rotating in place
- * this way clipped the readout against the screen edge in landscape). [HistogramMarks] instead
+ * only transforms how the box *paints*, not what size the layout system thinks the box is, which would
+ * clip part of the box off-screen once anchored near a corner with only [CornerInset] of margin (see
+ * `docs/features/camera-capture.md` for the shipped bug this avoids). [HistogramMarks] instead
  * *measures* itself at 48x96dp for a 90°/270° rotation to begin with — the layout system reserves
  * the correct rotated footprint before any alignment happens — and draws the same always-"96x48dp
  * logical space" bar chart into that reserved area via a coordinate-space rotation around its own
@@ -106,8 +108,8 @@ fun HistogramOverlay(data: HistogramData?, modifier: Modifier = Modifier) {
  * rotation so the layout system reserves the actual post-rotation footprint, then draws the same
  * always-[HistogramWidth]x[HistogramHeight]-logical-space bar chart into that reserved area via
  * `DrawScope.rotate` around the canvas's own center — see [HistogramOverlay]'s own doc for why a
- * `Modifier`-level rotation instead (which doesn't affect measurement) clips against the screen edge
- * once anchored near a corner in landscape.
+ * `Modifier`-level rotation instead (which doesn't affect measurement) would clip against the screen
+ * edge once anchored near a corner in landscape.
  */
 @Composable
 private fun HistogramMarks(data: HistogramData?, rotationDegrees: Float, modifier: Modifier = Modifier) {

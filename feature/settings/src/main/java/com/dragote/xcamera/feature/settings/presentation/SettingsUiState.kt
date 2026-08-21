@@ -8,17 +8,20 @@ data class SettingsUiState(
     val showHistogram: Boolean = true,
     val showHorizonLine: Boolean = true,
     val focusPeakingSensitivity: FocusPeakingSensitivity = FocusPeakingSensitivity.MEDIUM,
-    /** Every imported LUT (issue #43) — empty until the user imports one, "OFF" isn't a member of
+    /** Every imported LUT — empty until the user imports one, "OFF" isn't a member of
      *  this list, it's [selectedLutId] being `null`. */
     val luts: List<LutPreset> = emptyList(),
     val selectedLutId: String? = null,
     val lutIntensityPercent: Int = 100,
     /** The id of whichever LUT the camera pipeline is still resolving (file read + `.cube` parse) —
      *  `null` once resolution finishes or nothing's in flight. Drives the spinner on that specific
-     *  chip in `ui/SettingsScreen`'s `LutSelector`, not a generic global spinner (issue #43). */
+     *  chip in `ui/SettingsScreen`'s `LutSelector`, not a generic global spinner. */
     val resolvingLutId: String? = null,
-    /** "Capture RAW alongside JPEG whenever possible" preference (issue #45 follow-up) — see
+    /** "Capture RAW alongside JPEG whenever possible" preference — see
      *  `CameraSettings.captureRawByDefault`'s own doc for why this is a preference, not a hardware
      *  guarantee. */
     val captureRawByDefault: Boolean = false,
+    /** Color-inverted variant of `feature:camera`'s minimal-chrome theme — see
+     *  `CameraSettings.minimalChromeInverted`'s own doc. */
+    val minimalChromeInverted: Boolean = false,
 )

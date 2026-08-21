@@ -14,12 +14,8 @@ import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
  * The value readout above every mechanical dial's own barrel (e.g. [DialWheel]'s ISO/SHUTTER/LENS
- * value, [FocusDial]'s focus-distance readout) — extracted once this exact styling was duplicated a
- * second time (`FocusDial`, byte-for-byte identical to `DialWheel`'s own), per this project's "abstract
- * at the second occurrence" convention (see root `CLAUDE.md`). Delegates to [CameraChrome.dialValueStyle]
- * for the actual `TextStyle` rather than hand-rolling it. [alpha] exists purely for [DialWheel]'s own
- * mechanical seal/unseal transition (`textAlpha`, faded out as the barrel sinks) — callers with no such
- * transition (like [FocusDial]) just leave it at the default `1f`.
+ * value, [FocusDial]'s focus-distance readout) — extracted here so every dial shares one label/value
+ * text styling instead of duplicating it (see the root `CLAUDE.md` duplication-vs-abstraction rule).
  */
 @Composable
 internal fun DialValueText(value: String, modifier: Modifier = Modifier, alpha: Float = 1f) {
@@ -34,8 +30,7 @@ internal fun DialValueText(value: String, modifier: Modifier = Modifier, alpha: 
 }
 
 /** The unit label below every mechanical dial's own barrel (e.g. "LENS"/"ISO"/"SHUTTER", "FOCUS") —
- *  see [DialValueText]'s own doc for why this was extracted, what [alpha] is for, and why it delegates
- *  to [CameraChrome.leverLabelStyle] rather than hand-rolling its own `TextStyle`. */
+ *  see [DialValueText]'s own doc. */
 @Composable
 internal fun DialLabelText(label: String, modifier: Modifier = Modifier, alpha: Float = 1f) {
     Text(
@@ -50,7 +45,7 @@ internal fun DialLabelText(label: String, modifier: Modifier = Modifier, alpha: 
 
 /* ── Previews ────────────────────────────────────────────────────────────── */
 
-@Preview(showBackground = true, backgroundColor = 0xFF2A2722)
+@Preview(showBackground = true, backgroundColor = 0xFFFAF6EC)
 @Composable
 private fun DialTextPreview() {
     XCameraTheme {

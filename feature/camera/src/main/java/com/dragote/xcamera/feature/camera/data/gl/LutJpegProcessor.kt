@@ -20,28 +20,21 @@ import java.nio.FloatBuffer
 /**
  * Offscreen (headless, no on-screen `Surface`) GLES 3.0 pass that runs a captured still JPEG through
  * the same LUT-sampling math `ui/gl/CameraPreviewRenderer`'s fragment shader uses for the live
- * preview (issue #43) — decode -> upload as a 2D texture -> sample + blend against the 3D LUT texture
- * in an FBO -> read back -> re-encode. Called from `CameraController.takePhoto` only while a LUT is
- * actually active; a capture with no LUT selected never touches this class at all (straight JPEG-to-
- * MediaStore, unchanged from before this issue).
+ * preview — decode -> upload as a 2D texture -> sample + blend against the 3D LUT texture in an FBO
+ * -> read back -> re-encode. Called from `CameraController.takePhoto` only while a LUT is actually
+ * active; a capture with no LUT selected never touches this class at all (straight JPEG-to-MediaStore).
  *
  * Deliberately creates and tears down its own EGL context/pbuffer surface *per call* rather than
  * keeping one alive across captures, unlike `CameraPreviewRenderer`'s own long-lived render-thread
  * context — a still capture happens at most a few times a minute (not per-frame), so the extra
  * context-setup latency is an acceptable, simple tradeoff against the complexity of a second
- * long-lived GL thread/context sitting alongside the preview's; revisit only if on-device latency
- * proves this wrong.
+ * long-lived GL thread/context sitting alongside the preview's.
  *
  * **Not unit-testable** — real GLES/EGL calls, per this project's own camera testing conventions
  * (`.claude/agents/camera-engineer.md`). Kept thin/mechanical on purpose; the actual LUT math it
  * leans on (parsing, blend-intensity semantics) lives in plain testable domain code
- * (`domain/model/CubeLutParser.kt`).
- *
- * Confirmed on-device (issue #43 follow-up) to produce severely corrupted, psychedelic rainbow-contour
- * output — the live preview graded correctly the whole time, only capture was affected — traced to
- * [renderGraded] never setting `GL_UNPACK_ALIGNMENT`; see that function's own doc for the fix. The
- * orientation assumption documented there is still reasoned, not separately on-device-verified — check
- * that first if a graded capture ever comes out upside-down instead.
+ * (`domain/model/CubeLutParser.kt`). See `docs/features/lut-color-grading.md` for the
+ * `GL_UNPACK_ALIGNMENT` requirement [renderGraded] depends on and why it matters here specifically.
  */
 class LutJpegProcessor {
 
@@ -132,18 +125,16 @@ class LutJpegProcessor {
      * the same naive upload combined with `glReadPixels`' own row-0-is-framebuffer-bottom convention
      * flips twice (once implicitly on upload, once implicitly on readback), which cancels out — so
      * the output buffer's row order should already match [sourceBitmap]'s own top-down row order with
-     * no further correction needed. Reasoned, not on-device-verified (see this class's own doc) —
-     * this is the first thing to check if a graded photo ever comes out upside-down.
+     * no further correction needed. Reasoned, not device-verified — this is the first thing to check
+     * if a graded photo ever comes out upside-down.
      */
     private fun renderGraded(sourceBitmap: Bitmap, cubeLut: CubeLut, intensityPercent: Int, width: Int, height: Int): Bitmap? {
         // Every fresh EGL context (this class builds one per call — see its own doc) starts with the
         // GLES default GL_UNPACK_ALIGNMENT of 4, not the 1 CameraPreviewRenderer.initGl() sets once for
         // its own long-lived context. The LUT texture below is GL_RGB (3 bytes/pixel) at cubeLut.size
         // (33) per row = 99 bytes — not a multiple of 4 — so under the default alignment GLES misreads
-        // row boundaries and samples a shifted/scrambled LUT, producing exactly the psychedelic
-        // rainbow-contour corruption confirmed on-device (capture-time grading only; the live preview
-        // was never affected, since its context already had this set). Must be set before any texture
-        // upload in this function, matching CameraPreviewRenderer's own placement/reasoning.
+        // row boundaries and samples a shifted/scrambled LUT (see docs/features/lut-color-grading.md).
+        // Must be set before any texture upload in this function.
         GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
 
         val program = buildProgram()
@@ -317,8 +308,8 @@ class LutJpegProcessor {
 
         // See CameraPreviewRenderer's own doc on this same pattern: #version must be the literal first
         // characters handed to glShaderSource, so trimIndent() strips the leading blank line a raw
-        // triple-quoted string would otherwise carry — confirmed on-device (Adreno, Pixel 9 Pro) that a
-        // preceding blank line silently fails shader compilation on this class's identical sibling.
+        // triple-quoted string would otherwise carry — a preceding blank line silently fails shader
+        // compilation.
         val VERTEX_SHADER_SRC = """
             #version 300 es
             in vec4 aPosition;

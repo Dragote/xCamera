@@ -15,14 +15,14 @@ val Typography = Typography(
         letterSpacing = 0.5.sp,
     ),
     titleLarge = TextStyle(
-        fontFamily = AppChrome.Mono,
+        fontFamily = MinimalChrome.Mono,
         fontWeight = FontWeight.SemiBold,
         fontSize = 22.sp,
         lineHeight = 28.sp,
         letterSpacing = 0.sp,
     ),
     labelLarge = TextStyle(
-        fontFamily = AppChrome.Mono,
+        fontFamily = MinimalChrome.Mono,
         fontWeight = FontWeight.SemiBold,
         fontSize = 14.sp,
         lineHeight = 20.sp,

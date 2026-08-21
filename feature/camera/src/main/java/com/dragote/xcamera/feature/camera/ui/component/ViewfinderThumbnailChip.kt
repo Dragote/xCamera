@@ -10,6 +10,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
@@ -28,7 +29,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -44,25 +44,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Last-shot thumbnail chip — the app's only gallery entry point, matching the design (there's no
- * separate header button). Shows [photoUri] (decoded to a small [ImageBitmap], falling back to the
- * decorative placeholder while loading or if it's null).
- *
- * Bottom-left is its *physical*, not screen-local, home: the Activity is portrait-locked (see
- * AndroidManifest), so this hops between the four screen corners as
- * [rememberDeviceOrientationQuadrant] changes — via the same [cornerForQuadrant]/`Crossfade` corner-hop
- * `HistogramOverlay` uses — landing on whichever corner is *currently* the physical bottom-left from
- * the user's own point of view, cross-fading between corners rather than sliding across the screen.
- * On top of that, [ViewfinderThumbnailChipContent]'s own glyph counter-rotates to
- * [counterRotationDegrees] so it stays visually upright too — snapped straight to it, same as
- * `HistogramOverlay`'s bars, not smoothly animated: the corner-hop's own cross-fade already masks the
- * transition, so a separately-animated spin underneath it would just be a second, redundant motion
- * competing with the fade instead of reading as one clean change. Unlike `HistogramOverlay`'s bars, a
- * square 46dp chip has no footprint-swap concern from rotating in place.
- *
- * [modifier] should size this to the full area the chip is allowed to roam across corners of (e.g.
- * `Modifier.fillMaxSize()` over the whole viewfinder), not to the chip's own small size — see
- * `HistogramOverlay`'s own doc for why.
+ * Last-shot thumbnail chip — hops to whichever screen corner [rememberDeviceOrientationQuadrant]
+ * reports as current, staying upright regardless of device rotation. Its housing is a solid white
+ * frame with a thin black border — reads as one clean shape over arbitrary live scene content,
+ * matching [InfoPill]'s own reasoning.
  */
 @Composable
 fun ViewfinderThumbnailChip(photoUri: Uri?, onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -123,16 +108,17 @@ private fun ViewfinderThumbnailChipContent(photoUri: Uri?, onClick: () -> Unit, 
             .scale(scale)
             .graphicsLayer { rotationZ = rotationDegrees }
             .clip(RoundedCornerShape(8.dp))
-            .background(CameraChrome.KnobGradient)
+            .background(Color.White)
+            .border(CameraChrome.StrokeWidth, CameraChrome.StrokeColor, RoundedCornerShape(8.dp))
             .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
             .padding(2.5.dp)
             .clip(RoundedCornerShape(5.dp))
-            .background(Brush.linearGradient(listOf(Color(0xFF2B3A34), Color(0xFF16241F)))),
+            .background(CameraChrome.Ink),
     ) {
         thumbnail?.let { bitmap ->
             Image(
                 bitmap = bitmap,
-                contentDescription = null,
+                contentDescription = "Last photo",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.matchParentSize(),
             )
@@ -140,14 +126,6 @@ private fun ViewfinderThumbnailChipContent(photoUri: Uri?, onClick: () -> Unit, 
     }
 }
 
-/**
- * Decodes a small, downsampled bitmap for [uri] — [ImageDecoder] (API 28+) lets the sample size be
- * picked from the source's real dimensions before allocating, so a multi-megapixel photo doesn't
- * get fully decoded just to end up a 46dp chip; [MediaStore.Images.Media.getBitmap] is the
- * best-effort fallback down to this module's minSdk 26. Returns null on any failure (revoked URI,
- * deleted file, unsupported format) — this is a decorative thumbnail, not something worth crashing
- * or surfacing an error state over.
- */
 private suspend fun decodeThumbnail(context: Context, uri: Uri, targetPx: Int): ImageBitmap? =
     withContext(Dispatchers.IO) {
         try {

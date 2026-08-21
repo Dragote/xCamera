@@ -19,15 +19,12 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 
 /**
- * App-owned GLES rendering of the live Camera2 preview onto a [SurfaceTexture] — replaces letting
- * Camera2 write directly into a `TextureView`'s `SurfaceTexture` (see `docs/features/camera-capture.md`
- * for the full history of why: that path's requested buffer size isn't always honored by the HAL
- * across a session reopen, with no way to detect the mismatch, which showed up as an intermittently
- * stretched preview). `CameraController` instead targets its preview repeating request at an
- * `ImageReader` this class never sees directly — [onPreviewFrame] receives each delivered [Image],
- * whose `width`/`height` are a hard `ImageReader` construction-time guarantee, never a silently
- * substituted one, so the crop/rotation transform this class computes is always built from *verified*
- * frame dimensions rather than an assumption.
+ * App-owned GLES rendering of the live Camera2 preview onto a [SurfaceTexture]. `CameraController`
+ * targets its preview repeating request at an `ImageReader` this class never sees directly —
+ * [onPreviewFrame] receives each delivered [Image], whose `width`/`height` are a hard `ImageReader`
+ * construction-time guarantee, so the crop/rotation transform this class computes is always built
+ * from *verified* frame dimensions rather than an assumption (see `docs/features/camera-capture.md`
+ * for the rationale behind this design).
  *
  * Owns its own [HandlerThread] + EGL context/surface — GL contexts are single-thread-bound, and this
  * deliberately never shares a thread with `CameraController`'s own `backgroundHandler` (which acquires
@@ -35,16 +32,14 @@ import java.nio.FloatBuffer
  * .setPreviewFrameListener`'s own doc). Every entry point below except [start]/[stop]/[updateViewMetrics]
  * /[updateRotation]/[setLut] is expected to run *on* [handler] (either because the caller already posted
  * onto it, or because this class posts internally) — there is deliberately only ever one owner driving
- * this renderer's lifecycle (`ui/CameraScreen`'s `TextureView` attach/detach), unlike an earlier, since-
- * reverted attempt elsewhere in this module that let two independent lifecycle reactions both touch
- * `Surface` state and crashed; keep it that way.
+ * this renderer's lifecycle (`ui/CameraScreen`'s `TextureView` attach/detach); keep it that way.
  *
- * **GLES 3.0, not 2.0** (issue #43) — the sole reason for the version bump is native `GL_TEXTURE_3D`
- * support for LUT sampling (GLES 2.0 has no 3D texture type at all); every other GL call this class
- * makes would have worked identically under GLES 2.0. Costs nothing device-support-wise: GLES 3.0
- * only requires API 18+, well under this project's minSdk 26. [android.opengl.GLES30] is a strict
- * superset of [android.opengl.GLES20] (extends it), so every pre-existing 2D-texture/YUV call below
- * is unchanged apart from the class name its static calls are qualified against.
+ * **GLES 3.0, not 2.0** — the sole reason for the version bump is native `GL_TEXTURE_3D` support for
+ * LUT sampling (GLES 2.0 has no 3D texture type at all); every other GL call this class makes would
+ * work identically under GLES 2.0. Costs nothing device-support-wise: GLES 3.0 only requires API 18+,
+ * well under this project's minSdk 26. [android.opengl.GLES30] is a strict superset of
+ * [android.opengl.GLES20] (extends it), so every 2D-texture/YUV call below is qualified against the
+ * `GLES30` class name only for consistency, not because it needs GLES 3.0-specific behavior.
  */
 class CameraPreviewRenderer {
 
@@ -76,12 +71,10 @@ class CameraPreviewRenderer {
     private var vTextureId = 0
 
     /**
-     * LRU cache of already-uploaded LUT textures, keyed by `lutId` (issue #43 follow-up) — every
-     * [CubeLut] is now normalized to the same canonical grid size at import time (`feature:settings`'
-     * `LutRepositoryImpl`), so texture *dimensions* never vary between different LUTs any more, which
-     * is what makes reusing a previous LUT's texture object safe (unlike before, when a differently-
-     * sized `.cube` could arrive at any moment and this was documented as not worth the complexity).
-     * A plain access-order [LinkedHashMap] is the entire LRU: [LinkedHashMap.get]/`put` both bump an
+     * LRU cache of already-uploaded LUT textures, keyed by `lutId` — every [CubeLut] is normalized to
+     * the same canonical grid size at import time (`feature:settings`' `LutRepositoryImpl`), so texture
+     * *dimensions* never vary between different LUTs, which is what makes reusing a previous LUT's
+     * texture object safe. A plain access-order [LinkedHashMap] is the entire LRU: [LinkedHashMap.get]/`put` both bump an
      * entry to "most recently used" for free with `accessOrder = true`, and [LinkedHashMap
      * .removeEldestEntry] below evicts (GL-deleting the texture as it goes) whichever entry that
      * leaves least-recently-used once the cache exceeds [MaxCachedLutTextures]. Read/written only on
@@ -217,15 +210,15 @@ class CameraPreviewRenderer {
     }
 
     /**
-     * Called from `ui/CameraScreen` whenever `CameraController.activeLut` changes (issue #43) — cheap
-     * to call from any thread, same as [updateViewMetrics]/[updateRotation]. [lutId]/[cubeLut] both
-     * `null` disables grading entirely (the preview renders exactly as it does with no LUT);
-     * [intensityPercent] (0-100) is converted to the `[0,1]` blend factor the fragment shader expects.
-     * The same `lutId` arriving again (an intensity-only slider drag, or simply re-selecting a LUT
-     * already active) is deliberately *not* re-touched on the GPU — see [pendingLutId]'s own doc for
-     * why that matters. Keyed by `lutId` rather than [CubeLut] structural equality (what this used to
-     * compare by) so [uploadLutIfPending] can serve an already-cached texture for a *different*
-     * [CubeLut] instance that happens to be the same LUT re-resolved from disk.
+     * Called from `ui/CameraScreen` whenever `CameraController.activeLut` changes — cheap to call
+     * from any thread, same as [updateViewMetrics]/[updateRotation]. [lutId]/[cubeLut] both `null`
+     * disables grading entirely (the preview renders exactly as it does with no LUT); [intensityPercent]
+     * (0-100) is converted to the `[0,1]` blend factor the fragment shader expects. The same `lutId`
+     * arriving again (an intensity-only slider drag, or simply re-selecting a LUT already active) is
+     * deliberately *not* re-touched on the GPU — see [pendingLutId]'s own doc for why that matters.
+     * Keyed by `lutId` rather than [CubeLut] structural equality so [uploadLutIfPending] can serve an
+     * already-cached texture for a *different* [CubeLut] instance that happens to be the same LUT
+     * re-resolved from disk.
      */
     fun setLut(lutId: String?, cubeLut: CubeLut?, intensityPercent: Int) {
         renderHandler?.post {
@@ -246,10 +239,10 @@ class CameraPreviewRenderer {
      * [image]'s own `ImageReader` can be torn down (`CameraController` rebinding — e.g. the
      * lens-resolves-after-launch "double bind" at cold start, or a lens switch/reopen racing this
      * exact frame) between when [CameraController] acquired [image] and when this call actually runs
-     * on the render thread — confirmed on-device, this invalidates the `Image`'s buffers out from
-     * under it (`IllegalStateException: buffer is inaccessible` reading a plane, `close()` can throw
-     * too). Not fatal: the next delivered frame comes from whatever reader is current by then, so a
-     * stale frame is simply dropped rather than crashing the render thread.
+     * on the render thread, which invalidates the `Image`'s buffers out from under it
+     * (`IllegalStateException: buffer is inaccessible` reading a plane, `close()` can throw too). Not
+     * fatal: the next delivered frame comes from whatever reader is current by then, so a stale frame
+     * is simply dropped rather than crashing the render thread.
      */
     fun onPreviewFrame(image: Image) {
         try {
@@ -430,11 +423,9 @@ class CameraPreviewRenderer {
     }
 
     /**
-     * Center-crop-fill (mirrors the deleted `ui/CameraScreen.previewFillTransform`'s own `max(...)`
-     * reasoning, now expressed as a GL texture-coordinate matrix instead of an
-     * `android.graphics.Matrix`): the sampled window must cover the whole view in both axes once the
-     * image is rotated into display orientation, so excess is cropped rather than letterboxed. Unlike
-     * the deleted function, [sensorOrientationDegrees] is applied explicitly here — an `ImageReader`
+     * Center-crop-fill, expressed as a GL texture-coordinate matrix: the sampled window must cover the
+     * whole view in both axes once the image is rotated into display orientation, so excess is cropped
+     * rather than letterboxed. [sensorOrientationDegrees] is applied explicitly here — an `ImageReader`
      * surface (unlike a `TextureView`'s own on-screen `SurfaceTexture`) never gets automatic
      * producer-side rotation, the same reason `ZebraMask.rotatedBy` already needs an explicit angle.
      *
@@ -443,10 +434,8 @@ class CameraPreviewRenderer {
      * is a vertical flip: [uploadPlanes] fills each texture row-major from the image's own top-down
      * byte layout, but GL's texture-coordinate `v` increases upward, not downward.
      *
-     * Sign/direction of [sensorOrientationDegrees] and which axis ends up flipped are the most likely
-     * things to need on-device correction on the first pass — there's no way to verify orientation
-     * math without seeing it rendered (see this repo's own `docs/features/camera-capture.md` risk
-     * notes for this rewrite).
+     * Rotation/color-calibration correctness across GPU vendors beyond this project's own validated
+     * hardware is a residual risk — see `docs/features/camera-capture.md`.
      */
     private fun computeTransform() {
         val imgW = lastImageWidth.toFloat()
@@ -518,9 +507,9 @@ class CameraPreviewRenderer {
      * Runs on the render thread only (called from [drawFrame]) — [setLut] just flags [pendingLutId]/
      * [pendingLut]/[lutPendingUpload], the actual GL work happens here where a context is guaranteed
      * current. Three outcomes per pending change: grading turned off (nothing to upload); a `lutId`
-     * already resident in [lutTextureCache] (issue #43 follow-up — every [CubeLut] is now the same
-     * canonical grid size, so a previous texture for this same `lutId` is always still valid; just
-     * rebind it, zero new GL calls); or a genuinely new `lutId` (allocate + `glTexImage3D` upload,
+     * already resident in [lutTextureCache] (every [CubeLut] is the same canonical grid size, so a
+     * previous texture for this same `lutId` is always still valid; just rebind it, zero new GL
+     * calls); or a genuinely new `lutId` (allocate + `glTexImage3D` upload,
      * then cache it). [CubeLut.values] (`[0,1]` floats) are quantized to unsigned bytes — full float
      * precision isn't visually meaningful for a color-grading LUT and keeps the texture 4x smaller.
      */
@@ -676,12 +665,11 @@ class CameraPreviewRenderer {
 
         // GLSL ES 3.00 (#version 300 es) — attribute/varying become in/out, texture2D() becomes the
         // overload-resolved texture(), and the fragment shader declares its own `out vec4` instead of
-        // writing gl_FragColor. Functionally identical to the pre-#43 GLES 2.0 shader source otherwise.
-        // #version must be the literal first characters of the source — some GLES drivers (confirmed
-        // on-device: Adreno, Pixel 9 Pro) reject it if preceded by so much as a blank line, even though
-        // the spec technically allows leading whitespace/comments. trimIndent() strips both the leading
-        // blank line and the Kotlin-source indentation this raw string would otherwise carry, so
-        // #version genuinely starts the string handed to glShaderSource.
+        // writing gl_FragColor. #version must be the literal first characters of the source — some
+        // GLES drivers reject it if preceded by so much as a blank line, even though the spec
+        // technically allows leading whitespace/comments. trimIndent() strips both the leading blank
+        // line and the Kotlin-source indentation this raw string would otherwise carry, so #version
+        // genuinely starts the string handed to glShaderSource.
         val VERTEX_SHADER_SRC = """
             #version 300 es
             in vec4 aPosition;
@@ -697,10 +685,10 @@ class CameraPreviewRenderer {
         // Standard BT.601-ish YUV->RGB conversion, Y/U/V each sampled from their own GL_LUMINANCE
         // texture (U/V centered at 0.5, matching YUV_420_888's unsigned-byte-with-128-bias chroma
         // encoding). Exact color calibration (limited- vs full-range Y, BT.601 vs BT.709 coefficients)
-        // is a real on-device tuning item, not verified against hardware yet.
+        // remains an open device-tuning item — see docs/features/camera-capture.md.
         //
-        // LUT sampling (issue #43) happens in this same pass, per this project's own technical
-        // decision to avoid a second render pass for the live preview: the converted RGB (clamped to
+        // LUT sampling happens in this same pass, avoiding a second render pass for the live preview:
+        // the converted RGB (clamped to
         // [0,1] — a GL_TEXTURE_3D sample coordinate outside that range would wrap/clamp unpredictably
         // depending on GL_TEXTURE_WRAP_* rather than the intended "just use the edge of the LUT cube")
         // is used directly as the LUT's own sample coordinate — the standard way a 3D color LUT is

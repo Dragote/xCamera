@@ -29,4 +29,7 @@ class CameraSettingsRepositoryImpl @Inject constructor(
     override suspend fun setLutIntensityPercent(percent: Int) = localDataSource.setLutIntensityPercent(percent)
 
     override suspend fun setCaptureRawByDefault(enabled: Boolean) = localDataSource.setCaptureRawByDefault(enabled)
+
+    override suspend fun setMinimalChromeInverted(enabled: Boolean) =
+        localDataSource.setMinimalChromeInverted(enabled)
 }

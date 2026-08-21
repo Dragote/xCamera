@@ -1,107 +1,98 @@
 package com.dragote.xcamera.feature.camera.ui.theme
 
-import android.graphics.Bitmap
-import android.graphics.Color as AndroidColor
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageShader
-import androidx.compose.ui.graphics.ShaderBrush
-import androidx.compose.ui.graphics.TileMode
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.TextStyle
-import com.dragote.xcamera.shared.designsystem.theme.AppChrome
-import kotlin.random.Random
+import com.dragote.xcamera.shared.designsystem.theme.MinimalChrome
 
 /**
- * Colors/gradients/type for the skeuomorphic camera-body chrome ported from the "Camera App UI
- * v3" design (top/bottom decks, viewfinder bezel, levers, dials). The subset reused by other
- * feature modules (currently `feature:settings`, and `shared:designsystem`'s own `LeverSwitch`)
- * lives in `shared:designsystem`'s `AppChrome` and is delegated to here; everything below stays
- * local to feature:camera since it's specific to this one screen, not a reusable app-wide style.
- * IBM Plex Mono isn't bundled as a font resource, so [Mono] falls back to the platform monospace
- * family with the design's letter-spacing preserved.
+ * Colors/type for `feature:camera`'s screen chrome — the "minimal chrome" identity: thin black
+ * hairlines and flat black-or-white fills on a warm-white body, in the spirit of an OP-1 Field
+ * control-panel line-art diagram.
+ *
+ * The subset genuinely reusable across feature modules lives in `shared:designsystem`'s [MinimalChrome]
+ * and is re-exported here; everything below that has no counterpart there is specific to this one
+ * screen (the zebra-clip semantic tints, the viewfinder bezel/inset treatment) and stays local.
+ *
+ * Deliberately keeps a stable public shape (`Accent`, `EaseStandard`, `leverLabelStyle()`,
+ * `dialValueStyle()`, ...) even where a token is now just a flat pass-through with no gradient/hue
+ * behind it — every component under `ui/component/` references `CameraChrome.<member>` by these same
+ * names regardless of which visual identity is live, so a future reskin only needs to swap *values*
+ * here (and, for a few members like `DeckGradient`, *kind* — a `Brush` for a flat `Color`), not rename
+ * the API components/screen code already depend on.
+ *
+ * Every token below that derives from [MinimalChrome.Background]/[MinimalChrome.Ink] is a `get()`
+ * property, not a plain `val` — [MinimalChrome.Background]/[.Ink] themselves now track
+ * [MinimalChrome.current] (see that object's own doc), and a plain `val` here would snapshot whichever
+ * palette was live the first time this object was touched instead of re-reading on every access.
  */
 object CameraChrome {
 
-    val Accent = AppChrome.Accent
+    /** No hue-based accent in this identity — every stroke/fill/text is [Ink] or [Background] (see
+     *  [MinimalChrome]'s own doc for why). Kept as a named token (rather than switching every call
+     *  site to `MinimalChrome.Ink` directly) so dial/lever components that take an `accent: Color`
+     *  parameter don't couple that parameter's *meaning* to whichever identity is currently live. */
+    val Accent: Color get() = MinimalChrome.Ink
 
-    /** [com.dragote.xcamera.feature.camera.domain.model.ZebraClipping.SHADOW] stripe tint — crushed
-     *  blacks read as cool blue, matching the reference app's own convention. */
-    val ZebraShadow = Color(0xFF3B82F6)
+    /** Local alias for [MinimalChrome.Ink] — see [Accent]'s own doc for why call sites keep a
+     *  feature-local name rather than reaching into [MinimalChrome] directly everywhere. */
+    val Ink: Color get() = MinimalChrome.Ink
 
-    /** [com.dragote.xcamera.feature.camera.domain.model.ZebraClipping.HIGHLIGHT] stripe tint — blown
-     *  whites read as hot orange-red, matching the reference app's own convention. */
-    val ZebraHighlight = Color(0xFFE8432A)
+    /** [com.dragote.xcamera.feature.camera.domain.model.ZebraClipping.SHADOW] stripe tint — kept as a
+     *  real hue (not flattened to [Ink]) because it's carrying live-viewfinder semantic information
+     *  (crushed blacks), not decorative chrome; see this module's own design-agent brief on when color
+     *  is allowed to survive an otherwise-monochrome pass. */
+    val ZebraShadow = Color(0xFF2F6FED)
 
-    /** CSS `ease` — used for simple opacity/color cross-fades (glyphs, track tint). */
-    val EaseStandard = AppChrome.EaseStandard
+    /** [com.dragote.xcamera.feature.camera.domain.model.ZebraClipping.HIGHLIGHT] stripe tint (blown
+     *  whites) — same reasoning as [ZebraShadow]. */
+    val ZebraHighlight = Color(0xFFE04B2A)
 
-    /** Design's `cubic-bezier(.34,1.25,.55,1)` — lever knob travel, with its overshoot "clunk". */
-    val KnobOvershootEasing = AppChrome.KnobOvershootEasing
+    /** CSS `ease` — reused, not re-derived; see [MinimalChrome]'s own doc for why this reskin doesn't
+     *  touch motion. */
+    val EaseStandard = MinimalChrome.EaseStandard
 
-    // Matte black plastic, not the design's lighter warm-graphite tone — deliberately darker and
-    // less saturated per feedback that the literal design colors read as metal, not matte plastic.
-    val BodyGradient = AppChrome.BodyGradient
+    /** Design's overshoot "clunk" easing for lever knob travel — same reasoning as [EaseStandard]. */
+    val KnobOvershootEasing = MinimalChrome.KnobOvershootEasing
 
-    // Exposed separately (not just baked into DeckGradient below) so anything drawn *on top of* the
-    // deck — e.g. DialWheel's shutters — can rebuild this exact gradient with its own startY/endY,
-    // positioned to land on precisely the colors the real deck would show through at that point.
-    val DeckGradientStops: Array<Pair<Float, Color>> = AppChrome.DeckGradientStops
+    /** Flat body/background fill — a plain [Color], not a `Brush` gradient (see `ui/CameraScreen.kt`'s
+     *  own call site: `Modifier.background(Color)` accepts either). */
+    val Background: Color get() = MinimalChrome.Background
 
-    val DeckGradient = AppChrome.DeckGradient
+    /** Flat deck fill (top toolbar row + bottom control deck) — same [Background] value as the rest of
+     *  the body; the deck reads as a *bordered region* of one continuous flat body (see the `Seam`
+     *  divider in `ui/CameraScreen.kt`), not a separately-lit panel implying physical depth. Named
+     *  separately from [Background] only so call sites stay self-documenting about *which* region
+     *  they're painting. */
+    val DeckColor: Color get() = MinimalChrome.Background
 
-    val ViewfinderBezelGradient = Brush.verticalGradient(
-        0f to Color(0xFF131210),
-        0.55f to Color(0xFF0B0A09),
-        1f to Color(0xFF050505),
-    )
+    /** Viewfinder bezel — flat [Ink]; the live camera feed itself provides all the visual weight this
+     *  region needs, so the bezel is just a thin frame (see `ui/CameraScreen.kt`'s viewfinder `Box`,
+     *  bordered with [StrokeColor]/[StrokeWidth]). Follows [current][MinimalChrome.current], unlike
+     *  [ViewfinderInsetColor] below — it's part of the flat chrome, not the simulated camera interior. */
+    val ViewfinderBezelColor: Color get() = Ink
 
-    val ViewfinderInsetColor = Color(0xFF0D1210)
+    /** Always [MinimalChrome.Palette.Inverted]'s near-black, regardless of which chrome variant is
+     *  live — this is what's visible behind the live preview before its first frame arrives (or while
+     *  torn down between lenses), simulating the camera's own black interior, not decorative "ink." It
+     *  must never read as a blank white/paper panel under [MinimalChrome.Palette.Normal]. */
+    val ViewfinderInsetColor: Color = MinimalChrome.Palette.Inverted.background
 
-    val TrackOffGradient = AppChrome.TrackOffGradient
+    /** The one stroke color/width this whole identity draws with — see [MinimalChrome]'s own doc. */
+    val StrokeColor: Color get() = MinimalChrome.Ink
+    val StrokeWidth = MinimalChrome.StrokeWidth
 
-    val KnobGradient = AppChrome.KnobGradient
+    val LabelColor: Color get() = MinimalChrome.Ink
+    val ValueColor: Color get() = MinimalChrome.Ink
 
-    val LabelColor = AppChrome.LabelColor
-    val ValueColor = AppChrome.ValueColor
+    /** Histogram baseline marks — near-white now instead of near-black [Ink], since (like
+     *  [ZebraShadow]/[ZebraHighlight]) this is drawn *over the live viewfinder feed*, not over the flat
+     *  body chrome; it needs to hold up against arbitrary scene content, not this identity's own
+     *  background. */
+    val HistogramMarkColor = Color(0xFFFAF6EC)
 
-    /** Near-white for the histogram's baseline dots/bars themselves — distinct from [ValueColor]'s
-     *  warmer off-white so the marks read clearly against the live viewfinder image behind them (the
-     *  histogram has no background fill of its own). Only the first (darkest) and last (brightest)
-     *  bucket use [ZebraShadow]/[ZebraHighlight] instead, marking the shadow/highlight ends of the
-     *  tonal range with the same color language [ZebraOverlay] uses. */
-    val HistogramMarkColor = Color(0xFFF7F4EF)
+    val Mono = MinimalChrome.Mono
 
-    fun trackOnGradient(accent: Color = Accent): Brush = AppChrome.trackOnGradient(accent)
+    fun leverLabelStyle(color: Color = LabelColor): TextStyle = MinimalChrome.labelStyle(color)
 
-    val Mono = AppChrome.Mono
-
-    fun leverLabelStyle(color: Color = LabelColor): TextStyle = AppChrome.labelStyle(color)
-
-    fun dialValueStyle(color: Color = ValueColor): TextStyle = AppChrome.valueStyle(color)
-}
-
-/**
- * Static, tiled film-grain texture (a fixed-seed noise bitmap repeated via [ShaderBrush]),
- * approximating the design's SVG `feTurbulence` grain on the body/barrels/shutter. Generated once
- * and cached — the pattern itself is decorative, not meant to be randomized per composition.
- */
-private val grainBrush: Brush by lazy {
-    val size = 48
-    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-    val random = Random(1)
-    for (x in 0 until size) {
-        for (y in 0 until size) {
-            bitmap.setPixel(x, y, AndroidColor.argb(random.nextInt(40), 255, 255, 255))
-        }
-    }
-    ShaderBrush(ImageShader(bitmap.asImageBitmap(), TileMode.Repeated, TileMode.Repeated))
-}
-
-/** Applies the grain texture on top of this element's own background, behind its children. */
-fun Modifier.grainTexture(alpha: Float = 1f): Modifier = this.drawWithContent {
-    drawRect(brush = grainBrush, alpha = alpha)
-    drawContent()
+    fun dialValueStyle(color: Color = ValueColor): TextStyle = MinimalChrome.valueStyle(color)
 }

@@ -215,10 +215,9 @@ class CubeLutParserTest {
     }
 
     /**
-     * A real-sized 32x32x32 LUT (32*32*32*3 = 98,304 floats) — large enough that the old
-     * `ArrayList<Float>`-boxing implementation would be meaningfully slower than the current
-     * preallocated-`FloatArray` one, generated here rather than hand-written so this stays a
-     * correctness check (every value round-trips exactly) rather than a hardcoded fixture to maintain.
+     * A real-sized 32x32x32 LUT (32*32*32*3 = 98,304 floats), generated here rather than hand-written
+     * so this stays a correctness check (every value round-trips exactly) rather than a hardcoded
+     * fixture to maintain.
      */
     @Test
     fun `parses a large synthetic LUT correctly`() {

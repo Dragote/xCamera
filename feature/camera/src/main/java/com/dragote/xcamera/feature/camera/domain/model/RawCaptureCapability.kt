@@ -5,7 +5,7 @@ package com.dragote.xcamera.feature.camera.domain.model
  * [android.hardware.camera2.CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW] is supported
  * for the lens in question — `CameraController.rawCaptureCapability` returns `null` outright when it
  * isn't, mirroring [ManualIsoCapability]/[ManualFocusCapability]'s own "nullable capability, not a
- * boolean flag" pattern (issue #45). Per-physical-lens, not per-device — a `LOGICAL_MULTI_CAMERA`
+ * boolean flag" pattern. Per-physical-lens, not per-device — a `LOGICAL_MULTI_CAMERA`
  * lens's ultra-wide/tele sub-cameras can lack `RAW` even when the main sensor has it, the same
  * per-physical-lens reasoning [ManualIsoCapability]'s own doc already covers.
  *

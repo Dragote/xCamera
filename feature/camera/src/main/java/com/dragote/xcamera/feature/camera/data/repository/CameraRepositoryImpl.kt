@@ -45,14 +45,13 @@ class CameraRepositoryImpl @Inject constructor(
 
     /**
      * In-memory cache of already-resolved LUTs, keyed by [com.dragote.xcamera.shared.common.domain
-     * .model.LutPreset.id] (issue #43 follow-up) — a repeat selection of a `lutId` already resolved
-     * this session skips the file-read + [parseCubeLut] work entirely, going straight to
-     * [cameraController.setLut]. Deliberately *not* what gates whether a `lutId` still exists: [setLut]
-     * still re-checks [lutRepository]'s current list on every call (seeing whether a preset still
-     * resolves to a file path at all) before ever consulting this cache, so a stale entry for a
-     * since-deleted LUT (`SettingsViewModel.onLutDeleteRequested`, or the resolution-failure auto-
-     * cleanup path from issue #43's earlier round) is never served as if it still existed — see
-     * [setLut]'s own doc.
+     * .model.LutPreset.id] — a repeat selection of a `lutId` already resolved this session skips the
+     * file-read + [parseCubeLut] work entirely, going straight to [cameraController.setLut].
+     * Deliberately *not* what gates whether a `lutId` still exists: [setLut] still re-checks
+     * [lutRepository]'s current list on every call (seeing whether a preset still resolves to a file
+     * path at all) before ever consulting this cache, so a stale entry for a since-deleted LUT
+     * (`SettingsViewModel.onLutDeleteRequested`, or the resolution-failure auto-cleanup path) is never
+     * served as if it still existed — see [setLut]'s own doc.
      *
      * Access-order [LinkedHashMap] capped at [ResolvedLutCacheCapacity], evicting the least-recently-
      * used entry once exceeded — mirrors `CameraPreviewRenderer.lutTextureCache`'s own LRU (same
@@ -144,9 +143,8 @@ class CameraRepositoryImpl @Inject constructor(
      * `null` (either `lutId` itself, an id not present in the list, an unreadable file, or a malformed
      * stored LUT) always means "no LUT" to [CameraController.setLut] — never throws. A non-null [lutId]
      * that still resolves to a `null` LUT is also reported via [_resolutionFailures] — see
-     * [observeResolutionFailures]'s own doc for why that's the file-type-validation gate for import
-     * (issue #43's follow-up: `feature:settings` can't validate `.cube` content itself without
-     * depending on `feature:camera`).
+     * [observeResolutionFailures]'s own doc for why that's the file-type-validation gate for import:
+     * `feature:settings` can't validate `.cube` content itself without depending on `feature:camera`.
      */
     override suspend fun setLut(lutId: String?, intensityPercent: Int) {
         if (lutId == null) {
@@ -165,10 +163,9 @@ class CameraRepositoryImpl @Inject constructor(
             } else {
                 resolvedLutCache[lutId] ?: run {
                     // The file-read + decode stays inside this withContext even though
-                    // parseCubeLutBinary's own bulk-byte-read decode is far cheaper than the old text
-                    // parser it replaced (issue #43 follow-up) — this is still called from
-                    // CameraViewModel's cameraSettings collector, potentially on the main thread, and
-                    // any disk IO belongs off it regardless of how fast the decode itself now is.
+                    // parseCubeLutBinary's own bulk-byte-read decode is cheap — this is still called
+                    // from CameraViewModel's cameraSettings collector, potentially on the main thread,
+                    // and any disk IO belongs off it regardless of how fast the decode itself is.
                     withContext(Dispatchers.IO) {
                         lutFileReader.readBytes(preset.filePath)?.let { bytes -> parseCubeLutBinary(bytes) }
                     }?.also { resolvedLutCache[lutId] = it }

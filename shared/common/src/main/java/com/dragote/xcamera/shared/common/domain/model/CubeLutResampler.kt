@@ -13,8 +13,7 @@ import kotlin.math.floor
  *
  * Used at LUT import time (`feature:settings`'s `LutRepositoryImpl`) to normalize every imported
  * `.cube` file onto one canonical grid size regardless of what the user originally uploaded — see
- * that class's own doc for why a uniform size matters for `feature:camera`'s GPU texture cache
- * (issue #43 follow-up).
+ * that class's own doc for why a uniform size matters for `feature:camera`'s GPU texture cache.
  */
 fun resampleCubeLut(source: CubeLut, targetSize: Int): CubeLut {
     require(targetSize > 0) { "targetSize must be positive, was $targetSize" }

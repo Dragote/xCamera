@@ -6,9 +6,8 @@ package com.dragote.xcamera.shared.common.domain.model
  * project's camera conventions (`.claude/agents/camera-engineer.md`: "LUT math/parsing should stay
  * in plain testable classes, GL/shader plumbing thin"), so it's unit-testable directly against real
  * `.cube` file content with no GL context or Android framework involved at all. Lives in
- * `shared:common` (moved from `feature:camera` in issue #43's follow-up) so `feature:settings` can
- * validate `.cube` content at import time without depending on `feature:camera` — see [CubeLut]'s
- * own doc.
+ * `shared:common` so `feature:settings` can validate `.cube` content at import time without
+ * depending on `feature:camera` — see [CubeLut]'s own doc.
  *
  * Supported subset (this project's own non-goals explicitly exclude anything beyond a shippable
  * import-and-apply slice): `LUT_3D_SIZE N` header, then exactly `N*N*N` data rows of three
@@ -27,20 +26,16 @@ package com.dragote.xcamera.shared.common.domain.model
  *
  * Returns `null` (never throws) on anything malformed: missing/duplicate/non-positive `LUT_3D_SIZE`,
  * a data row that isn't exactly three parseable floats, a data row before the `LUT_3D_SIZE` header has
- * been seen (the normal/valid case — and every real `.cube` export — always puts the size header
- * first; this parser doesn't try to support an out-of-order file, see this function's own perf-rewrite
- * doc below), or a final row count that doesn't match `size^3` exactly — a corrupt/unsupported file
- * should just fail to import, not crash the caller.
+ * been seen (every real `.cube` export always puts the size header first; this parser doesn't support
+ * an out-of-order file), or a final row count that doesn't match `size^3` exactly — a corrupt/
+ * unsupported file should just fail to import, not crash the caller.
  *
- * Writes directly into a [FloatArray] preallocated the moment `LUT_3D_SIZE` is parsed, rather than
- * accumulating into a growable `List<Float>` — a 64-size `.cube` file is `64*64*64*3` ≈ 800k values,
- * and boxing every one of those into a `Float` object (what a `List<Float>`/`ArrayList<Float>` would
- * do) is real, avoidable allocation pressure on the parse path this file's own earlier history already
- * flagged as user-visibly slow. No growable fallback for a data row seen before the size header, on
- * purpose — the `.cube` format's own convention (and every real exporter) always writes the header
- * first, so a file that violates this is already malformed by this parser's own standing contract; a
- * growable-buffer fallback purely to still parse a header-comes-second file would be solving a problem
- * no real `.cube` file actually has.
+ * Writes directly into a [FloatArray] preallocated the moment `LUT_3D_SIZE` is parsed rather than
+ * accumulating into a growable `List<Float>` — see `docs/features/lut-color-grading.md` for why. No
+ * growable fallback for a data row seen before the size header, on purpose — the `.cube` format's own
+ * convention (and every real exporter) always writes the header first, so a file that violates this is
+ * already malformed by this parser's own standing contract; a growable-buffer fallback purely to still
+ * parse a header-comes-second file would be solving a problem no real `.cube` file actually has.
  */
 private val whitespaceRegex = Regex("\\s+")
 
@@ -93,9 +88,9 @@ fun parseCubeLut(content: String): CubeLut? {
  * Serializes [this] back to standard ASCII `.cube` file content — the inverse of [parseCubeLut]:
  * a `LUT_3D_SIZE N` header line followed by one `r g b` row per grid point, written in the exact same
  * blue-fastest row order [parseCubeLut] reads them back in (see that function's own doc). Used to
- * write a [resampleCubeLut]d grid back out to disk (`feature:settings`'s `LutRepositoryImpl`, issue
- * #43 follow-up) so every imported LUT is stored pre-normalized to one canonical size on disk, not
- * just held that way in memory.
+ * write a [resampleCubeLut]d grid back out to disk (`feature:settings`'s `LutRepositoryImpl`) so every
+ * imported LUT is stored pre-normalized to one canonical size on disk, not just held that way in
+ * memory.
  */
 fun CubeLut.toCubeFileContent(): String = buildString {
     append("LUT_3D_SIZE ").append(size).append('\n')

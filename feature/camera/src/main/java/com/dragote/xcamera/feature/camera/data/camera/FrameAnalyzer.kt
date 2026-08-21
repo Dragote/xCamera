@@ -18,9 +18,8 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * Every preview frame arrives via [imageAvailableListener] (registered by [CameraController] as the
  * [ImageReader.OnImageAvailableListener] on its own preview [ImageReader]) as a side effect of the
- * repeating request Camera2 is already running — unlike zebra's original `PixelCopy`-polling design,
- * there's no separate capture mechanism to drive: classification just piggybacks on frames that are
- * already flowing.
+ * repeating request Camera2 is already running — there's no separate capture mechanism to drive:
+ * classification just piggybacks on frames that are already flowing.
  */
 class FrameAnalyzer {
 
@@ -61,13 +60,13 @@ class FrameAnalyzer {
     private var previewFrameListener: ((Image) -> Unit)? = null
 
     /**
-     * Guards against exceeding the preview [ImageReader]'s `maxImages` (2) — confirmed on-device this
-     * is a real, not just theoretical, risk: the renderer's EGL/shader setup takes long enough that
-     * several frames' worth of `onImageAvailable` callbacks can fire before the render thread has
-     * processed (and therefore closed) even the first handed-off `Image`, and `acquireLatestImage()`
-     * throws `IllegalStateException` rather than silently coping once that many of *our own* acquired-
-     * but-unclosed images pile up. Set `true` right after acquiring (before this listener returns),
-     * cleared only once the frame has genuinely finished being drawn. `@Volatile` since it's written
+     * Guards against exceeding the preview [ImageReader]'s `maxImages` (2): the renderer's EGL/shader
+     * setup can take long enough that several frames' worth of `onImageAvailable` callbacks fire
+     * before the render thread has processed (and therefore closed) even the first handed-off `Image`,
+     * and `acquireLatestImage()` throws `IllegalStateException` rather than silently coping once that
+     * many of *our own* acquired-but-unclosed images pile up. Set `true` right after acquiring (before
+     * this listener returns), cleared only once the frame has genuinely finished being drawn.
+     * `@Volatile` since it's written
      * from both this listener's own thread (Camera2's background handler) and the render thread that
      * eventually closes the frame.
      */
@@ -108,7 +107,14 @@ class FrameAnalyzer {
      */
     val imageAvailableListener = ImageReader.OnImageAvailableListener { reader ->
         if (previewFrameInFlight) return@OnImageAvailableListener
-        val image = reader.acquireLatestImage() ?: return@OnImageAvailableListener
+        // acquireLatestImage() itself can throw if reader.close() (see CameraController.closeImageReaders)
+        // runs for a frame that was already in flight through the camera HAL when teardown started —
+        // treated the same as "no frame available" rather than propagating.
+        val image = try {
+            reader.acquireLatestImage() ?: return@OnImageAvailableListener
+        } catch (e: IllegalStateException) {
+            return@OnImageAvailableListener
+        }
 
         if (zebraAnalysisEnabled) classifyZebraIfDue(image)
         classifyHistogramIfDue(image)
@@ -174,9 +180,9 @@ class FrameAnalyzer {
     /**
      * Skips (not just throttles the *result* of, the *work* of) classification entirely if less than
      * [ZebraThrottleMs] has passed since the last real one — preview frames can arrive at up to ~30fps,
-     * far more often than the overlay needs to visibly update. Rotation handling mirrors the deleted
-     * `PixelCopy`-era design exactly (see [rotationDegrees]'s own doc for why an `ImageReader` buffer
-     * needs this at all): a 90/270 [rotationDegrees] swaps width for height, so the *raw* grid requested
+     * far more often than the overlay needs to visibly update. See [rotationDegrees]'s own doc for why
+     * an `ImageReader` buffer needs rotation handling at all: a 90/270 [rotationDegrees] swaps width
+     * for height, so the *raw* grid requested
      * from [ZebraMask.fromLumaPlane] is swapped accordingly too (matching the buffer's own landscape
      * aspect, avoiding a stretched grid), then [ZebraMask.rotatedBy] rotates the finished small grid
      * (cheap — [ZebraGridColumns]x[ZebraGridRows] cells, not the raw frame) into the shape the portrait
@@ -187,18 +193,26 @@ class FrameAnalyzer {
         if (now - lastZebraClassifyUptimeMs < ZebraThrottleMs) return
         lastZebraClassifyUptimeMs = now
 
-        val plane = image.planes[0]
-        val quarterTurn = rotationDegrees == 90 || rotationDegrees == 270
-        val rawMask = ZebraMask.fromLumaPlane(
-            buffer = plane.buffer,
-            rowStride = plane.rowStride,
-            pixelStride = plane.pixelStride,
-            width = image.width,
-            height = image.height,
-            columns = if (quarterTurn) ZebraGridRows else ZebraGridColumns,
-            rows = if (quarterTurn) ZebraGridColumns else ZebraGridRows,
-        )
-        _zebraMask.value = rawMask.rotatedBy(rotationDegrees)
+        // Camera2 can invalidate this Image's buffer out from under an in-flight callback (e.g. the
+        // camera service tearing down the underlying ImageReader) with no way to check for it upfront
+        // — see docs/features/camera-capture.md's key decisions. Dropping just this one frame on that
+        // narrow failure is preferable to propagating, since a fresh frame is already on its way.
+        try {
+            val plane = image.planes[0]
+            val quarterTurn = rotationDegrees == 90 || rotationDegrees == 270
+            val rawMask = ZebraMask.fromLumaPlane(
+                buffer = plane.buffer,
+                rowStride = plane.rowStride,
+                pixelStride = plane.pixelStride,
+                width = image.width,
+                height = image.height,
+                columns = if (quarterTurn) ZebraGridRows else ZebraGridColumns,
+                rows = if (quarterTurn) ZebraGridColumns else ZebraGridRows,
+            )
+            _zebraMask.value = rawMask.rotatedBy(rotationDegrees)
+        } catch (e: IllegalStateException) {
+            // Buffer went inaccessible mid-read — skip this frame, next one picks classification back up.
+        }
     }
 
     /**
@@ -215,15 +229,20 @@ class FrameAnalyzer {
         if (now - lastHistogramClassifyUptimeMs < HistogramThrottleMs) return
         lastHistogramClassifyUptimeMs = now
 
-        val plane = image.planes[0]
-        _histogramData.value = HistogramData.fromLumaPlane(
-            buffer = plane.buffer,
-            rowStride = plane.rowStride,
-            pixelStride = plane.pixelStride,
-            width = image.width,
-            height = image.height,
-            bucketCount = HistogramBucketCount,
-        )
+        // See classifyZebraIfDue's own doc for why this is guarded the same way.
+        try {
+            val plane = image.planes[0]
+            _histogramData.value = HistogramData.fromLumaPlane(
+                buffer = plane.buffer,
+                rowStride = plane.rowStride,
+                pixelStride = plane.pixelStride,
+                width = image.width,
+                height = image.height,
+                bucketCount = HistogramBucketCount,
+            )
+        } catch (e: IllegalStateException) {
+            // Buffer went inaccessible mid-read — skip this frame, next one picks classification back up.
+        }
     }
 
     private companion object {

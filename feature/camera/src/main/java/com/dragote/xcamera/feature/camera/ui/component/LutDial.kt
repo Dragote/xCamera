@@ -12,24 +12,8 @@ import com.dragote.xcamera.shared.common.domain.model.LutPreset
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
- * Quick-access LUT selector for `ui/CameraScreen`'s top toolbar (issue #43's follow-up) — cycles
- * through `[OFF, lut1, lut2, ...]` via [DialWheel]'s own discrete click-ratchet drag gesture, the same
- * interaction [IsoDial]/[ShutterSpeedDial] reuse (**not** [FocusDial]'s continuous-drag model — a
- * deliberately different gesture for a genuinely different interaction, per this project's own
- * duplication convention). A thin semantic wrapper exactly like those two, just at a smaller
- * toolbar-scale footprint ([width]/[canvasHeight] passed down to [DialWheel], which are the only two
- * things about the barrel's fixed 107.dp/117.dp default footprint that needed to become tunable to fit
- * here) — no new gesture code, the ratchet-drag logic lives in exactly one place ([DialWheel]).
- *
- * Only changes *selection*: [onLutSelected] mirrors `feature:settings`' own
- * `SettingsViewModel.onLutSelected(id: String?)` — both surfaces call the identical
- * `CameraSettingsRepository.setSelectedLutId` underneath (via `CameraViewModel`, here), so they stay
- * in sync automatically with no new state needed. Never touches intensity — that stays exclusively a
- * Settings-screen fine-tune control.
- *
- * Callers are expected to only show this once [luts] is non-empty (mirrors `ui/SettingsScreen`'s own
- * `luts.isNotEmpty()` gating for its edit-mode toggle) — a dial with nothing but "OFF" to cycle through
- * has no reason to occupy toolbar space.
+ * Quick-access LUT selector for `ui/CameraScreen`'s top toolbar — a thin [DialWheel] wrapper, no
+ * visuals of its own.
  */
 @Composable
 fun LutDial(
@@ -58,7 +42,7 @@ fun LutDial(
     )
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF201F1D)
+@Preview(showBackground = true, backgroundColor = 0xFFFAF6EC)
 @Composable
 private fun LutDialOffPreview() {
     XCameraTheme {
@@ -75,7 +59,7 @@ private fun LutDialOffPreview() {
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF201F1D)
+@Preview(showBackground = true, backgroundColor = 0xFFFAF6EC)
 @Composable
 private fun LutDialSelectedPreview() {
     XCameraTheme {

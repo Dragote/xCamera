@@ -27,9 +27,9 @@ import javax.inject.Inject
  * cosmetically from what the user originally typed (stripped punctuation, truncated) — an accepted
  * simplification, not a correctness issue for this feature's own scope.
  *
- * [importLut] (issue #43 follow-up) validates every picked file against [parseCubeLut] and resamples
+ * [importLut] validates every picked file against [parseCubeLut] and resamples
  * it onto [CanonicalLutSize] before writing it to disk. **Stored on disk as [toBinary]'s compact
- * format, not ASCII `.cube` text** (a second follow-up) — every `.cube` file the user hands this class
+ * format, not ASCII `.cube` text** — every `.cube` file the user hands this class
  * only ever exists transiently in memory during import; what's actually persisted is always exactly
  * [CanonicalLutSize]³ *and* already in the format `CameraRepositoryImpl` reads back with a plain bulk
  * byte read, no text parsing at all. This is what keeps every LUT in the library uniformly small/fast
@@ -55,7 +55,7 @@ class LutLocalDataSource @Inject constructor(
     /**
      * Reads [sourceUri]'s bytes (the SAF `ACTION_OPEN_DOCUMENT` result) entirely into memory, validates
      * it's an actual parseable `.cube` file via [parseCubeLut], resamples it onto [CanonicalLutSize]
-     * (issue #43 follow-up — see this class's own doc for why a uniform on-disk size matters), and
+     * (see this class's own doc for why a uniform on-disk size matters), and
      * writes *only* the resulting [toBinary] bytes to app-private storage under a fresh id — the picked
      * file's own raw bytes are never themselves written to disk, so there's nothing left over to clean
      * up on a validation failure and no risk of a stray non-canonical-format file surviving a failed
@@ -64,11 +64,10 @@ class LutLocalDataSource @Inject constructor(
      * translates either failure into a [com.dragote.xcamera.shared.common.domain.result.Result], this
      * data source stays exception-based like `CameraController`'s own hardware-adjacent calls do.
      *
-     * This is now the *primary* validation gate for import — `LutResolutionRepository`'s
+     * This is the *primary* validation gate for import — `LutResolutionRepository`'s
      * resolve-failure auto-cleanup (`feature:camera`, wired in `SettingsViewModel`) is a secondary,
      * defensive fallback for a file that goes missing/corrupts on disk *after* a valid import (e.g.
-     * external interference), not the first line of defense it used to be before the parser moved to
-     * `shared:common`.
+     * external interference), not a first line of defense.
      *
      * The returned [LutPreset.displayName] is already run through [sanitizeForFileName] (not the raw
      * [displayName] as typed/picked) — deliberately, so it's identical to what a later [listLuts] scan
