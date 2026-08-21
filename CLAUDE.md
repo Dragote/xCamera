@@ -103,7 +103,7 @@ Applies to every comment, long or short, in every module — not just KDoc class
 ## Data layer conventions
 
 - Repositories are offline-first: reads come from Room (`Flow`-returning DAO queries mapped to domain models), a network refresh is triggered on first collection (`.onStart { refresh() }`), and refresh failures are swallowed into a logged `Result.Error` rather than crashing the read flow — cached data still gets shown.
-- Every repository/use-case boundary returns `com.dragote.xcamera.shared.common.domain.result.Result<D, DataError>` instead of throwing — this keeps ViewModels free of try/catch. `DataError` has `Network` and `Local` sub-enums; extend them rather than adding new ad hoc error types.
+- Every repository/use-case boundary returns `com.dragote.xcamera.shared.common.domain.result.Result<D, DataError>` instead of throwing — this keeps ViewModels free of try/catch. `DataError` has a `Local` sub-enum; extend it (and add new sub-enums as new error sources appear, e.g. a future network layer) rather than adding new ad hoc error types.
 - **Each feature module owns its own Room database** (named `<Feature>Database`) rather than a single shared entities registry — this keeps feature modules self-contained (`shared:common` never depends on feature-owned entities). `shared:common` only owns the `xcamera.android.room` convention plugin for future genuinely cross-cutting tables; it does not currently have its own database (an empty `@Database` isn't valid Room — add one only once there's a real cross-cutting table to put in it).
 
 ## Testing conventions
