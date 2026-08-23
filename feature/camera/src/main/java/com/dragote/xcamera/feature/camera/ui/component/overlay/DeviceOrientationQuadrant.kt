@@ -1,4 +1,4 @@
-package com.dragote.xcamera.feature.camera.ui.component
+package com.dragote.xcamera.feature.camera.ui.component.overlay
 
 import android.view.OrientationEventListener
 import androidx.compose.runtime.Composable

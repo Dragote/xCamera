@@ -71,8 +71,8 @@ import com.dragote.xcamera.feature.settings.presentation.SettingsUiState
 import com.dragote.xcamera.feature.settings.presentation.SettingsViewModel
 import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import com.dragote.xcamera.shared.common.domain.model.LutPreset
-import com.dragote.xcamera.shared.designsystem.component.LoadingIndicator
-import com.dragote.xcamera.shared.designsystem.component.Toggle
+import com.dragote.xcamera.shared.designsystem.component.control.Toggle
+import com.dragote.xcamera.shared.designsystem.component.state.LoadingIndicator
 import com.dragote.xcamera.shared.designsystem.theme.MinimalChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 import com.dragote.xcamera.shared.navigation.SettingsRoutes

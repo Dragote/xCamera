@@ -1,4 +1,4 @@
-package com.dragote.xcamera.feature.camera.ui.component
+package com.dragote.xcamera.feature.camera.ui.component.overlay
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing

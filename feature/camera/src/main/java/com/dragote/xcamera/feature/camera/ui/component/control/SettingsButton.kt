@@ -1,4 +1,4 @@
-package com.dragote.xcamera.feature.camera.ui.component
+package com.dragote.xcamera.feature.camera.ui.component.control
 
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable

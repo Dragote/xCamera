@@ -1,4 +1,4 @@
-package com.dragote.xcamera.shared.designsystem.component
+package com.dragote.xcamera.shared.designsystem.component.state
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
