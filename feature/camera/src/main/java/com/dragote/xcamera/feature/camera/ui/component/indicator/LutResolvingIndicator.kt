@@ -1,4 +1,4 @@
-package com.dragote.xcamera.feature.camera.ui.component
+package com.dragote.xcamera.feature.camera.ui.component.indicator
 
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
@@ -21,6 +21,9 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import com.dragote.xcamera.feature.camera.ui.component.overlay.cornerForQuadrant
+import com.dragote.xcamera.feature.camera.ui.component.overlay.counterRotationDegrees
+import com.dragote.xcamera.feature.camera.ui.component.overlay.rememberDeviceOrientationQuadrant
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 

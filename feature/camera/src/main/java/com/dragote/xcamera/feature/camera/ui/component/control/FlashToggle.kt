@@ -1,4 +1,4 @@
-package com.dragote.xcamera.feature.camera.ui.component
+package com.dragote.xcamera.feature.camera.ui.component.control
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -9,7 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.dragote.xcamera.shared.designsystem.component.Toggle
+import com.dragote.xcamera.shared.designsystem.component.control.Toggle
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**

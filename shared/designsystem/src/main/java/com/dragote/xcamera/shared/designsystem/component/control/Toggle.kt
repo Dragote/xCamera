@@ -1,4 +1,4 @@
-package com.dragote.xcamera.shared.designsystem.component
+package com.dragote.xcamera.shared.designsystem.component.control
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween

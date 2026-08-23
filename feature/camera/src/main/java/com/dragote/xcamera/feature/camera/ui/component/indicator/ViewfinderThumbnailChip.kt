@@ -1,4 +1,4 @@
-package com.dragote.xcamera.feature.camera.ui.component
+package com.dragote.xcamera.feature.camera.ui.component.indicator
 
 import android.content.Context
 import android.graphics.ImageDecoder
@@ -38,6 +38,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.dragote.xcamera.feature.camera.ui.component.overlay.cornerForQuadrant
+import com.dragote.xcamera.feature.camera.ui.component.overlay.counterRotationDegrees
+import com.dragote.xcamera.feature.camera.ui.component.overlay.rememberDeviceOrientationQuadrant
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 import kotlinx.coroutines.Dispatchers

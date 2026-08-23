@@ -1,4 +1,4 @@
-package com.dragote.xcamera.feature.camera.ui.component
+package com.dragote.xcamera.feature.camera.ui.component.overlay
 
 import org.junit.Assert.assertEquals
 import org.junit.Test

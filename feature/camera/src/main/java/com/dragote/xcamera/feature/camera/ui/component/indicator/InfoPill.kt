@@ -1,4 +1,4 @@
-package com.dragote.xcamera.feature.camera.ui.component
+package com.dragote.xcamera.feature.camera.ui.component.indicator
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border

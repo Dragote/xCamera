@@ -1,4 +1,4 @@
-package com.dragote.xcamera.feature.camera.ui.component
+package com.dragote.xcamera.feature.camera.ui.component.dial
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -6,8 +6,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.dragote.xcamera.feature.camera.domain.model.CameraLens
-import com.dragote.xcamera.shared.designsystem.component.SteppedToggle
-import com.dragote.xcamera.shared.designsystem.component.SteppedToggleOrientation
+import com.dragote.xcamera.shared.designsystem.component.control.SteppedToggle
+import com.dragote.xcamera.shared.designsystem.component.control.SteppedToggleOrientation
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
