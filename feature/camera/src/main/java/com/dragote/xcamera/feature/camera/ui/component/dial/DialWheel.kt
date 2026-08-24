@@ -63,7 +63,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * Rotating barrel selector (LENS / ISO / SHUTTER) — a physical click-wheel, not a continuous slider,
+ * Rotating barrel selector (ISO / SHUTTER / LUT) — a physical click-wheel, not a continuous slider,
  * so a drag accumulates toward discrete detents rather than mapping 1:1 to a value. The gesture model
  * (click-detent ratchet, carry-over drag accumulation, nonlinear flick gain, the mechanical
  * `closedFraction` seal/unseal transition and its own timing/easing) is independent of how the
@@ -380,7 +380,7 @@ private fun DialWheelPreview() {
     var i by remember { mutableStateOf(1) }
     XCameraTheme {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            DialWheel("LENS", listOf("UW", "W", "T"), i, { i = it }, accent = Accent)
+            DialWheel("ISO", listOf("100", "200", "400", "800"), i, { i = it }, accent = Accent)
         }
     }
 }
@@ -391,7 +391,7 @@ private fun DialWheelSealedPreview() {
     XCameraTheme {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             DialWheel(
-                "LENS", listOf("UW", "W", "T"), 1, {}, accent = Accent,
+                "ISO", listOf("100", "200", "400", "800"), 1, {}, accent = Accent,
                 closedFraction = 1f, closing = true,
             )
         }

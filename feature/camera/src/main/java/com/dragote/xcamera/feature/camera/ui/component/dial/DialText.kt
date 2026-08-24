@@ -13,7 +13,7 @@ import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
- * The value readout above every mechanical dial's own barrel (e.g. [DialWheel]'s ISO/SHUTTER/LENS
+ * The value readout above every mechanical dial's own barrel (e.g. [DialWheel]'s ISO/SHUTTER/LUT
  * value, [FocusDial]'s focus-distance readout) — extracted here so every dial shares one label/value
  * text styling instead of duplicating it (see the root `CLAUDE.md` duplication-vs-abstraction rule).
  */
@@ -29,7 +29,7 @@ internal fun DialValueText(value: String, modifier: Modifier = Modifier, alpha: 
     )
 }
 
-/** The unit label below every mechanical dial's own barrel (e.g. "LENS"/"ISO"/"SHUTTER", "FOCUS") —
+/** The unit label below every mechanical dial's own barrel (e.g. "ISO"/"SHUTTER"/"LUT", "FOCUS") —
  *  see [DialValueText]'s own doc. */
 @Composable
 internal fun DialLabelText(label: String, modifier: Modifier = Modifier, alpha: Float = 1f) {
