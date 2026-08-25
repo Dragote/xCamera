@@ -1,16 +1,13 @@
-package com.dragote.xcamera.feature.camera.domain.model
+package com.dragote.xcamera.shared.diagnostics.domain.model
 
 /**
- * Presence of this type (as opposed to `null`) already implies the selected lens can report and
- * adjust `LENS_FOCUS_DISTANCE` — `CameraController.manualFocusCapability` returns `null` outright
- * for a fixed-focus lens (`CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE == 0`), gating both
- * tap-to-focus's AF-region trigger and the hold-and-rotate manual focus ring off entirely for that
- * lens — not just the manual ring on its own, since a fixed-focus lens has no
- * `LENS_FOCUS_DISTANCE` control surface of any kind for either gesture to drive.
+ * Presence of this type (as opposed to `null`) already implies the lens can report and adjust
+ * `LENS_FOCUS_DISTANCE` — a fixed-focus lens (`CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE
+ * == 0`) has no `LENS_FOCUS_DISTANCE` control surface at all.
  *
  * Deliberately separate from [ManualIsoCapability] — `LENS_INFO_MINIMUM_FOCUS_DISTANCE` is its own
  * per-physical-lens characteristic, independent of `REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR`
- * (which only gates ISO/shutter, see `ManualIsoCapability`'s own doc).
+ * (which only gates ISO/shutter).
  *
  * [maxFocusDistanceDiopters] mirrors Camera2's own `LENS_INFO_MINIMUM_FOCUS_DISTANCE` naming
  * (confusingly, the *nearest* focus distance a lens can reach, expressed in diopters — larger means

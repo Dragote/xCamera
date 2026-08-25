@@ -5,10 +5,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.shared.designsystem.component.control.SteppedToggle
 import com.dragote.xcamera.shared.designsystem.component.control.SteppedToggleOrientation
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
+import com.dragote.xcamera.shared.diagnostics.domain.model.LensSnapshot
 
 /**
  * Wraps [SteppedToggle] with the device's real back lenses. **2026-08-19: swapped from [DialWheel]'s
@@ -18,9 +18,9 @@ import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
  */
 @Composable
 fun LensDial(
-    lenses: List<CameraLens>,
-    selectedLens: CameraLens?,
-    onLensSelected: (CameraLens) -> Unit,
+    lenses: List<LensSnapshot>,
+    selectedLens: LensSnapshot?,
+    onLensSelected: (LensSnapshot) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val labels = lenses.map { it.toLensLabel() }.ifEmpty { listOf("--") }
@@ -36,7 +36,7 @@ fun LensDial(
     )
 }
 
-private fun CameraLens.toLensLabel(): String = when {
+private fun LensSnapshot.toLensLabel(): String = when {
     zoomRatio < 0.9f -> "UW"
     zoomRatio <= 1.1f -> "W"
     else -> "T"
@@ -46,9 +46,42 @@ private fun CameraLens.toLensLabel(): String = when {
 @Composable
 private fun LensDialPreview() {
     val lenses = listOf(
-        CameraLens(logicalCameraId = "0", physicalCameraId = "1", zoomRatio = 0.5f),
-        CameraLens(logicalCameraId = "0", physicalCameraId = "2", zoomRatio = 1f),
-        CameraLens(logicalCameraId = "0", physicalCameraId = "3", zoomRatio = 3f),
+        LensSnapshot(
+            logicalCameraId = "0",
+            physicalCameraId = "1",
+            zoomRatio = 0.5f,
+            focalLengthMm = 2f,
+            equivalentFocalLengthMm = 14f,
+            sensorWidthMm = 5f,
+            sensorHeightMm = 3.8f,
+            pixelArrayWidth = 4000,
+            pixelArrayHeight = 3000,
+            apertureFNumber = 2.2f,
+        ),
+        LensSnapshot(
+            logicalCameraId = "0",
+            physicalCameraId = "2",
+            zoomRatio = 1f,
+            focalLengthMm = 6f,
+            equivalentFocalLengthMm = 24f,
+            sensorWidthMm = 8f,
+            sensorHeightMm = 6f,
+            pixelArrayWidth = 4000,
+            pixelArrayHeight = 3000,
+            apertureFNumber = 1.8f,
+        ),
+        LensSnapshot(
+            logicalCameraId = "0",
+            physicalCameraId = "3",
+            zoomRatio = 3f,
+            focalLengthMm = 6f,
+            equivalentFocalLengthMm = 24f,
+            sensorWidthMm = 8f,
+            sensorHeightMm = 6f,
+            pixelArrayWidth = 4000,
+            pixelArrayHeight = 3000,
+            apertureFNumber = 1.8f,
+        ),
     )
     XCameraTheme {
         LensDial(

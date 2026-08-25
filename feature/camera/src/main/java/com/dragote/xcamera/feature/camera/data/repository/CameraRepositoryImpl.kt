@@ -8,14 +8,9 @@ import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.data.camera.CameraController
 import com.dragote.xcamera.feature.camera.data.LutFileReader
 import com.dragote.xcamera.feature.camera.domain.model.ActiveLut
-import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
-import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.HistogramData
-import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
-import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
-import com.dragote.xcamera.feature.camera.domain.model.RawCaptureCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
 import com.dragote.xcamera.shared.common.domain.model.CubeLut
@@ -24,6 +19,11 @@ import com.dragote.xcamera.shared.common.domain.repository.LutRepository
 import com.dragote.xcamera.shared.common.domain.repository.LutResolutionRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
+import com.dragote.xcamera.shared.diagnostics.domain.model.AeCompensationCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.LensSnapshot
+import com.dragote.xcamera.shared.diagnostics.domain.model.ManualFocusCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.ManualIsoCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.RawCaptureCapability
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -81,7 +81,7 @@ class CameraRepositoryImpl @Inject constructor(
         lifecycleOwner: LifecycleOwner,
         previewViewWidth: Int,
         previewViewHeight: Int,
-        lens: CameraLens?,
+        lens: LensSnapshot?,
     ) = cameraController.bindCamera(lifecycleOwner, previewViewWidth, previewViewHeight, lens)
 
     override fun unbindCamera() = cameraController.unbindCamera()
@@ -89,15 +89,15 @@ class CameraRepositoryImpl @Inject constructor(
     override fun setPreviewFrameListener(handler: Handler?, listener: ((Image) -> Unit)?) =
         cameraController.setPreviewFrameListener(handler, listener)
 
-    override fun previewRotationDegrees(lens: CameraLens?): Int =
+    override fun previewRotationDegrees(lens: LensSnapshot?): Int =
         cameraController.previewRotationDegrees(lens)
 
     override fun setFlashMode(flashMode: FlashMode) = cameraController.setFlashMode(flashMode)
 
-    override fun manualIsoCapability(lens: CameraLens?): ManualIsoCapability? =
+    override fun manualIsoCapability(lens: LensSnapshot?): ManualIsoCapability? =
         cameraController.manualIsoCapability(lens)
 
-    override fun aeCompensationCapability(lens: CameraLens?): AeCompensationCapability? =
+    override fun aeCompensationCapability(lens: LensSnapshot?): AeCompensationCapability? =
         cameraController.aeCompensationCapability(lens)
 
     override fun observeAutoIso(): Flow<Int?> = cameraController.autoIso
@@ -115,10 +115,10 @@ class CameraRepositoryImpl @Inject constructor(
 
     override fun observeHistogramData(): Flow<HistogramData?> = cameraController.histogramData
 
-    override fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability? =
+    override fun manualFocusCapability(lens: LensSnapshot?): ManualFocusCapability? =
         cameraController.manualFocusCapability(lens)
 
-    override fun rawCaptureCapability(lens: CameraLens?): RawCaptureCapability? =
+    override fun rawCaptureCapability(lens: LensSnapshot?): RawCaptureCapability? =
         cameraController.rawCaptureCapability(lens)
 
     override fun triggerAutoFocus(displayXFraction: Float, displayYFraction: Float) =
@@ -196,7 +196,7 @@ class CameraRepositoryImpl @Inject constructor(
         Result.Error(DataError.Local.UNKNOWN)
     }
 
-    override fun listBackLenses(): List<CameraLens> = cameraController.listBackLenses()
+    override fun listBackLenses(): List<LensSnapshot> = cameraController.listBackLenses()
 
     override suspend fun latestGalleryPhotoUri(): Uri? = cameraController.latestGalleryPhotoUri()
 

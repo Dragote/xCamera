@@ -1,9 +1,9 @@
 package com.dragote.xcamera.feature.camera.presentation
 
 import android.net.Uri
-import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
+import com.dragote.xcamera.shared.diagnostics.domain.model.LensSnapshot
 
 data class CameraUiState(
     val permissionStatus: CameraPermissionStatus = CameraPermissionStatus.Unknown,
@@ -11,8 +11,8 @@ data class CameraUiState(
     val lastSavedUri: Uri? = null,
     val captureError: String? = null,
     val flashMode: FlashMode = FlashMode.OFF,
-    val availableLenses: List<CameraLens> = emptyList(),
-    val selectedLens: CameraLens? = null,
+    val availableLenses: List<LensSnapshot> = emptyList(),
+    val selectedLens: LensSnapshot? = null,
     /** The standard ISO ladder filtered down to [selectedLens]'s supported sensitivity range. */
     val isoStops: List<Int> = emptyList(),
     val manualModeEnabled: Boolean = false,

@@ -23,16 +23,18 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.domain.model.ActiveLut
-import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
-import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.HistogramData
-import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
-import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
-import com.dragote.xcamera.feature.camera.domain.model.RawCaptureCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.shared.common.domain.model.CubeLut
+import com.dragote.xcamera.shared.diagnostics.data.LensEnumerator
+import com.dragote.xcamera.shared.diagnostics.data.rawCaptureCapabilityFrom
+import com.dragote.xcamera.shared.diagnostics.domain.model.AeCompensationCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.LensSnapshot
+import com.dragote.xcamera.shared.diagnostics.domain.model.ManualFocusCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.ManualIsoCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.RawCaptureCapability
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -65,8 +67,8 @@ import javax.inject.Singleton
  * [PreviewRequestController] (preview repeating request + manual exposure/focus/AF state machine),
  * [FrameAnalyzer] (zebra/histogram live analysis), [StillCaptureController] (JPEG/RAW capture +
  * MediaStore save), [DeviceOrientationTracker] (physical device rotation for `JPEG_ORIENTATION`),
- * [BackLensEnumerator] (lens discovery/zoom-ratio computation), and the pure capability-query functions
- * in `CameraCapabilities.kt`.
+ * `shared:diagnostics`' [LensEnumerator] (lens discovery/zoom-ratio computation), and its pure
+ * capability-query functions in `CameraCapabilityChecks.kt`.
  *
  * The live preview is *rendered*, not just captured, by this class's own surrounding infrastructure:
  * [setPreviewFrameListener] hands each delivered preview [Image] to a caller-supplied listener/
@@ -106,7 +108,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
 
     private val orientationTracker = DeviceOrientationTracker(context)
     private val frameAnalyzer = FrameAnalyzer()
-    private val backLensEnumerator = BackLensEnumerator(cameraManager)
+    private val lensEnumerator = LensEnumerator(cameraManager)
     private val previewRequestController = PreviewRequestController(
         scope = controllerScope,
         characteristicsFor = ::characteristicsFor,
@@ -169,7 +171,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      */
     private var deviceClosedSignal: CompletableDeferred<Unit>? = null
 
-    private var currentLens: CameraLens? = null
+    private var currentLens: LensSnapshot? = null
     private var boundLifecycle: Lifecycle? = null
 
     private fun ensureBackgroundThread() {
@@ -192,7 +194,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
     }
 
     /**
-     * [lens] is null for the plain default back camera. When non-null, [CameraLens.physicalCameraId]
+     * [lens] is null for the plain default back camera. When non-null, [LensSnapshot.physicalCameraId]
      * (if set) is pinned per output surface via [OutputConfiguration.setPhysicalCameraId] — most
      * multi-lens phones expose their extra lenses as physical sub-cameras of one logical camera
      * rather than as separate top-level camera IDs.
@@ -213,7 +215,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         lifecycleOwner: LifecycleOwner,
         previewViewWidth: Int,
         previewViewHeight: Int,
-        lens: CameraLens? = null,
+        lens: LensSnapshot? = null,
     ) {
         ensureBackgroundThread()
         isBound = true
@@ -390,7 +392,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         previewSurface: Surface,
         stillSurface: Surface,
         rawSurface: Surface?,
-        lens: CameraLens?,
+        lens: LensSnapshot?,
     ): Pair<CameraCaptureSession, Boolean> {
         fun outputConfigFor(surface: Surface) = OutputConfiguration(surface).apply {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -570,7 +572,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         withTimeoutOrNull(ImageReaderCloseTimeoutMs) { closed.await() }
     }
 
-    private fun resolveLogicalCameraId(lens: CameraLens?): String? = lens?.logicalCameraId ?: defaultBackCameraId()
+    private fun resolveLogicalCameraId(lens: LensSnapshot?): String? = lens?.logicalCameraId ?: defaultBackCameraId()
 
     private fun createImageReader(characteristics: CameraCharacteristics): ImageReader {
         val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
@@ -623,7 +625,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      * transform makes the same swap assumption on the consuming side. Internal-only, used solely by
      * [createPreviewImageReader].
      */
-    private fun previewOutputSize(lens: CameraLens?, targetWidth: Int, targetHeight: Int): Size {
+    private fun previewOutputSize(lens: LensSnapshot?, targetWidth: Int, targetHeight: Int): Size {
         if (targetWidth <= 0 || targetHeight <= 0) return FallbackPreviewSize
         val characteristics = characteristicsFor(lens) ?: return FallbackPreviewSize
         val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return FallbackPreviewSize
@@ -665,7 +667,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      * automatic producer-side rotation the way a `TextureView`'s own on-screen `SurfaceTexture` used
      * to). `0` if unavailable — same fallback [FrameAnalyzer] defaults to.
      */
-    fun previewRotationDegrees(lens: CameraLens?): Int =
+    fun previewRotationDegrees(lens: LensSnapshot?): Int =
         characteristicsFor(lens)?.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
 
     fun setFlashMode(flashMode: FlashMode) = stillCaptureController.setFlashMode(flashMode)
@@ -675,17 +677,17 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      * convention. `null` return means "hide/disable manual ISO for this lens" — see
      * [manualIsoCapabilityFrom]'s own doc for the underlying [CameraCharacteristics] gate.
      */
-    fun manualIsoCapability(lens: CameraLens?): ManualIsoCapability? = previewRequestController.manualIsoCapability(lens)
+    fun manualIsoCapability(lens: LensSnapshot?): ManualIsoCapability? = previewRequestController.manualIsoCapability(lens)
 
     /** See [aeCompensationCapabilityFrom]'s own doc. */
-    fun aeCompensationCapability(lens: CameraLens?): AeCompensationCapability? =
+    fun aeCompensationCapability(lens: LensSnapshot?): AeCompensationCapability? =
         previewRequestController.aeCompensationCapability(lens)
 
     /** See [manualFocusCapabilityFrom]'s own doc. */
-    fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability? = previewRequestController.manualFocusCapability(lens)
+    fun manualFocusCapability(lens: LensSnapshot?): ManualFocusCapability? = previewRequestController.manualFocusCapability(lens)
 
     /** See [rawCaptureCapabilityFrom]'s own doc. */
-    fun rawCaptureCapability(lens: CameraLens?): RawCaptureCapability? =
+    fun rawCaptureCapability(lens: LensSnapshot?): RawCaptureCapability? =
         characteristicsFor(lens)?.let(::rawCaptureCapabilityFrom)
 
     /** See [PreviewRequestController.triggerAutoFocus]'s own doc — [device]/[session]/[surface] are
@@ -730,11 +732,11 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
 
     /**
      * Shared by [manualIsoCapability], still-capture orientation/exposure resolution, and preview/
-     * still surface sizing — physical-lens characteristics (when [CameraLens.physicalCameraId] is
+     * still surface sizing — physical-lens characteristics (when [LensSnapshot.physicalCameraId] is
      * set) instead of the logical camera's own, per the same per-physical-lens reasoning
      * [manualIsoCapability] documents.
      */
-    private fun characteristicsFor(lens: CameraLens?): CameraCharacteristics? {
+    private fun characteristicsFor(lens: LensSnapshot?): CameraCharacteristics? {
         val physicalCameraId = lens?.physicalCameraId
         return try {
             if (physicalCameraId != null) {
@@ -776,8 +778,8 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
         )
     }
 
-    /** See [BackLensEnumerator.listBackLenses]'s own doc. */
-    fun listBackLenses(): List<CameraLens> = backLensEnumerator.listBackLenses()
+    /** See [LensEnumerator.listBackLenses]'s own doc. */
+    fun listBackLenses(): List<LensSnapshot> = lensEnumerator.listBackLenses().map { it.snapshot }
 
     /** Call when the composable hosting this controller leaves composition. */
     fun stopOrientationListener() = orientationTracker.stopListening()

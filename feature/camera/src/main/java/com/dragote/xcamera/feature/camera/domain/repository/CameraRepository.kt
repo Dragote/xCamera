@@ -5,17 +5,17 @@ import android.net.Uri
 import android.os.Handler
 import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.domain.model.ActiveLut
-import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
-import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.HistogramData
-import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
-import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
-import com.dragote.xcamera.feature.camera.domain.model.RawCaptureCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
+import com.dragote.xcamera.shared.diagnostics.domain.model.AeCompensationCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.LensSnapshot
+import com.dragote.xcamera.shared.diagnostics.domain.model.ManualFocusCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.ManualIsoCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.RawCaptureCapability
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -50,7 +50,7 @@ interface CameraRepository {
         lifecycleOwner: LifecycleOwner,
         previewViewWidth: Int,
         previewViewHeight: Int,
-        lens: CameraLens? = null,
+        lens: LensSnapshot? = null,
     )
 
     /** Call once whatever [bindCamera] was backing is no longer valid (e.g. the hosting view is
@@ -72,13 +72,13 @@ interface CameraRepository {
      * itself, since (unlike a `TextureView`'s own on-screen `SurfaceTexture`) an `ImageReader` surface
      * gets no automatic producer-side rotation. `0` if unavailable.
      */
-    fun previewRotationDegrees(lens: CameraLens?): Int
+    fun previewRotationDegrees(lens: LensSnapshot?): Int
 
     fun setFlashMode(flashMode: FlashMode)
 
-    fun manualIsoCapability(lens: CameraLens?): ManualIsoCapability?
+    fun manualIsoCapability(lens: LensSnapshot?): ManualIsoCapability?
 
-    fun aeCompensationCapability(lens: CameraLens?): AeCompensationCapability?
+    fun aeCompensationCapability(lens: LensSnapshot?): AeCompensationCapability?
 
     /**
      * Continuously reflects auto-exposure's live ISO (via a session-wide Camera2 capture callback)
@@ -123,7 +123,7 @@ interface CameraRepository {
      */
     fun observeHistogramData(): Flow<HistogramData?>
 
-    fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability?
+    fun manualFocusCapability(lens: LensSnapshot?): ManualFocusCapability?
 
     /**
      * `null` means "never offer a with-RAW capture choice for this lens" — see
@@ -133,7 +133,7 @@ interface CameraRepository {
      * session it needs is independently verified once a camera is bound, with a silent JPEG-only
      * fallback if that isn't actually configurable on this hardware.
      */
-    fun rawCaptureCapability(lens: CameraLens?): RawCaptureCapability?
+    fun rawCaptureCapability(lens: LensSnapshot?): RawCaptureCapability?
 
     /** Tap-to-focus — see `CameraController.triggerAutoFocus`'s own doc. */
     fun triggerAutoFocus(displayXFraction: Float, displayYFraction: Float)
@@ -182,7 +182,7 @@ interface CameraRepository {
      */
     suspend fun takePhoto(includeRaw: Boolean = false): Result<Uri, DataError.Local>
 
-    fun listBackLenses(): List<CameraLens>
+    fun listBackLenses(): List<LensSnapshot>
 
     suspend fun latestGalleryPhotoUri(): Uri?
 

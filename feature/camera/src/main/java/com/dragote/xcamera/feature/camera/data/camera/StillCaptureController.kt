@@ -22,9 +22,9 @@ import android.view.Surface
 import androidx.exifinterface.media.ExifInterface
 import com.dragote.xcamera.feature.camera.data.gl.LutJpegProcessor
 import com.dragote.xcamera.feature.camera.domain.model.ActiveLut
-import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.shared.common.domain.model.CubeLut
+import com.dragote.xcamera.shared.diagnostics.domain.model.LensSnapshot
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -245,7 +245,7 @@ class StillCaptureController(
         reader: ImageReader,
         rawReader: ImageReader?,
         characteristics: CameraCharacteristics,
-        lens: CameraLens?,
+        lens: LensSnapshot?,
         includeRaw: Boolean,
         handler: Handler?,
     ): Uri {
@@ -296,7 +296,7 @@ class StillCaptureController(
         session: CameraCaptureSession,
         reader: ImageReader,
         characteristics: CameraCharacteristics,
-        lens: CameraLens?,
+        lens: LensSnapshot?,
         rawReader: ImageReader?,
         handler: Handler?,
     ): CapturedStill {

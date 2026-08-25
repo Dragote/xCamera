@@ -25,6 +25,7 @@ dependencies {
     implementation(project(":shared:designsystem"))
     implementation(project(":feature:camera"))
     implementation(project(":feature:settings"))
+    implementation(project(":feature:diagnostics"))
     implementation(libs.composeDestinations.core)
 
     implementation(libs.androidx.core.ktx)

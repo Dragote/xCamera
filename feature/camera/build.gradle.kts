@@ -10,6 +10,7 @@ dependencies {
     implementation(project(":shared:common"))
     implementation(project(":shared:designsystem"))
     implementation(project(":shared:navigation"))
+    implementation(project(":shared:diagnostics"))
     implementation(libs.androidx.exifinterface)
     implementation(libs.androidx.material.icons.extended)
 
