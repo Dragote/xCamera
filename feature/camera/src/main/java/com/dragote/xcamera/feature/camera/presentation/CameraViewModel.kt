@@ -3,15 +3,10 @@ package com.dragote.xcamera.feature.camera.presentation
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
-import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.HistogramData
-import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
-import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
-import com.dragote.xcamera.feature.camera.domain.model.RawCaptureCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.model.aeCompensationSteps
 import com.dragote.xcamera.feature.camera.domain.model.isoStopsInRange
@@ -26,6 +21,11 @@ import com.dragote.xcamera.shared.common.domain.repository.LutRepository
 import com.dragote.xcamera.shared.common.domain.repository.LutResolutionRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
+import com.dragote.xcamera.shared.diagnostics.domain.model.AeCompensationCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.LensSnapshot
+import com.dragote.xcamera.shared.diagnostics.domain.model.ManualFocusCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.ManualIsoCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.RawCaptureCapability
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -193,10 +193,10 @@ class CameraViewModel @Inject constructor(
 
     fun setFlashMode(flashMode: FlashMode) = cameraRepository.setFlashMode(flashMode)
 
-    fun manualIsoCapability(lens: CameraLens?): ManualIsoCapability? =
+    fun manualIsoCapability(lens: LensSnapshot?): ManualIsoCapability? =
         cameraRepository.manualIsoCapability(lens)
 
-    fun aeCompensationCapability(lens: CameraLens?): AeCompensationCapability? =
+    fun aeCompensationCapability(lens: LensSnapshot?): AeCompensationCapability? =
         cameraRepository.aeCompensationCapability(lens)
 
     fun setManualExposure(iso: Int?, shutterTimeNs: Long?) = cameraRepository.setManualExposure(iso, shutterTimeNs)
@@ -205,10 +205,10 @@ class CameraViewModel @Inject constructor(
 
     fun setZebraAnalysisEnabled(enabled: Boolean) = cameraRepository.setZebraAnalysisEnabled(enabled)
 
-    fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability? =
+    fun manualFocusCapability(lens: LensSnapshot?): ManualFocusCapability? =
         cameraRepository.manualFocusCapability(lens)
 
-    fun rawCaptureCapability(lens: CameraLens?): RawCaptureCapability? =
+    fun rawCaptureCapability(lens: LensSnapshot?): RawCaptureCapability? =
         cameraRepository.rawCaptureCapability(lens)
 
     fun triggerAutoFocus(displayXFraction: Float, displayYFraction: Float) =
@@ -237,7 +237,7 @@ class CameraViewModel @Inject constructor(
     suspend fun takePhoto(includeRaw: Boolean = false): Result<Uri, DataError.Local> =
         cameraRepository.takePhoto(includeRaw)
 
-    fun listBackLenses(): List<CameraLens> = cameraRepository.listBackLenses()
+    fun listBackLenses(): List<LensSnapshot> = cameraRepository.listBackLenses()
 
     suspend fun latestGalleryPhotoUri(): Uri? = cameraRepository.latestGalleryPhotoUri()
 
@@ -265,17 +265,17 @@ class CameraViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(flashMode = _uiState.value.flashMode.toggled())
     }
 
-    fun onLensesLoaded(lenses: List<CameraLens>) {
+    fun onLensesLoaded(lenses: List<LensSnapshot>) {
         val defaultLens = lenses.minByOrNull { abs(it.zoomRatio - 1f) }
         _uiState.value = _uiState.value.copy(availableLenses = lenses, selectedLens = defaultLens)
     }
 
-    fun onLensSelected(lens: CameraLens) {
+    fun onLensSelected(lens: LensSnapshot) {
         _uiState.value = _uiState.value.copy(selectedLens = lens)
     }
 
     /**
-     * Called whenever [CameraLens.physicalCameraId]/[CameraLens.logicalCameraId] capability is
+     * Called whenever [LensSnapshot.physicalCameraId]/[LensSnapshot.logicalCameraId] capability is
      * (re-)queried for [CameraUiState.selectedLens] — most notably right after a lens switch, since
      * `MANUAL_SENSOR`/`SENSOR_INFO_SENSITIVITY_RANGE`/`SENSOR_INFO_EXPOSURE_TIME_RANGE` are
      * per-physical-lens, not per-device (an ultra-wide can lack them even when the main lens has
@@ -304,7 +304,7 @@ class CameraViewModel @Inject constructor(
     }
 
     /**
-     * Called whenever [CameraLens.physicalCameraId]/[CameraLens.logicalCameraId] AE-compensation
+     * Called whenever [LensSnapshot.physicalCameraId]/[LensSnapshot.logicalCameraId] AE-compensation
      * capability is (re-)queried for [CameraUiState.selectedLens] — mirrors
      * [onManualIsoCapabilityChanged]'s own per-lens-characteristics reasoning
      * (`CONTROL_AE_COMPENSATION_RANGE`/`CONTROL_AE_COMPENSATION_STEP` are per-physical-lens too).
@@ -322,7 +322,7 @@ class CameraViewModel @Inject constructor(
     }
 
     /**
-     * Called whenever [CameraLens.physicalCameraId]/[CameraLens.logicalCameraId]'s manual-focus
+     * Called whenever [LensSnapshot.physicalCameraId]/[LensSnapshot.logicalCameraId]'s manual-focus
      * capability is (re-)queried for [CameraUiState.selectedLens] — most notably right after a lens
      * switch, mirroring [onManualIsoCapabilityChanged]'s own per-physical-lens reasoning
      * (`LENS_INFO_MINIMUM_FOCUS_DISTANCE` can differ, or be `0` for a fixed-focus lens, even when the
@@ -336,7 +336,7 @@ class CameraViewModel @Inject constructor(
     }
 
     /**
-     * Called whenever [CameraLens.physicalCameraId]/[CameraLens.logicalCameraId]'s RAW capability is
+     * Called whenever [LensSnapshot.physicalCameraId]/[LensSnapshot.logicalCameraId]'s RAW capability is
      * (re-)queried for [CameraUiState.selectedLens], mirroring
      * [onManualFocusCapabilityChanged]'s own per-physical-lens re-evaluation-on-lens-switch pattern.
      * This is purely a live hardware-support signal now — `CameraSettings.captureRawByDefault` (set on

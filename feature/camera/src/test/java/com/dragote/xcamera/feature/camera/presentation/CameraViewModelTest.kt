@@ -2,15 +2,10 @@ package com.dragote.xcamera.feature.camera.presentation
 
 import android.net.Uri
 import app.cash.turbine.test
-import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
-import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.CameraPermissionStatus
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
 import com.dragote.xcamera.feature.camera.domain.model.HistogramData
-import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
-import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
-import com.dragote.xcamera.feature.camera.domain.model.RawCaptureCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraClipping
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.feature.camera.domain.repository.CameraRepository
@@ -21,6 +16,11 @@ import com.dragote.xcamera.shared.common.domain.repository.LutRepository
 import com.dragote.xcamera.shared.common.domain.repository.LutResolutionRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
 import com.dragote.xcamera.shared.common.domain.result.Result
+import com.dragote.xcamera.shared.diagnostics.domain.model.AeCompensationCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.LensSnapshot
+import com.dragote.xcamera.shared.diagnostics.domain.model.ManualFocusCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.ManualIsoCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.RawCaptureCapability
 import com.dragote.xcamera.shared.testing.MainDispatcherRule
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -55,6 +55,19 @@ class CameraViewModelTest {
     private lateinit var resolvingLutIdFlow: MutableStateFlow<String?>
     private lateinit var lutsFlow: MutableStateFlow<List<LutPreset>>
     private lateinit var viewModel: CameraViewModel
+
+    private fun testLens(physicalCameraId: String?, zoomRatio: Float, logicalCameraId: String = "0") = LensSnapshot(
+        logicalCameraId = logicalCameraId,
+        physicalCameraId = physicalCameraId,
+        zoomRatio = zoomRatio,
+        focalLengthMm = 6f,
+        equivalentFocalLengthMm = 24f,
+        sensorWidthMm = 8f,
+        sensorHeightMm = 6f,
+        pixelArrayWidth = 4000,
+        pixelArrayHeight = 3000,
+        apertureFNumber = 1.8f,
+    )
 
     @Before
     fun setUp() {
@@ -141,9 +154,9 @@ class CameraViewModelTest {
 
     @Test
     fun `onLensesLoaded picks the lens closest to 1x as the default selection`() = runTest {
-        val ultraWide = CameraLens(logicalCameraId = "0", physicalCameraId = "2", zoomRatio = 0.5f)
-        val main = CameraLens(logicalCameraId = "0", physicalCameraId = "0", zoomRatio = 1f)
-        val tele = CameraLens(logicalCameraId = "0", physicalCameraId = "3", zoomRatio = 2.9f)
+        val ultraWide = testLens(physicalCameraId = "2", zoomRatio = 0.5f)
+        val main = testLens(physicalCameraId = "0", zoomRatio = 1f)
+        val tele = testLens(physicalCameraId = "3", zoomRatio = 2.9f)
 
         viewModel.uiState.test {
             awaitItem() // initial
@@ -157,8 +170,8 @@ class CameraViewModelTest {
 
     @Test
     fun `onLensSelected updates the selected lens`() = runTest {
-        val ultraWide = CameraLens(logicalCameraId = "0", physicalCameraId = "2", zoomRatio = 0.5f)
-        val tele = CameraLens(logicalCameraId = "0", physicalCameraId = "3", zoomRatio = 2.9f)
+        val ultraWide = testLens(physicalCameraId = "2", zoomRatio = 0.5f)
+        val tele = testLens(physicalCameraId = "3", zoomRatio = 2.9f)
 
         viewModel.uiState.test {
             awaitItem() // initial
@@ -455,7 +468,7 @@ class CameraViewModelTest {
 
     @Test
     fun `manualIsoCapability delegates to the repository and returns its result`() {
-        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val lens = testLens(physicalCameraId = null, zoomRatio = 1f)
         val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
         every { cameraRepository.manualIsoCapability(lens) } returns capability
 
@@ -474,7 +487,7 @@ class CameraViewModelTest {
 
     @Test
     fun `listBackLenses delegates to the repository`() {
-        val lenses = listOf(CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f))
+        val lenses = listOf(testLens(physicalCameraId = null, zoomRatio = 1f))
         every { cameraRepository.listBackLenses() } returns lenses
 
         assertEquals(lenses, viewModel.listBackLenses())
@@ -746,7 +759,7 @@ class CameraViewModelTest {
 
     @Test
     fun `aeCompensationCapability delegates to the repository and returns its result`() {
-        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val lens = testLens(physicalCameraId = null, zoomRatio = 1f)
         val capability = AeCompensationCapability(range = -6..6, stepEv = 1f / 3f)
         every { cameraRepository.aeCompensationCapability(lens) } returns capability
 
@@ -880,7 +893,7 @@ class CameraViewModelTest {
 
     @Test
     fun `manualFocusCapability delegates to the repository and returns its result`() {
-        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val lens = testLens(physicalCameraId = null, zoomRatio = 1f)
         val capability = ManualFocusCapability(maxFocusDistanceDiopters = 10f)
         every { cameraRepository.manualFocusCapability(lens) } returns capability
 
@@ -971,7 +984,7 @@ class CameraViewModelTest {
 
     @Test
     fun `rawCaptureCapability delegates to the repository and returns its result`() {
-        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val lens = testLens(physicalCameraId = null, zoomRatio = 1f)
         val capability = RawCaptureCapability(sensorWidth = 4032, sensorHeight = 3024)
         every { cameraRepository.rawCaptureCapability(lens) } returns capability
 

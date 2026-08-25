@@ -27,10 +27,12 @@
             <option value="$PROJECT_DIR$/build-logic/convention" />
             <option value="$PROJECT_DIR$/feature" />
             <option value="$PROJECT_DIR$/feature/camera" />
+            <option value="$PROJECT_DIR$/feature/diagnostics" />
             <option value="$PROJECT_DIR$/feature/settings" />
             <option value="$PROJECT_DIR$/shared" />
             <option value="$PROJECT_DIR$/shared/common" />
             <option value="$PROJECT_DIR$/shared/designsystem" />
+            <option value="$PROJECT_DIR$/shared/diagnostics" />
             <option value="$PROJECT_DIR$/shared/navigation" />
             <option value="$PROJECT_DIR$/shared/testing" />
           </set>

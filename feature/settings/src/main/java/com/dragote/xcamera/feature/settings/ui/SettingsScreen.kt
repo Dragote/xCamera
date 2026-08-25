@@ -34,6 +34,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -75,14 +76,18 @@ import com.dragote.xcamera.shared.designsystem.component.control.Toggle
 import com.dragote.xcamera.shared.designsystem.component.state.LoadingIndicator
 import com.dragote.xcamera.shared.designsystem.theme.MinimalChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
+import com.dragote.xcamera.shared.navigation.DiagnosticsRoutes
 import com.dragote.xcamera.shared.navigation.SettingsRoutes
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import com.ramcosta.composedestinations.spec.Direction
 
 /**
  * Reached from `feature:camera`'s toolbar settings button via the plain route constant
  * [SettingsRoutes.SETTINGS_SCREEN] — feature modules never depend on each other directly, so
- * `feature:camera` navigates by route rather than by a generated `SettingsScreenDestination`.
+ * `feature:camera` navigates by route rather than by a generated `SettingsScreenDestination`. This
+ * screen in turn reaches `feature:diagnostics` the same way, via its own toolbar info button and
+ * [DiagnosticsRoutes.DIAGNOSTICS_SCREEN].
  */
 @Destination(route = SettingsRoutes.SETTINGS_SCREEN)
 @OptIn(ExperimentalMaterial3Api::class)
@@ -123,6 +128,15 @@ fun SettingsScreen(
                             Icon(
                                 Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = "Back",
+                                tint = MinimalChrome.Ink,
+                            )
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { navigator.navigate(Direction(DiagnosticsRoutes.DIAGNOSTICS_SCREEN)) }) {
+                            Icon(
+                                Icons.Filled.Info,
+                                contentDescription = "Camera diagnostics",
                                 tint = MinimalChrome.Ink,
                             )
                         }

@@ -1,0 +1,19 @@
+# Camera diagnostics
+
+**Purpose:** Lets a user see what each of the device's physical back camera lenses actually supports (RAW/DNG, manual ISO & shutter, manual focus) and their raw hardware specs, without digging through logcat. Reached from Settings via an info-icon `TopAppBar` action.
+
+**Current state:**
+- `feature:diagnostics` (`presentation/`+`ui/` only) shows one swipeable `HorizontalPager` card per back lens: a hand-drawn `MinimalChrome` lens glyph engraved with the zoom-ratio label (e.g. "3×") and category caption (ULTRA-WIDE/MAIN/TELEPHOTO), hero stats (aperture, resolution MP), secondary stats (sensor size mm, raw focal length mm with 35mm-equivalent as a caption underneath), and a RAW/manual-ISO/manual-focus SUPPORTED-vs-UNSUPPORTED pill row (a "supported under what condition" caption, e.g. "ISO 50–3200", renders below the pill, decoupled from the pill's own size).
+- Requests `Manifest.permission.CAMERA` at runtime (needed to read per-physical-lens characteristics of a `LOGICAL_MULTI_CAMERA`'s sub-cameras); shows a retry-able error state if denied.
+- Static hardware-characteristics introspection only — reads `CameraCharacteristics`, never opens the camera or performs a live capture. Flash capability is not in the support matrix.
+- All domain/data logic lives in `shared:diagnostics` (`data/`, `domain/`, `di/`), not `feature:diagnostics` itself: `LensEnumerator` discovers back lenses (walking `LOGICAL_MULTI_CAMERA` physical sub-cameras, de-duplicating a physical ID listed both as its own top-level camera ID and inside its logical parent, collapsing Pixel's synthetic 2x-crop virtual IDs back into the real lens they duplicate), `CameraCapabilityChecks.kt` has the pure `CameraCharacteristics -> capability?` lookups (RAW, manual ISO/shutter, manual focus, AE compensation), `GetLensDiagnosticsUseCase`/`DiagnosticsRepository(Impl)` produce the full per-lens report.
+- `feature:camera` (the capture pipeline) is migrated onto `shared:diagnostics`'s `LensSnapshot`/capability types and `LensEnumerator`/`CameraCapabilityChecks` — its own previously-separate `BackLensEnumerator`/`CameraCapabilities.kt`/`CameraLens`/capability model classes are gone. `shared:diagnostics` is now the sole place in the app that reads `CameraCharacteristics` for lens identity/capability purposes.
+
+**Key decisions:**
+- `shared:diagnostics` was delivered before the migration, as an intentionally isolated port duplicating `feature:camera`'s lens-discovery/capability logic — kept the flagship capture feature untouched while the diagnostics screen shipped, then `feature:camera` was migrated onto it as a deliberate follow-up (pure type/import relocation, no capture-pipeline behavior change) to eliminate the resulting duplication.
+- 35mm-equivalent focal length is shown alongside the raw physical focal length (a few mm on a phone) because the raw number alone isn't comparable across sensor sizes and isn't what a user familiar with "real" cameras recognizes.
+- Static characteristics only, no live capability verification — a lens can declare a capability in `CameraCharacteristics` that doesn't actually work on real hardware (a real, previously-seen failure mode on some devices); this screen can't catch that, by design, to stay fast/safe/permission-light.
+- `feature:diagnostics` has no `domain`/`data`/`di` packages of its own — everything below `presentation`/`ui` lives in `shared:diagnostics`, reused by any future feature that needs lens capability data via Hilt's aggregated graph with no extra per-feature DI wiring.
+
+**Open questions:**
+- Live/functional capability verification (actually attempting a capture to confirm a declared capability works, to catch a device where a lens declares support but it doesn't work in practice) is unscoped — deliberately deferred to keep this screen fast/safe/permission-light.

@@ -1,17 +1,24 @@
-package com.dragote.xcamera.feature.camera.data.camera
+package com.dragote.xcamera.shared.diagnostics.data
 
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.os.Build
-import com.dragote.xcamera.feature.camera.domain.model.CameraLens
+import com.dragote.xcamera.shared.diagnostics.domain.model.LensSnapshot
 import kotlin.math.sqrt
 
+/** One physical back lens, paired with the [CameraCharacteristics] it was resolved from. */
+data class LensCandidate(
+    val snapshot: LensSnapshot,
+    val characteristics: CameraCharacteristics,
+)
+
 /**
- * Enumerates the device's back-facing lenses (main/ultra-wide/tele) as [CameraLens]es with a computed
- * zoom ratio — split out of [CameraController] since, unlike everything else in that class, this is a
- * pure [CameraManager] characteristics walk with no dependency on whether a camera is actually open.
+ * Enumerates the device's back-facing lenses (main/ultra-wide/tele) as [LensCandidate]s with a
+ * computed zoom ratio and their raw sensor/aperture characteristics — a diagnostics-focused port of
+ * `feature:camera`'s `BackLensEnumerator`, richer in what it surfaces per lens (sensor size, pixel
+ * array, aperture) but identical in its lens-discovery algorithm.
  */
-class BackLensEnumerator(private val cameraManager: CameraManager) {
+class LensEnumerator(private val cameraManager: CameraManager) {
 
     /**
      * Most multi-lens phones fuse ultra-wide/main/tele into one LOGICAL_MULTI_CAMERA logical
@@ -35,15 +42,18 @@ class BackLensEnumerator(private val cameraManager: CameraManager) {
      * of glass. Grouping candidates by (focal length, pixel array size) and keeping only the
      * largest-sensor-area entry per group below collapses those back into their real lens.
      */
-    fun listBackLenses(): List<CameraLens> {
+    fun listBackLenses(): List<LensCandidate> {
         val allCameraIds = cameraManager.cameraIdList.toSet()
 
         data class Candidate(
             val logicalCameraId: String,
             val physicalCameraId: String?,
+            val characteristics: CameraCharacteristics,
             val focalLength: Float,
             val pixelArraySize: android.util.Size,
+            val sensorSize: android.util.SizeF,
             val sensorAreaMm2: Float,
+            val apertureFNumber: Float?,
             val equivFocalLength: Float,
         )
 
@@ -59,12 +69,16 @@ class BackLensEnumerator(private val cameraManager: CameraManager) {
             val pixelArraySize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE) ?: return null
             val sensorSize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE) ?: return null
             val equivFocalLength = equivalentFocalLength(focalLength, sensorSize) ?: return null
+            val apertureFNumber = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)?.firstOrNull()
             return Candidate(
                 logicalCameraId,
                 physicalCameraId,
+                characteristics,
                 focalLength,
                 pixelArraySize,
+                sensorSize,
                 sensorAreaMm2 = sensorSize.width * sensorSize.height,
+                apertureFNumber,
                 equivFocalLength,
             )
         }
@@ -113,8 +127,24 @@ class BackLensEnumerator(private val cameraManager: CameraManager) {
         val mainEquivFocalLength = realLenses.map { it.equivFocalLength }.sorted().let { it[(it.size - 1) / 2] }
 
         return realLenses
-            .map { CameraLens(it.logicalCameraId, it.physicalCameraId, zoomRatio = it.equivFocalLength / mainEquivFocalLength) }
-            .sortedBy { it.zoomRatio }
+            .map {
+                LensCandidate(
+                    snapshot = LensSnapshot(
+                        logicalCameraId = it.logicalCameraId,
+                        physicalCameraId = it.physicalCameraId,
+                        zoomRatio = it.equivFocalLength / mainEquivFocalLength,
+                        focalLengthMm = it.focalLength,
+                        equivalentFocalLengthMm = it.equivFocalLength,
+                        sensorWidthMm = it.sensorSize.width,
+                        sensorHeightMm = it.sensorSize.height,
+                        pixelArrayWidth = it.pixelArraySize.width,
+                        pixelArrayHeight = it.pixelArraySize.height,
+                        apertureFNumber = it.apertureFNumber,
+                    ),
+                    characteristics = it.characteristics,
+                )
+            }
+            .sortedBy { it.snapshot.zoomRatio }
     }
 
     /**

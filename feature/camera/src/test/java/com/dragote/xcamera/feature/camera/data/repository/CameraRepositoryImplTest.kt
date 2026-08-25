@@ -8,13 +8,8 @@ import androidx.lifecycle.LifecycleOwner
 import com.dragote.xcamera.feature.camera.data.camera.CameraController
 import com.dragote.xcamera.feature.camera.data.LutFileReader
 import com.dragote.xcamera.feature.camera.domain.model.ActiveLut
-import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
-import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FlashMode
-import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
-import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
-import com.dragote.xcamera.feature.camera.domain.model.RawCaptureCapability
 import com.dragote.xcamera.feature.camera.domain.model.ZebraMask
 import com.dragote.xcamera.shared.common.domain.repository.LutRepository
 import com.dragote.xcamera.shared.common.domain.result.DataError
@@ -22,6 +17,11 @@ import com.dragote.xcamera.shared.common.domain.result.Result
 import com.dragote.xcamera.shared.common.domain.model.CubeLut
 import com.dragote.xcamera.shared.common.domain.model.LutPreset
 import com.dragote.xcamera.shared.common.domain.model.toBinary
+import com.dragote.xcamera.shared.diagnostics.domain.model.AeCompensationCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.LensSnapshot
+import com.dragote.xcamera.shared.diagnostics.domain.model.ManualFocusCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.ManualIsoCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.RawCaptureCapability
 import app.cash.turbine.test
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -45,10 +45,23 @@ class CameraRepositoryImplTest {
     private val lutFileReader = mockk<LutFileReader>()
     private val repository = CameraRepositoryImpl(cameraController, lutRepository, lutFileReader)
 
+    private fun testLens(physicalCameraId: String?, zoomRatio: Float, logicalCameraId: String = "0") = LensSnapshot(
+        logicalCameraId = logicalCameraId,
+        physicalCameraId = physicalCameraId,
+        zoomRatio = zoomRatio,
+        focalLengthMm = 6f,
+        equivalentFocalLengthMm = 24f,
+        sensorWidthMm = 8f,
+        sensorHeightMm = 6f,
+        pixelArrayWidth = 4000,
+        pixelArrayHeight = 3000,
+        apertureFNumber = 1.8f,
+    )
+
     @Test
     fun `bindCamera delegates to the controller`() = runTest {
         val lifecycleOwner = mockk<LifecycleOwner>()
-        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val lens = testLens(physicalCameraId = null, zoomRatio = 1f)
         coEvery { cameraController.bindCamera(lifecycleOwner, 1080, 2400, lens) } returns Unit
 
         repository.bindCamera(lifecycleOwner, 1080, 2400, lens)
@@ -78,7 +91,7 @@ class CameraRepositoryImplTest {
 
     @Test
     fun `previewRotationDegrees delegates to the controller and returns its result`() {
-        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val lens = testLens(physicalCameraId = null, zoomRatio = 1f)
         every { cameraController.previewRotationDegrees(lens) } returns 90
 
         assertEquals(90, repository.previewRotationDegrees(lens))
@@ -95,7 +108,7 @@ class CameraRepositoryImplTest {
 
     @Test
     fun `manualIsoCapability delegates to the controller and returns its result`() {
-        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val lens = testLens(physicalCameraId = null, zoomRatio = 1f)
         val capability = ManualIsoCapability(isoRange = 100..3200, exposureTimeRange = 1_000L..500_000_000L)
         every { cameraController.manualIsoCapability(lens) } returns capability
 
@@ -104,7 +117,7 @@ class CameraRepositoryImplTest {
 
     @Test
     fun `aeCompensationCapability delegates to the controller and returns its result`() {
-        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val lens = testLens(physicalCameraId = null, zoomRatio = 1f)
         val capability = AeCompensationCapability(range = -6..6, stepEv = 1f / 3f)
         every { cameraController.aeCompensationCapability(lens) } returns capability
 
@@ -164,7 +177,7 @@ class CameraRepositoryImplTest {
 
     @Test
     fun `listBackLenses delegates to the controller`() {
-        val lenses = listOf(CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f))
+        val lenses = listOf(testLens(physicalCameraId = null, zoomRatio = 1f))
         every { cameraController.listBackLenses() } returns lenses
 
         assertEquals(lenses, repository.listBackLenses())
@@ -217,7 +230,7 @@ class CameraRepositoryImplTest {
 
     @Test
     fun `manualFocusCapability delegates to the controller and returns its result`() {
-        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val lens = testLens(physicalCameraId = null, zoomRatio = 1f)
         val capability = ManualFocusCapability(maxFocusDistanceDiopters = 10f)
         every { cameraController.manualFocusCapability(lens) } returns capability
 
@@ -226,7 +239,7 @@ class CameraRepositoryImplTest {
 
     @Test
     fun `rawCaptureCapability delegates to the controller and returns its result`() {
-        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = null, zoomRatio = 1f)
+        val lens = testLens(physicalCameraId = null, zoomRatio = 1f)
         val capability = RawCaptureCapability(sensorWidth = 4032, sensorHeight = 3024)
         every { cameraController.rawCaptureCapability(lens) } returns capability
 
@@ -235,7 +248,7 @@ class CameraRepositoryImplTest {
 
     @Test
     fun `rawCaptureCapability delegates to the controller and returns null for an unsupported lens`() {
-        val lens = CameraLens(logicalCameraId = "0", physicalCameraId = "1", zoomRatio = 0.5f)
+        val lens = testLens(physicalCameraId = "1", zoomRatio = 0.5f)
         every { cameraController.rawCaptureCapability(lens) } returns null
 
         assertNull(repository.rawCaptureCapability(lens))

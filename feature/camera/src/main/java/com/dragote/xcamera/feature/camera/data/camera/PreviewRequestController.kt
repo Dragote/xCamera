@@ -11,13 +11,16 @@ import android.hardware.camera2.TotalCaptureResult
 import android.hardware.camera2.params.MeteringRectangle
 import android.os.Handler
 import android.view.Surface
-import com.dragote.xcamera.feature.camera.domain.model.AeCompensationCapability
 import com.dragote.xcamera.feature.camera.domain.model.AfConvergenceState
-import com.dragote.xcamera.feature.camera.domain.model.CameraLens
 import com.dragote.xcamera.feature.camera.domain.model.FocusRegionSizeFraction
-import com.dragote.xcamera.feature.camera.domain.model.ManualFocusCapability
-import com.dragote.xcamera.feature.camera.domain.model.ManualIsoCapability
 import com.dragote.xcamera.feature.camera.domain.model.displayFractionToSensorFraction
+import com.dragote.xcamera.shared.diagnostics.data.aeCompensationCapabilityFrom
+import com.dragote.xcamera.shared.diagnostics.data.manualFocusCapabilityFrom
+import com.dragote.xcamera.shared.diagnostics.data.manualIsoCapabilityFrom
+import com.dragote.xcamera.shared.diagnostics.domain.model.AeCompensationCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.LensSnapshot
+import com.dragote.xcamera.shared.diagnostics.domain.model.ManualFocusCapability
+import com.dragote.xcamera.shared.diagnostics.domain.model.ManualIsoCapability
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,7 +48,7 @@ import kotlin.math.roundToInt
  */
 class PreviewRequestController(
     private val scope: CoroutineScope,
-    private val characteristicsFor: (CameraLens?) -> CameraCharacteristics?,
+    private val characteristicsFor: (LensSnapshot?) -> CameraCharacteristics?,
     private val onRepeatingRequestNeedsRefresh: () -> Unit,
 ) {
 
@@ -211,15 +214,15 @@ class PreviewRequestController(
 
     /** `null` for [lens] queries the plain default back camera. Pure static [CameraCharacteristics]
      *  lookup, independent of whether a camera is bound yet — see [manualIsoCapabilityFrom]'s own doc. */
-    fun manualIsoCapability(lens: CameraLens?): ManualIsoCapability? =
+    fun manualIsoCapability(lens: LensSnapshot?): ManualIsoCapability? =
         characteristicsFor(lens)?.let(::manualIsoCapabilityFrom)
 
     /** See [aeCompensationCapabilityFrom]'s own doc. */
-    fun aeCompensationCapability(lens: CameraLens?): AeCompensationCapability? =
+    fun aeCompensationCapability(lens: LensSnapshot?): AeCompensationCapability? =
         characteristicsFor(lens)?.let(::aeCompensationCapabilityFrom)
 
     /** See [manualFocusCapabilityFrom]'s own doc. */
-    fun manualFocusCapability(lens: CameraLens?): ManualFocusCapability? =
+    fun manualFocusCapability(lens: LensSnapshot?): ManualFocusCapability? =
         characteristicsFor(lens)?.let(::manualFocusCapabilityFrom)
 
     /**
@@ -254,7 +257,7 @@ class PreviewRequestController(
      * changes — `session.setRepeatingRequest` is cheap to call repeatedly and doesn't require
      * reconfiguring the session itself.
      */
-    fun startPreviewRepeating(device: CameraDevice, session: CameraCaptureSession, surface: Surface, lens: CameraLens?, handler: Handler?) {
+    fun startPreviewRepeating(device: CameraDevice, session: CameraCaptureSession, surface: Surface, lens: LensSnapshot?, handler: Handler?) {
         session.setRepeatingRequest(buildPreviewRequest(device, surface, lens), captureCallback, handler)
     }
 
@@ -268,7 +271,7 @@ class PreviewRequestController(
      * still-capture request — the only thing shared between them is reading the same
      * [pendingManualIso]/[pendingManualShutterNs] cache, not any Camera2-level session state.
      */
-    fun buildPreviewRequest(device: CameraDevice, surface: Surface, lens: CameraLens?): CaptureRequest {
+    fun buildPreviewRequest(device: CameraDevice, surface: Surface, lens: LensSnapshot?): CaptureRequest {
         val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
             addTarget(surface)
             set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
@@ -290,7 +293,7 @@ class PreviewRequestController(
      * values, since [StillCaptureController.captureStillJpeg] is a completely independent one-off
      * request from this class's own repeating request — see that function's own doc.
      */
-    fun applyExposure(builder: CaptureRequest.Builder, lens: CameraLens?, previewSafe: Boolean) {
+    fun applyExposure(builder: CaptureRequest.Builder, lens: LensSnapshot?, previewSafe: Boolean) {
         val manualCapability = if (pendingManualIso != null || pendingManualShutterNs != null) {
             manualIsoCapability(lens)
         } else {
@@ -329,7 +332,7 @@ class PreviewRequestController(
      * the request template's own AF default) on a lens with no [manualFocusCapability] — i.e. a
      * fixed-focus lens, where there's no `LENS_FOCUS_DISTANCE` control surface to touch at all.
      */
-    fun applyFocusSettings(builder: CaptureRequest.Builder, lens: CameraLens?) {
+    fun applyFocusSettings(builder: CaptureRequest.Builder, lens: LensSnapshot?) {
         val focusCapability = manualFocusCapability(lens) ?: return
 
         val manualDistance = pendingManualFocusDiopters
@@ -373,7 +376,7 @@ class PreviewRequestController(
         device: CameraDevice,
         session: CameraCaptureSession,
         surface: Surface,
-        lens: CameraLens?,
+        lens: LensSnapshot?,
         rotationDegrees: Int,
         handler: Handler?,
     ) {
