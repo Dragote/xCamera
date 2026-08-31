@@ -1,6 +1,6 @@
 # Camera capture
 
-**Purpose:** The core capture pipeline for `feature:camera` — an Android take on iOS's (Not Boring) Camera app. Skeuomorphic viewfinder UI (levers, dials) driving a raw Camera2-backed capture flow.
+**Purpose:** The core capture pipeline for `feature:camera`. Skeuomorphic viewfinder UI (levers, dials) driving a raw Camera2-backed capture flow.
 
 **Current state:**
 - Raw `android.hardware.camera2` (`CameraManager`/`CameraDevice`/`CameraCaptureSession`/`ImageReader`) in `CameraController` (`data/`) — **not** CameraX. One capture session with two independent `ImageReader` surfaces: a `YUV_420_888` preview reader (fast repeating request, plain auto-exposure by default) and a JPEG reader for stills (one-off `capture()` per photo). The two share no session-wide state, so a long manual exposure never blocks or degrades the live preview. The live preview is *rendered*, not just captured — `CameraController` never targets the repeating request at a caller-supplied `Surface` at all; `ui/CameraScreen`'s `CameraPreviewRenderer` (`ui/gl/`) draws each delivered frame onto the on-screen `TextureView` itself via app-owned GLES (see this file's own key-decisions entry for why).

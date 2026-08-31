@@ -1,6 +1,6 @@
 # LUT color grading
 
-**Purpose:** Real-time 3D LUT-based color grading (importable custom `.cube` LUTs) applied to both the live preview and captured photos — one of (Not Boring) Camera's not-yet-ported features (see `camera-feasibility-android`).
+**Purpose:** Real-time 3D LUT-based color grading (importable custom `.cube` LUTs) applied to both the live preview and captured photos — one of the target feature set's later additions (see `camera-feasibility-android`).
 
 **Current state:** Implemented (issue #43). LUT import/library management lives in `feature:settings`; grading itself (GPU sampling + capture-time processing) lives in `feature:camera`.
 - **Import & storage** (`feature:settings`, `LutLocalDataSource`): a `.cube` file picked via SAF `ACTION_OPEN_DOCUMENT` is validated + parsed (`CubeLutParser`, `shared:common`), resampled onto a canonical 33³ grid (`CubeLutResampler`, DaVinci/Lightroom's own default export size), and written to app-private storage in a compact binary format (`CubeLut.toBinary`/`.lutbin`) — never the original ASCII `.cube` text. One file per import; `listLuts()` just scans the directory (no separate metadata DB). `LutRepositoryImpl` exposes list/import/delete as `Result`.
