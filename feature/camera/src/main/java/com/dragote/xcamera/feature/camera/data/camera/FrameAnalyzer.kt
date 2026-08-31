@@ -195,7 +195,7 @@ class FrameAnalyzer {
 
         // Camera2 can invalidate this Image's buffer out from under an in-flight callback (e.g. the
         // camera service tearing down the underlying ImageReader) with no way to check for it upfront
-        // — see docs/features/camera-capture.md's key decisions. Dropping just this one frame on that
+        // — see .claude/docs/features/camera-capture.md's key decisions. Dropping just this one frame on that
         // narrow failure is preferable to propagating, since a fresh frame is already on its way.
         try {
             val plane = image.planes[0]

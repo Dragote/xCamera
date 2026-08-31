@@ -292,7 +292,7 @@ private fun LabeledTogglePreview() {
 
 /**
  * "Capture RAW alongside JPEG whenever possible" — a persisted preference like GRID/HISTOGRAM/HORIZON
- * above, not a per-capture choice; see `docs/features/camera-capture.md` for the full RAW pipeline.
+ * above, not a per-capture choice; see `.claude/docs/features/camera-capture.md` for the full RAW pipeline.
  * Uses the same unwrapped [LabeledToggle] look as those three, plus a small caption underneath warning
  * that the setting can silently make every future capture noticeably larger.
  *

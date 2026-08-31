@@ -33,7 +33,7 @@ import java.nio.FloatBuffer
  * **Not unit-testable** — real GLES/EGL calls, per this project's own camera testing conventions
  * (`.claude/agents/camera-engineer.md`). Kept thin/mechanical on purpose; the actual LUT math it
  * leans on (parsing, blend-intensity semantics) lives in plain testable domain code
- * (`domain/model/CubeLutParser.kt`). See `docs/features/lut-color-grading.md` for the
+ * (`domain/model/CubeLutParser.kt`). See `.claude/docs/features/lut-color-grading.md` for the
  * `GL_UNPACK_ALIGNMENT` requirement [renderGraded] depends on and why it matters here specifically.
  */
 class LutJpegProcessor {
@@ -133,7 +133,7 @@ class LutJpegProcessor {
         // GLES default GL_UNPACK_ALIGNMENT of 4, not the 1 CameraPreviewRenderer.initGl() sets once for
         // its own long-lived context. The LUT texture below is GL_RGB (3 bytes/pixel) at cubeLut.size
         // (33) per row = 99 bytes — not a multiple of 4 — so under the default alignment GLES misreads
-        // row boundaries and samples a shifted/scrambled LUT (see docs/features/lut-color-grading.md).
+        // row boundaries and samples a shifted/scrambled LUT (see .claude/docs/features/lut-color-grading.md).
         // Must be set before any texture upload in this function.
         GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
 

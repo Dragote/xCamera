@@ -75,7 +75,7 @@ import javax.inject.Singleton
  * [Handler] (in practice, `ui/CameraScreen`'s `CameraPreviewRenderer`, which draws it onto the
  * on-screen `TextureView` via app-owned GLES) — an `ImageReader`'s dimensions are a hard, verifiable
  * construction-time contract, unlike a `SurfaceTexture`'s requested buffer size (see
- * `docs/features/camera-capture.md` for the rationale).
+ * `.claude/docs/features/camera-capture.md` for the rationale).
  *
  * Kept out of the ViewModel since [bindCamera] inherently needs a Compose `LifecycleOwner`, which is
  * a ui-layer-adjacent type — see CLAUDE.md's data-layer-owns-hardware convention.
@@ -540,7 +540,7 @@ class CameraController(private val context: Context) : LifecycleEventObserver {
      * [StillCaptureController.imageAvailableListener]/`rawImageAvailableListener`) is also delivered on
      * that same `Looper`, so posting the close there rather than calling it from another thread means it
      * can only ever run before a queued callback starts or after one finishes, never *during* one — a
-     * `Looper` processes one message at a time. See `docs/features/camera-capture.md`'s key decisions for
+     * `Looper` processes one message at a time. See `.claude/docs/features/camera-capture.md`'s key decisions for
      * why calling `close()` from a different thread was previously able to invalidate a buffer a callback
      * was mid-read on. Bounded by [ImageReaderCloseTimeoutMs] as a safety net (the close itself is a
      * near-instant native call) rather than the expected path, so a wedged background thread can't hang

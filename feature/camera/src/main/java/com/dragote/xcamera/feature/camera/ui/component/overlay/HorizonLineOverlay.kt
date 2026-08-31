@@ -41,7 +41,7 @@ import kotlin.math.abs
  * compensation whatsoever — its dividers are always plain `size.width/3`/`size.height/3` lines, fixed
  * to the frame's own edges (correct for a rule-of-thirds grid, which composes against the photo
  * rectangle, not gravity). Rotating this line's segments by the device's quadrant angle instead would
- * only coincidentally line up with the grid in portrait — see `docs/features/camera-capture.md` for
+ * only coincidentally line up with the grid in portrait — see `.claude/docs/features/camera-capture.md` for
  * why that approach doesn't work in landscape.
  *
  * Instead, [HorizonLines] picks its drawing axis directly from [quadrant] — X (thirds of

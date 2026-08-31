@@ -26,39 +26,34 @@ Feature modules never depend on each other directly. Cross-feature *domain* cont
 
 ## Feature docs & issue writing
 
-`docs/features/` holds one short file per feature (`docs/features/README.md` is the one-line-per-feature index, mirroring the pattern of this repo's memory `MEMORY.md`) — deliberately kept lean (~40 lines/feature) so it's cheap to load into context, not a full spec dump. GitHub issues follow a Problem/Requirements/Non-goals/Technical-notes template, flat (no epics). Both are maintained by the `spec-writer` agent (`.claude/agents/spec-writer.md`) — use it instead of hand-writing issues or feature docs.
+`.claude/docs/features/` holds one short file per feature (`.claude/docs/features/README.md` is the one-line-per-feature index, mirroring the pattern of this repo's memory `MEMORY.md`) — kept lean so it's cheap to load into context, not a full spec dump. A doc holds only **what reading the code would not have told you** — why this approach and not the obvious alternative, what breaks if you change it, what was tried and failed — plus a one-line-per-capability inventory of what the feature contains. Description that duplicates code is both the bulk and the rot: it is what silently goes stale while rationale stays true. The validator warns past ~1500 words (`wc -w`) — not a budget, a smell threshold: genuine rationale for even the flagship capture pipeline fits in ~1200, so more than that usually means description crept back in. A line count is no use at all, since 600-character bullets satisfy it trivially. GitHub issues follow a Problem/Requirements/Non-goals/Technical-notes template, flat (no epics). Both are maintained by the `spec-writer` agent (`.claude/agents/spec-writer.md`) — use it instead of hand-writing issues or feature docs.
+
+## Issue type labels
+
+Every issue carries exactly one, and the branch prefix follows it (`<label>/<N>-<slug>`); commits are `#<N>: Message`.
+
+| Label | Scope |
+|---|---|
+| `feature` | New or changed user-visible behavior |
+| `bug` | Something in the app behaves wrong |
+| `tech` | Changes to code that runs — refactors, architecture, dependency and build migrations, Gradle/`build-logic`. No user-visible behavior change, but the app is built or executed differently afterwards |
+| `documentation` | Changes to text that instructs a reader — `CLAUDE.md`, `.claude/` (memory, agents, commands, skills, docs), READMEs, code comments. Nothing the app compiles or runs changes |
+
+The line between the last two is **what the change acts on, not whether users can see it**: `tech` acts on the program, `documentation` acts on the instructions given to whoever works on the program. Reworking agent definitions, memory, or this file is `documentation` however infra-flavored it looks — that pull toward `tech` is the trap, and `tech/57-claude-context-in-repo` on `main` is an instance of falling into it. Don't cite it as precedent.
+
+## Commands and skills
+
+`.claude/commands/` holds the repo's repeatable procedures as commands rather than as prose someone has to recall and interpret: **`/take-issue <N>`** (assign the issue, move the board to In progress, cut the correctly-prefixed branch) and **`/ship`** (test, rebase, push, open the PR, move the board, and — only when asked — merge with this project's `Merge <branch>` subject). The board/label IDs they depend on live in project memory `reference-github-project`. When a workflow here becomes routine, add a command instead of writing it down in memory.
+
+`.claude/skills/` holds the same idea for procedures *I* trigger rather than the user: `write-memory` and `add-feature-module`, both deep but rarely needed, so they load on demand instead of taxing this file every session. The test for whether something may move out of `CLAUDE.md` into a skill is **what a failure to load costs**: a missed formatting rule is visible and cheap to fix, so it can move; a missed prohibition fails silently and must stay here or in the memory index.
 
 ## Project memory
 
-Claude Code's persistent memory for this project is **committed to the repo** at `.claude/memory/` — `MEMORY.md` is the always-loaded index (one line per memory), and each memory is a single file beside it. Write new memories there, exactly as if writing to the usual `~/.claude/projects/<slug>/memory/` path; on a correctly bootstrapped machine that path *is* this directory, via a symlink.
-
-**Why it lives in the repo:** the user develops from more than one Mac, and `~/.claude/projects/<slug>/` derives its slug from the checkout's absolute path — so the slug differs per machine and nothing under `~/.claude/` survives moving hardware. Repo-tracked context does. Anything that must stay consistent across the user's machines belongs in the repo, not in `~/.claude/`.
-
-**The link is self-healing.** A `SessionStart` hook in `.claude/settings.json` runs `scripts/claude-bootstrap.sh --hook` at the start of every session. It is silent when the link is already correct; when it isn't — a fresh machine, or a plain directory the harness created — it links it, first rescuing any memory files already written there, and says so. This is what keeps a new machine from silently accumulating memories that git never sees. The hook is committed, so it arrives with the clone and nobody has to remember it.
-
-**On a new machine:** run `scripts/claude-bootstrap.sh` by hand once anyway — beyond the symlink it reports the per-machine toolchain that cloning cannot restore (`JAVA_HOME`, `ANDROID_HOME`, the `gh` CLI). See project memory `multi-device-setup` / `toolchain-setup`.
-
-**Memory is versioned, so it follows the current branch.** A memory written but not yet committed is untracked, and `git checkout` leaves it alone — it survives branch switches. Once committed on a feature branch, though, it lives on that branch: checking out `main` removes those files from the working tree until the branch merges. That is expected, not a bug; commit memory alongside the work it came from and it lands on `main` with the PR.
-
-Keep memory files and `MEMORY.md` in sync: every memory file needs exactly one index line, and `[[wiki-links]]` between memories reference the target's `name:` slug (kebab-case), which must match its filename.
+Claude Code's persistent memory for this project is **committed to the repo** at `.claude/memory/` — `MEMORY.md` is the always-loaded index, one file per memory beside it. It lives in the repo because `~/.claude/` does not survive moving between the user's machines; a `SessionStart` hook keeps the machine-local symlink pointing here. **Load the `write-memory` skill before saving, editing, or deleting a memory** — it carries the format, the index rules, and the test for what earns a memory at all.
 
 ## Build system: build-logic convention plugins
 
-`build-logic/` is an included build (`pluginManagement.includeBuild("build-logic")` in root `settings.gradle.kts`). Its `convention` subproject defines Kotlin `Plugin<Project>` classes registered as precompiled Gradle plugins:
-
-| Plugin ID | What it configures |
-|---|---|
-| `xcamera.android.application` | `com.android.application` + Kotlin, compileSdk/minSdk/targetSdk, JVM 11, base test deps |
-| `xcamera.android.application.compose` | `xcamera.android.application` + Compose compiler + Compose BOM/UI/Material3 deps |
-| `xcamera.android.library` | `com.android.library` + Kotlin, same SDK/JVM/test config as application |
-| `xcamera.android.library.compose` | `xcamera.android.library` + Compose compiler + Compose/lifecycle-compose deps |
-| `xcamera.android.hilt` | KSP + Hilt Gradle plugin + `hilt-android`/`hilt-compiler` |
-| `xcamera.android.room` | KSP + `room-runtime`/`room-ktx`/`room-compiler` |
-| `xcamera.compose.destinations` | KSP + compose-destinations `core`/`ksp`, sets KSP args `mode = "destinations"` and `moduleName = <gradle module name>` |
-| `xcamera.kotlin.serialization` | Kotlin serialization plugin + kotlinx-serialization-json + Retrofit/OkHttp |
-| `xcamera.feature` | Bundle: `android.library` + `android.library.compose` + `android.hilt` + `compose.destinations` + lifecycle/coroutines/hilt-navigation-compose deps — apply this to any new feature module |
-
-Versions live in `gradle/libs.versions.toml`; convention plugins read them via a `Project.libs` accessor (`build-logic/convention/src/main/kotlin/com/dragote/xcamera/buildlogic/Libs.kt`), not hardcoded strings. To add a new convention plugin: add a `Plugin<Project>` class under `build-logic/convention/src/main/kotlin/com/dragote/xcamera/buildlogic/`, register it in `build-logic/convention/build.gradle.kts`'s `gradlePlugin { plugins { ... } }` block, then apply its ID from a module's `build.gradle.kts`. Gradle plugin artifacts (AGP, Kotlin, KSP, Hilt, Compose compiler) are declared `implementation` (not `compileOnly`) in `build-logic/convention/build.gradle.kts` — imperative `pluginManager.apply(...)` calls from within a convention plugin need those classes on the plugin's own runtime classpath, `compileOnly` is not sufficient there.
+`build-logic/` is an included build whose `convention` subproject defines this project's Gradle plugins (`xcamera.android.library`, `xcamera.feature`, `xcamera.android.hilt`, …); every module's `build.gradle.kts` is a few plugin IDs and dependencies, with no per-module Android config. Versions come from `gradle/libs.versions.toml` through a `Project.libs` accessor, never hardcoded. **Load the `add-feature-module` skill** before adding a module or touching anything under `build-logic/` — it has the full plugin table and the registration steps.
 
 ## Package-per-layer convention
 
@@ -95,11 +90,13 @@ Every reusable Compose UI element — `feature/*/ui/component/*` composables and
 
 Don't extract a shared abstraction the first time you write something — write it inline/local to whatever needs it. The **second** time the exact same logic is needed elsewhere, extract it into a shared function/composable/module rather than copying it again (tightened 2026-08-06 from an earlier "duplicate until a third occurrence" rule — two identical copies is already enough proof the pattern is real, and the third-copy version was letting real duplication sit for too long, e.g. `feature/camera/ui/component/dial/FocusDial.kt` byte-for-byte copying `DialWheel.kt`'s value/label `Text` styling before issue #25 extracted `DialText.kt`). This applies at whatever scope the two occurrences share — same-package `internal` (e.g. `DialText.kt`, or `DialWheel`'s own `drawBarrel`/`drawWell`) if both live in one feature module, `shared:common`/`shared:designsystem` if they cross module boundaries (see the `MainDispatcherRule`/haptics-vibrator examples elsewhere in this file). One occurrence: leave it alone. Two occurrences of the *same* thing: extract. Two *similar-but-not-identical* things (e.g. `DialWheel`'s click-detent gesture vs. `FocusDial`'s continuous-drag gesture): duplication is legitimate — don't force a shared abstraction over a genuinely different interaction model just because the surrounding chrome looks similar.
 
+**UI is stricter: extract on the first occurrence.** A Compose component, a color/typography token, or a `Modifier` that a second module needs moves into `shared:designsystem` the first time reuse comes up — don't wait for the rule above's second occurrence, and never copy it or reach into another feature's internal `ui/` package for it. Visual consistency across screens outweighs the risk of a premature abstraction here, and this is a deliberate exception the user asked for, not an oversight. Watch for `internal` helpers and constants that have to become public in the move.
+
 ## Comment conventions
 
-Comments describe the component's current state and behavior only — never its history. No "used to be X", "previously did Y", "replaced Z", "ported from `legacy/...`", "as of <date>", or narrated bug-investigation timelines ("on-device testing found... then we tried... turned out to be..."). That kind of material belongs in commit messages and, for anything worth a permanent record, `docs/features/<feature>.md` — never in a comment sitting next to the code, since a comment about the past goes stale the moment the code changes again and nobody's obligated to touch it.
+Comments describe the component's current state and behavior only — never its history. No "used to be X", "previously did Y", "replaced Z", "ported from `legacy/...`", "as of <date>", or narrated bug-investigation timelines ("on-device testing found... then we tried... turned out to be..."). That kind of material belongs in commit messages and, for anything worth a permanent record, `.claude/docs/features/<feature>.md` — never in a comment sitting next to the code, since a comment about the past goes stale the moment the code changes again and nobody's obligated to touch it.
 
-What a comment *should* say: a short, present-tense "why" for a genuinely non-obvious constraint (a HAL quirk this code works around, an invariant a type alone can't express, a reason the obvious simpler approach doesn't work) — 1-3 lines is normal, longer only if the constraint itself is genuinely that dense to state. If a component is complex enough that its full rationale doesn't fit in a few lines, keep the short version inline and point to `docs/features/<feature>.md` for the rest (e.g. `// see docs/features/camera-capture.md`) rather than writing the long version in the comment itself.
+What a comment *should* say: a short, present-tense "why" for a genuinely non-obvious constraint (a HAL quirk this code works around, an invariant a type alone can't express, a reason the obvious simpler approach doesn't work) — 1-3 lines is normal, longer only if the constraint itself is genuinely that dense to state. If a component is complex enough that its full rationale doesn't fit in a few lines, keep the short version inline and point to `.claude/docs/features/<feature>.md` for the rest (e.g. `// see .claude/docs/features/camera-capture.md`) rather than writing the long version in the comment itself.
 
 Applies to every comment, long or short, in every module — not just KDoc class docs. When touching a comment for an unrelated reason, fix it to match this if it doesn't already.
 
@@ -149,20 +146,11 @@ Applies to every comment, long or short, in every module — not just KDoc class
 
 Changes to anything under `build-logic/` require a fresh Gradle sync (Android Studio: File → Sync Project with Gradle Files) — precompiled plugin classes are cached per `build-logic` build.
 
-## Adding a new feature module
-
-1. Add the module directory `feature/<name>/` and register it in root `settings.gradle.kts` (`include(":feature:<name>")`).
-2. `feature/<name>/build.gradle.kts`: apply `xcamera.feature`. Set `android.namespace`. Depend on `project(":shared:common")`, `project(":shared:designsystem")`, `project(":shared:navigation")`, and `testImplementation(project(":shared:testing"))` — add `project(":shared:diagnostics")` only if the feature reads camera capabilities. Apply `xcamera.android.room` / `xcamera.kotlin.serialization` only if the feature genuinely needs a database or a JSON/network layer; no module does today.
-3. Build out `data/domain/presentation/ui/di` packages as described in "Package-per-layer convention" above.
-4. Add an `<INTERNET/>`-style manifest permission in `feature/<name>/src/main/AndroidManifest.xml` only if the feature needs it (library modules don't need a manifest at all if they don't).
-5. Add `implementation(project(":feature:<name>"))` to `app/build.gradle.kts`.
-6. Add the feature's generated `<name>Destinations` list into `destinationsByRoute` in `app/src/main/java/com/dragote/xcamera/navigation/AppNavGraph.kt`.
-7. Write unit tests mirroring the production package structure.
-
 ## Known gotchas
 
 - **KSP version must lock-step with the Kotlin version** (`ksp = "<kotlin-version>-<ksp-patch>"` in `gradle/libs.versions.toml`) — bumping Kotlin without bumping KSP (or vice versa) breaks annotation processing across every module.
 - compose-destinations' generated destination package is inferred from the common prefix of `@Destination` composables in a module — don't scatter `@Destination` composables across unrelated packages within a feature, or the generated package/import paths become unpredictable.
 - Room requires at least one entity in a `@Database` — don't create a placeholder `AppDatabase` with an empty entities list "for later"; add it when there's an actual table to put in it. (This is why the app has no Room database at all today.)
 - Gradle plugin artifacts in `build-logic/convention/build.gradle.kts` are `implementation`, not `compileOnly` — switching to `compileOnly` breaks imperative `pluginManager.apply(...)` calls inside convention plugins with a "could not generate a decorated class" error.
+- **A tool call's shell is not the user's interactive shell.** zsh reads `~/.zshrc` only for interactive shells, so `JAVA_HOME`/`ANDROID_HOME` can be unset and `gh`/`adb` missing from `PATH` in a tool call even though they work in the user's terminal. Before reporting a tool as not installed, check the real path (`/opt/homebrew/bin/gh`, `$HOME/Library/Android/sdk/platform-tools/adb`) or re-test with `zsh -ic`. Relatedly, anything needing `sudo` cannot run from a tool call at all — no TTY, so the password prompt fails — and has to be run by the user in a real terminal.
 - Room's schema export directory isn't configured (no `androidx.room` Gradle plugin applied). No module uses Room today, so this is dormant; if one ever does, expect a benign KSP schema-export warning and wire up export only if you need migration testing.

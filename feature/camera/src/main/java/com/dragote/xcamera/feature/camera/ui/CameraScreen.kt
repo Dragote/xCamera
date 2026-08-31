@@ -369,7 +369,7 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     var focusTapToken by remember { mutableStateOf(0) }
 
     // Ring diameter occupies ~92% of the viewfinder's own shorter dimension — see
-    // docs/features/camera-capture.md for the sizing rationale. Falls back to FocusRing's own default
+    // .claude/docs/features/camera-capture.md for the sizing rationale. Falls back to FocusRing's own default
     // before the TextureView has been laid out at least once (previewViewSize still zero) — never
     // actually visible that early, since there's nothing to long-press yet, just keeps this expression
     // total.
@@ -433,7 +433,7 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     // previewSurfaceTexture/previewViewSize/selectedLens genuinely don't change across that kind of
     // resume, so there's nothing for this effect to recompute — the renderer re-derives its own crop/
     // rotation transform from each frame's actually-delivered dimensions regardless. See
-    // CameraController's own doc and docs/features/camera-capture.md for why a second,
+    // CameraController's own doc and .claude/docs/features/camera-capture.md for why a second,
     // screen-owned lifecycle reaction here is deliberately avoided.
     LaunchedEffect(previewSurfaceTexture, previewViewSize, uiState.selectedLens) {
         if (previewSurfaceTexture == null) return@LaunchedEffect
@@ -457,7 +457,7 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
 
     // Resolving CameraSettings.selectedLutId/lutIntensityPercent into an actual parsed LUT
     // (CameraRepository.setLut) is driven by CameraViewModel's own init block, not from here — see
-    // docs/features/lut-color-grading.md. This effect only reacts to the *resolved* side:
+    // .claude/docs/features/lut-color-grading.md. This effect only reacts to the *resolved* side:
     // CameraController.activeLut only updates once setLut has actually finished reading+parsing the LUT
     // file, so this is what genuinely drives the live preview's own LUT texture. CameraPreviewRenderer
     // is a GL object owned directly by this composable (not the ViewModel), so this collector
@@ -482,7 +482,7 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
 
     // Manual mode's *visible* dials appear the instant ModeToggle is tapped (manualModeEnabled), but
     // the camera itself doesn't actually lock exposure (CONTROL_AE_MODE_OFF) until 3A has genuinely
-    // gone quiet (manualExposurePinned) — see docs/features/camera-capture.md for why a fixed delay
+    // gone quiet (manualExposurePinned) — see .claude/docs/features/camera-capture.md for why a fixed delay
     // isn't used here. debounce restarts its quiet-window every time either live reading changes, so
     // this only proceeds once both have genuinely stopped moving; withTimeoutOrNull is a safety net in
     // case 3A never fully quiets down (e.g. flicker), so this can't stall forever. Cancels itself (via

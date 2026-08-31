@@ -11,7 +11,7 @@ import java.nio.ByteOrder
  * format ([parseCubeLut]) stays the only format this app ever reads *from* a user-picked file.
  *
  * Reading this format is a single bulk byte read into a [FloatArray] with no text-parsing step at all
- * on `CameraRepositoryImpl`'s cold/first-selection path — see `docs/features/lut-color-grading.md` for
+ * on `CameraRepositoryImpl`'s cold/first-selection path — see `.claude/docs/features/lut-color-grading.md` for
  * why this format exists alongside ASCII `.cube`. Since it skips the float→decimal-string→float
  * round-trip a text format would otherwise do on every import, it's strictly at least as precise as
  * the text format, never less (see [parseCubeLutBinary] for the read side).

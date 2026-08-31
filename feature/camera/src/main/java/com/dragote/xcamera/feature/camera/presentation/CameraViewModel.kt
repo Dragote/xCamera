@@ -181,7 +181,7 @@ class CameraViewModel @Inject constructor(
         // ui/CameraScreen-owned LaunchedEffect so the resolve step (file read + .cube parse, including
         // resolve-failure-driven file-type validation) runs in the background while the user is still
         // on SettingsScreen, the only place a LUT selection/import happens — see
-        // docs/features/lut-color-grading.md. distinctUntilChanged means an unrelated settings change
+        // .claude/docs/features/lut-color-grading.md. distinctUntilChanged means an unrelated settings change
         // (e.g. showGrid) doesn't re-trigger a resolve.
         viewModelScope.launch {
             cameraSettingsRepository.observeSettings()

@@ -82,7 +82,7 @@ class PreviewRequestController(
      * in `CONTROL_AF_MODE_AUTO` too (not just the one-off trigger capture), not
      * `CONTROL_AF_MODE_CONTINUOUS_PICTURE`. `AUTO` is required for `CONTROL_AF_TRIGGER_START` to force
      * a genuine re-scan toward a newly-set `CONTROL_AF_REGIONS` on this hardware — see
-     * `docs/features/camera-capture.md` for the HAL finding behind this.
+     * `.claude/docs/features/camera-capture.md` for the HAL finding behind this.
      *
      * A single frame in `AUTO` mode isn't enough for the scan to actually complete, so this stays
      * `true` — keeping the *repeating* request in `AUTO` too — until [captureCallback] observes the

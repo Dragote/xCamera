@@ -23,7 +23,7 @@ import java.nio.FloatBuffer
  * targets its preview repeating request at an `ImageReader` this class never sees directly —
  * [onPreviewFrame] receives each delivered [Image], whose `width`/`height` are a hard `ImageReader`
  * construction-time guarantee, so the crop/rotation transform this class computes is always built
- * from *verified* frame dimensions rather than an assumption (see `docs/features/camera-capture.md`
+ * from *verified* frame dimensions rather than an assumption (see `.claude/docs/features/camera-capture.md`
  * for the rationale behind this design).
  *
  * Owns its own [HandlerThread] + EGL context/surface — GL contexts are single-thread-bound, and this
@@ -435,7 +435,7 @@ class CameraPreviewRenderer {
      * byte layout, but GL's texture-coordinate `v` increases upward, not downward.
      *
      * Rotation/color-calibration correctness across GPU vendors beyond this project's own validated
-     * hardware is a residual risk — see `docs/features/camera-capture.md`.
+     * hardware is a residual risk — see `.claude/docs/features/camera-capture.md`.
      */
     private fun computeTransform() {
         val imgW = lastImageWidth.toFloat()
@@ -685,7 +685,7 @@ class CameraPreviewRenderer {
         // Standard BT.601-ish YUV->RGB conversion, Y/U/V each sampled from their own GL_LUMINANCE
         // texture (U/V centered at 0.5, matching YUV_420_888's unsigned-byte-with-128-bias chroma
         // encoding). Exact color calibration (limited- vs full-range Y, BT.601 vs BT.709 coefficients)
-        // remains an open device-tuning item — see docs/features/camera-capture.md.
+        // remains an open device-tuning item — see .claude/docs/features/camera-capture.md.
         //
         // LUT sampling happens in this same pass, avoiding a second render pass for the live preview:
         // the converted RGB (clamped to

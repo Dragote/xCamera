@@ -1,22 +1,17 @@
 ---
 name: project-vision
-description: "xCamera's product goal — a pro capture pipeline behind a playful, tactile, highly customizable interface"
-metadata: 
-  node_type: memory
+description: Read when scoping a camera feature — the long-term target set to slice from, never a v1 requirement
+metadata:
   type: project
-  originSessionId: 9ab0af68-c96f-4405-9dad-e06dc563ca56
-  modified: 2026-07-31T20:17:20.384Z
 ---
 
-xCamera's product direction is a camera app that pairs a genuinely pro capture pipeline with a playful, tactile, highly customizable 3D interface. Decided 2026-07-31.
+xCamera pairs a genuinely pro capture pipeline with a playful, tactile, highly customizable interface — "looks like a toy, works like a serious tool." A personal solo project, not a client brief, so the direction is the user's to change at will.
 
-**Why:** the user's own idea, positioned as "looks like a toy, works like a serious tool". Not a client requirement — a personal solo project direction.
+**Long-term target feature set** (per-feature Android implementation notes in [[camera-feasibility-android]]):
+- SuperRAW-style capture — raw sensor access ahead of heavy computational processing — plus DNG export
+- 3D LUT color grading with importable custom LUTs
+- Full manual controls (exposure, ISO, white balance, focus) with pro readouts: histogram, zebra stripes, focus peaking
+- A tactile interface with custom haptics and sound, and customizable skins/colorways
+- Adjustable-intensity HDR, a photo review flow, persisted settings, a fast-launch entry point, fully local storage
 
-**Target feature set** (see [[camera-feasibility-android]] for per-feature Android implementation notes):
-- SuperRAW-style capture pipeline (raw sensor access before heavy computational processing) + DNG export
-- 3D LUT-based color grading with importable custom LUTs
-- Full manual controls (exposure, ISO, white balance, focus) with pro readouts (histogram, zebra stripes, focus peaking)
-- Fully tactile 3D UI: dynamic lighting/shadows, custom haptics and sound, customizable skins/colorways
-- Adjustable-intensity HDR, photo review flow, persisted settings, fast-launch entry point, fully local/private storage
-
-**How to apply:** when scoping the first camera feature, treat this list as the long-term target, not a v1 requirement — pick a small vertical slice (e.g. manual controls + one LUT + basic capture) as the actual first feature, per [[feedback-minimal-infra]]. Architecture for camera code should follow the project's existing module/layer conventions documented in root `CLAUDE.md` (data/domain/presentation/ui/di packages inside a `feature:camera`-style module), not bolt on camera-specific structure.
+**How to apply:** this is the long-term target, never a v1 requirement — scope any new camera work as a small vertical slice from it ([[feedback-minimal-infra]]). Camera code follows the same module and layer conventions as everything else in `CLAUDE.md`; being the flagship feature does not earn it a bespoke structure. The interface half of the vision is expressed today as flat minimal chrome, not the 3D/skeuomorphic reading of "tactile" — see [[project-design-direction]].
