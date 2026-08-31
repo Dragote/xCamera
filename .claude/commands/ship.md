@@ -16,7 +16,7 @@ Take whatever is currently done — uncommitted edits, commits on a branch, or b
    gh project item-edit --project-id PVT_kwHOAeQo9s4BfGuM --id "$ITEM_ID" \
      --field-id PVTSSF_lAHOAeQo9s4BfGuMzhZcBhU --single-select-option-id 47fc9ee4
    ```
-4. **Commits.** Anything uncommitted becomes `#<N>: Message` commits — leading `#`, colon, capitalized imperative subject.
+4. **Commits.** Anything uncommitted becomes commits, following `CLAUDE.md`'s "Commit conventions": one coherent step each, ordered so every commit builds and tests green on its own, with mechanical moves kept apart from meaningful change. A large piece of work arriving as one commit is the thing this is guarding against.
 
 **Verify**
 
