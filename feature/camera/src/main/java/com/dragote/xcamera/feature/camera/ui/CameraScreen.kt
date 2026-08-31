@@ -106,6 +106,7 @@ import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
 import com.dragote.xcamera.shared.designsystem.theme.MinimalChrome
 import com.dragote.xcamera.shared.common.domain.result.Result
 import com.dragote.xcamera.shared.designsystem.component.state.ErrorState
+import com.dragote.xcamera.shared.designsystem.haptics.Haptics
 import com.dragote.xcamera.shared.designsystem.haptics.hapticTick
 import com.dragote.xcamera.shared.designsystem.haptics.rememberHapticTickVibrator
 import com.dragote.xcamera.shared.navigation.SettingsRoutes
@@ -343,6 +344,10 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     } else {
         MinimalChrome.Palette.Normal
     }
+    // Written the same way, once per recomposition, for the same reason (see Haptics' own doc). This
+    // screen is the app's start destination, so it also seeds the switch for every screen reached
+    // from here that observes no settings of its own.
+    Haptics.enabled = cameraSettings.hapticFeedbackEnabled
 
     // The live preview never goes through a raw Camera2-owned Surface — CameraController owns its
     // own preview ImageReader internally (see its own doc for why) and hands each delivered frame to

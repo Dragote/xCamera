@@ -73,6 +73,7 @@ import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import com.dragote.xcamera.shared.common.domain.model.LutPreset
 import com.dragote.xcamera.shared.designsystem.component.control.Toggle
 import com.dragote.xcamera.shared.designsystem.component.state.LoadingIndicator
+import com.dragote.xcamera.shared.designsystem.haptics.Haptics
 import com.dragote.xcamera.shared.designsystem.haptics.hapticPress
 import com.dragote.xcamera.shared.designsystem.theme.MinimalChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
@@ -162,6 +163,7 @@ fun SettingsScreen(
                     onFocusPeakingSensitivityChanged = viewModel::onFocusPeakingSensitivityChanged,
                     onCaptureRawByDefaultToggled = viewModel::onCaptureRawByDefaultToggled,
                     onMinimalChromeInvertedToggled = viewModel::onMinimalChromeInvertedToggled,
+                    onHapticFeedbackEnabledToggled = viewModel::onHapticFeedbackEnabledToggled,
                     onLutSelected = viewModel::onLutSelected,
                     onLutDeleteRequested = viewModel::onLutDeleteRequested,
                     onLutIntensityChanged = viewModel::onLutIntensityChanged,
@@ -188,6 +190,7 @@ private fun SettingsContent(
     onFocusPeakingSensitivityChanged: (FocusPeakingSensitivity) -> Unit,
     onCaptureRawByDefaultToggled: (Boolean) -> Unit,
     onMinimalChromeInvertedToggled: (Boolean) -> Unit,
+    onHapticFeedbackEnabledToggled: (Boolean) -> Unit,
     onLutSelected: (String?) -> Unit,
     onLutDeleteRequested: (String) -> Unit,
     onLutIntensityChanged: (Int) -> Unit,
@@ -204,6 +207,10 @@ private fun SettingsContent(
     } else {
         MinimalChrome.Palette.Normal
     }
+    // Same one-write-per-recomposition shape, and needed on this screen in its own right: every
+    // control below is itself haptic, so flipping HAPTICS has to silence the very toggle that
+    // flipped it rather than waiting for the next visit to the camera screen.
+    Haptics.enabled = uiState.hapticFeedbackEnabled
 
     Column(
         modifier = modifier
@@ -240,6 +247,11 @@ private fun SettingsContent(
             onToggle = { onMinimalChromeInvertedToggled(!uiState.minimalChromeInverted) },
             label = "INVERT CHROME",
         )
+        LabeledToggle(
+            checked = uiState.hapticFeedbackEnabled,
+            onToggle = { onHapticFeedbackEnabledToggled(!uiState.hapticFeedbackEnabled) },
+            label = "HAPTICS",
+        )
         PeakingSensitivitySelector(
             selected = uiState.focusPeakingSensitivity,
             onSelected = onFocusPeakingSensitivityChanged,
@@ -264,8 +276,9 @@ private fun SettingsContent(
  * `MinimalChrome` call site to actually need an external label alongside a plain boolean [Toggle] (every
  * `feature:camera` use of [Toggle] so far carries its own `knobContent` instead, e.g. an icon or A/M
  * letter, and needs no separate label), so per this repo's duplication convention it stays local to this
- * file rather than being promoted anywhere else yet — five call sites *within this one file* (GRID/
- * HISTOGRAM/HORIZON/RAW CAPTURE/INVERT CHROME below) is what makes it worth factoring out at all.
+ * file rather than being promoted anywhere else yet — six call sites *within this one file* (GRID/
+ * HISTOGRAM/HORIZON/RAW CAPTURE/INVERT CHROME/HAPTICS below) is what makes it worth factoring out at
+ * all.
  */
 @Composable
 private fun LabeledToggle(checked: Boolean, onToggle: () -> Unit, label: String, modifier: Modifier = Modifier) {

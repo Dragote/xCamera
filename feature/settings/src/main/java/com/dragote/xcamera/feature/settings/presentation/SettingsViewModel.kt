@@ -42,6 +42,7 @@ class SettingsViewModel @Inject constructor(
             resolvingLutId = resolvingLutId,
             captureRawByDefault = settings.captureRawByDefault,
             minimalChromeInverted = settings.minimalChromeInverted,
+            hapticFeedbackEnabled = settings.hapticFeedbackEnabled,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -111,6 +112,10 @@ class SettingsViewModel @Inject constructor(
 
     fun onMinimalChromeInvertedToggled(enabled: Boolean) {
         viewModelScope.launch { cameraSettingsRepository.setMinimalChromeInverted(enabled) }
+    }
+
+    fun onHapticFeedbackEnabledToggled(enabled: Boolean) {
+        viewModelScope.launch { cameraSettingsRepository.setHapticFeedbackEnabled(enabled) }
     }
 
     /** `null` selects "OFF" — disables LUT grading entirely (see `CameraSettings.selectedLutId`'s own

@@ -77,6 +77,7 @@ class SettingsViewModelTest {
                 lutIntensityPercent = 42,
                 captureRawByDefault = true,
                 minimalChromeInverted = true,
+                hapticFeedbackEnabled = false,
             )
             assertEquals(
                 SettingsUiState(
@@ -88,6 +89,7 @@ class SettingsViewModelTest {
                     lutIntensityPercent = 42,
                     captureRawByDefault = true,
                     minimalChromeInverted = true,
+                    hapticFeedbackEnabled = false,
                 ),
                 awaitItem(),
             )
@@ -158,6 +160,13 @@ class SettingsViewModelTest {
         viewModel.onMinimalChromeInvertedToggled(true)
 
         coVerify { cameraSettingsRepository.setMinimalChromeInverted(true) }
+    }
+
+    @Test
+    fun `onHapticFeedbackEnabledToggled delegates to the repository`() = runTest {
+        viewModel.onHapticFeedbackEnabledToggled(false)
+
+        coVerify { cameraSettingsRepository.setHapticFeedbackEnabled(false) }
     }
 
     @Test
