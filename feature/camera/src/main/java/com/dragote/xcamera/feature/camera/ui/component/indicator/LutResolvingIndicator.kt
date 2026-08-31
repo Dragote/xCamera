@@ -76,7 +76,7 @@ private val CornerInset = 12.dp
  * footprint with width/height *transposed* for a 90°/270° [rotationDegrees] rather than trusting the
  * unrotated measurement — a plain `Modifier`-level rotation only changes how content paints, not what
  * size the layout system thinks it occupies, which clips part of it off-screen once anchored near a
- * corner with limited margin (see `docs/features/camera-capture.md`, shared with `HistogramOverlay`'s
+ * corner with limited margin (see `.claude/docs/features/camera-capture.md`, shared with `HistogramOverlay`'s
  * own `HistogramMarks`).
  */
 @Composable

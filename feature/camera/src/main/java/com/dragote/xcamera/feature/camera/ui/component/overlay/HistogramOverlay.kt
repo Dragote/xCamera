@@ -42,7 +42,7 @@ import kotlin.math.sqrt
  * as a `Modifier.rotate` wrapped around an always-96x48dp-laid-out box — a `Modifier`-level rotation
  * only transforms how the box *paints*, not what size the layout system thinks the box is, which would
  * clip part of the box off-screen once anchored near a corner with only [CornerInset] of margin (see
- * `docs/features/camera-capture.md` for the shipped bug this avoids). [HistogramMarks] instead
+ * `.claude/docs/features/camera-capture.md` for the shipped bug this avoids). [HistogramMarks] instead
  * *measures* itself at 48x96dp for a 90°/270° rotation to begin with — the layout system reserves
  * the correct rotated footprint before any alignment happens — and draws the same always-"96x48dp
  * logical space" bar chart into that reserved area via a coordinate-space rotation around its own

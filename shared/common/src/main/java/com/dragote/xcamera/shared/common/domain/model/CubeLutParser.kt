@@ -30,7 +30,7 @@ package com.dragote.xcamera.shared.common.domain.model
  * unsupported file should just fail to import, not crash the caller.
  *
  * Writes directly into a [FloatArray] preallocated the moment `LUT_3D_SIZE` is parsed rather than
- * accumulating into a growable `List<Float>` — see `docs/features/lut-color-grading.md` for why. No
+ * accumulating into a growable `List<Float>` — see `.claude/docs/features/lut-color-grading.md` for why. No
  * growable fallback for a data row seen before the size header, on purpose — the `.cube` format's own
  * convention (and every real exporter) always writes the header first, so a file that violates this is
  * already malformed by this parser's own standing contract; a growable-buffer fallback purely to still
