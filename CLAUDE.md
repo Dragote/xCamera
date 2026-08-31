@@ -41,6 +41,19 @@ Every issue carries exactly one, and the branch prefix follows it (`<label>/<N>-
 
 The line between the last two is **what the change acts on, not whether users can see it**: `tech` acts on the program, `documentation` acts on the instructions given to whoever works on the program. Reworking agent definitions, memory, or this file is `documentation` however infra-flavored it looks — that pull toward `tech` is the trap, and `tech/57-claude-context-in-repo` on `main` is an instance of falling into it. Don't cite it as precedent.
 
+## When a change becomes a pull request
+
+A request made in conversation — "fix this", "rename that", "try it the other way" — is a request for **the change itself**. Make it in the working tree and stop there. Don't file an issue, don't branch, don't commit unasked: the user reads the result, iterates on it, and often the next instruction changes it again.
+
+The lifecycle starts on a separate, explicit signal — `/task` up front, `/ship` once work is already sitting in the tree, or the user simply saying to file it and push it for review. `/ship` handles the retroactive case: it files the issue when there isn't one and moves work off `main` onto a properly named branch, so nothing has to be planned as a task in advance.
+
+Where the flow ends is decided by the issue's type label, not asked each time:
+
+| Label | Ends at |
+|---|---|
+| `documentation` | **Merged.** Nothing here can be checked on a device, so green tests plus the context validator are the whole verification that exists — carrying it to `main` adds nothing but a round trip |
+| `tech`, `feature`, `bug` | **The open PR**, board on In review, debug build installed, then report and stop. These change code that runs, and the user verifies on-device before merging |
+
 ## Commands and skills
 
 `.claude/commands/` holds the repo's repeatable procedures as commands rather than as prose someone has to recall and interpret: **`/take-issue <N>`** (assign the issue, move the board to In progress, cut the correctly-prefixed branch) and **`/ship`** (test, rebase, push, open the PR, move the board, and — only when asked — merge with this project's `Merge <branch>` subject). The board/label IDs they depend on live in project memory `reference-github-project`. When a workflow here becomes routine, add a command instead of writing it down in memory.
