@@ -1,0 +1,5 @@
+# MEMORY.md is an append-only index: every new memory adds a line at the end, so
+# two machines that both add memories before syncing collide on adjacent lines.
+# union keeps both sides' lines instead of raising a conflict. A memory added on
+# both sides yields a visible duplicate line — cheap to spot and delete.
+.claude/memory/MEMORY.md merge=union
