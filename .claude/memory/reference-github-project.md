@@ -18,7 +18,6 @@ Status field: `PVTSSF_lAHOAeQo9s4BfGuMzhZcBhU`, options:
 | Status | option-id |
 |---|---|
 | Backlog | `f75ad846` |
-| Ready | `61e4505c` |
 | In progress | `47fc9ee4` |
 | In review | `df73e18b` |
 | Done | `98236657` |
