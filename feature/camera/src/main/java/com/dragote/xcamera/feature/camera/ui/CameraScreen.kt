@@ -1,8 +1,10 @@
 package com.dragote.xcamera.feature.camera.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -10,6 +12,7 @@ import android.graphics.SurfaceTexture
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import android.provider.Settings
 import android.view.TextureView
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -65,6 +68,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dragote.xcamera.feature.camera.di.CameraRepositoryEntryPoint
@@ -189,9 +194,17 @@ fun CameraScreen(
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
+    val activity = remember(context) { context.findActivity() }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { results -> viewModel.onPermissionResult(results.values.all { it }) }
+    ) { results ->
+        val denied = results.filterValues { !it }.keys
+        viewModel.onPermissionResult(
+            granted = denied.isEmpty(),
+            canAskAgain = activity != null && denied.any { activity.shouldShowRequestPermissionRationale(it) },
+        )
+    }
 
     LaunchedEffect(Unit) {
         val alreadyGranted = requiredPermissions.all {
@@ -200,17 +213,70 @@ fun CameraScreen(
         if (alreadyGranted) {
             viewModel.onPermissionResult(true)
         } else {
+            // Launching while permanently denied returns denied instantly without a dialog; the
+            // result callback classifies that case and the gate offers app settings instead.
             permissionLauncher.launch(requiredPermissions.toTypedArray())
         }
     }
 
-    when (uiState.permissionStatus) {
+    // Granting the permission from system settings restarts nothing and delivers no result callback,
+    // so without this the app would sit on the gate screen until the user killed and relaunched it.
+    val permissionStatus = uiState.permissionStatus
+    if (permissionStatus != CameraPermissionStatus.Granted) {
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner, permissionStatus) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
+                val granted = requiredPermissions.all {
+                    ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+                }
+                if (granted) viewModel.onPermissionResult(true)
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+    }
+
+    when (permissionStatus) {
         CameraPermissionStatus.Granted -> CameraContent(navigator = navigator, viewModel = viewModel, uiState = uiState)
         CameraPermissionStatus.Denied -> ErrorState(
             message = "Camera permission is required to use xCamera",
             onRetry = { permissionLauncher.launch(requiredPermissions.toTypedArray()) },
         )
+        CameraPermissionStatus.PermanentlyDenied -> ErrorState(
+            message = "Camera permission is required to use xCamera. Enable it in system settings.",
+            onRetry = { context.openAppSettings() },
+            actionLabel = "Open settings",
+        )
         CameraPermissionStatus.Unknown -> Box(modifier = Modifier.fillMaxSize().background(Color.Black))
+    }
+}
+
+/**
+ * `activity-compose` is 1.8.0 here, which predates `LocalActivity` — and the `Context` Compose hands
+ * out is a `ContextWrapper` chain, not the `Activity` that `shouldShowRequestPermissionRationale`
+ * needs.
+ */
+private fun Context.findActivity(): Activity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return null
+}
+
+/** Opens this app's own page in system Settings — the only route back from a permanently denied
+ *  permission, since the system dialog can no longer be raised. */
+private fun Context.openAppSettings() {
+    val intent = Intent(
+        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+        Uri.fromParts("package", packageName, null),
+    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+        startActivity(intent)
+    } catch (e: ActivityNotFoundException) {
+        Toast.makeText(this, "Could not open system settings", Toast.LENGTH_SHORT).show()
     }
 }
 

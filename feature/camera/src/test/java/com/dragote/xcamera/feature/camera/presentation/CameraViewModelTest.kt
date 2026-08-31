@@ -116,6 +116,20 @@ class CameraViewModelTest {
     }
 
     @Test
+    fun `onPermissionResult reports a denial that can no longer be re-requested as permanent`() = runTest {
+        viewModel.uiState.test {
+            assertEquals(CameraPermissionStatus.Unknown, awaitItem().permissionStatus)
+
+            viewModel.onPermissionResult(granted = false, canAskAgain = false)
+            assertEquals(CameraPermissionStatus.PermanentlyDenied, awaitItem().permissionStatus)
+
+            // Granting from system settings has to escape the permanent state, not stick in it.
+            viewModel.onPermissionResult(granted = true, canAskAgain = false)
+            assertEquals(CameraPermissionStatus.Granted, awaitItem().permissionStatus)
+        }
+    }
+
+    @Test
     fun `capture lifecycle updates isCapturing and lastSavedUri, clearing any previous error`() = runTest {
         val uri = mockk<Uri>()
 

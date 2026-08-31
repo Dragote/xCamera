@@ -243,9 +243,19 @@ class CameraViewModel @Inject constructor(
 
     fun stopOrientationListener() = cameraRepository.stopOrientationListener()
 
-    fun onPermissionResult(granted: Boolean) {
+    /**
+     * [canAskAgain] is the caller's `shouldShowRequestPermissionRationale` reading, and is what
+     * separates a first denial (the system dialog can still be raised, so Retry means something)
+     * from a permanent one (re-requesting returns denied without a dialog, so the only way out is
+     * the app's settings page). Ignored when [granted].
+     */
+    fun onPermissionResult(granted: Boolean, canAskAgain: Boolean = true) {
         _uiState.value = _uiState.value.copy(
-            permissionStatus = if (granted) CameraPermissionStatus.Granted else CameraPermissionStatus.Denied,
+            permissionStatus = when {
+                granted -> CameraPermissionStatus.Granted
+                canAskAgain -> CameraPermissionStatus.Denied
+                else -> CameraPermissionStatus.PermanentlyDenied
+            },
         )
     }
 
