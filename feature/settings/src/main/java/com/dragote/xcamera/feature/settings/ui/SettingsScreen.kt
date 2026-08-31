@@ -58,7 +58,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
@@ -74,6 +73,7 @@ import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import com.dragote.xcamera.shared.common.domain.model.LutPreset
 import com.dragote.xcamera.shared.designsystem.component.control.Toggle
 import com.dragote.xcamera.shared.designsystem.component.state.LoadingIndicator
+import com.dragote.xcamera.shared.designsystem.haptics.hapticPress
 import com.dragote.xcamera.shared.designsystem.theme.MinimalChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 import com.dragote.xcamera.shared.navigation.DiagnosticsRoutes
@@ -370,7 +370,7 @@ private fun LutSelector(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             LutPill(label = "OFF", isSelected = selectedLutId == null, enabled = !isEditMode) {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.hapticPress()
                 onLutSelected(null)
             }
             luts.forEachIndexed { index, lut ->
@@ -381,7 +381,7 @@ private fun LutSelector(
                     isEditMode = isEditMode,
                     jigglePhaseIndex = index,
                 ) {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    haptic.hapticPress()
                     if (isEditMode) onLutDeleteRequested(lut.id) else onLutSelected(lut.id)
                 }
             }
@@ -403,7 +403,7 @@ private fun LutSelector(
             if (luts.isNotEmpty()) {
                 IconButton(
                     onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        haptic.hapticPress()
                         isEditMode = !isEditMode
                     },
                     modifier = Modifier.size(24.dp),
@@ -618,7 +618,7 @@ private fun PeakingSensitivitySelector(
                         )
                         .semantics { this.selected = isSelected }
                         .clickable(enabled = !isSelected, role = Role.RadioButton) {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            haptic.hapticPress()
                             onSelected(option)
                         }
                         .padding(horizontal = 14.dp, vertical = 8.dp),
