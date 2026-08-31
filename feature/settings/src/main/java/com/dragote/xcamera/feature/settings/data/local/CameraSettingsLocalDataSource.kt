@@ -28,6 +28,7 @@ class CameraSettingsLocalDataSource @Inject constructor(
     private val lutIntensityPercentKey = intPreferencesKey("lut_intensity_percent")
     private val captureRawByDefaultKey = booleanPreferencesKey("capture_raw_by_default")
     private val minimalChromeInvertedKey = booleanPreferencesKey("minimal_chrome_inverted")
+    private val hapticFeedbackEnabledKey = booleanPreferencesKey("haptic_feedback_enabled")
 
     /** Falls back to an empty [Preferences] on a corrupt preferences file rather than propagating
      *  the read failure — a settings read has no meaningful failure mode a caller could act on, it
@@ -56,6 +57,8 @@ class CameraSettingsLocalDataSource @Inject constructor(
                 captureRawByDefault = preferences[captureRawByDefaultKey] ?: CameraSettings().captureRawByDefault,
                 minimalChromeInverted = preferences[minimalChromeInvertedKey]
                     ?: CameraSettings().minimalChromeInverted,
+                hapticFeedbackEnabled = preferences[hapticFeedbackEnabledKey]
+                    ?: CameraSettings().hapticFeedbackEnabled,
             )
         }
 
@@ -93,5 +96,9 @@ class CameraSettingsLocalDataSource @Inject constructor(
 
     suspend fun setMinimalChromeInverted(enabled: Boolean) {
         dataStore.edit { it[minimalChromeInvertedKey] = enabled }
+    }
+
+    suspend fun setHapticFeedbackEnabled(enabled: Boolean) {
+        dataStore.edit { it[hapticFeedbackEnabledKey] = enabled }
     }
 }

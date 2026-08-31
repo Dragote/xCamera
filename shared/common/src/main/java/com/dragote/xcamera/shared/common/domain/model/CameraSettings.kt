@@ -1,7 +1,8 @@
 package com.dragote.xcamera.shared.common.domain.model
 
-/** User-configurable viewfinder overlays, persisted by `feature:settings` and consumed by
- *  `feature:camera` — see [com.dragote.xcamera.shared.common.domain.repository.CameraSettingsRepository]. */
+/** User-configurable app preferences, persisted by `feature:settings` — mostly `feature:camera`'s
+ *  viewfinder overlays, plus the presentation-wide chrome and haptics switches every screen honors.
+ *  See [com.dragote.xcamera.shared.common.domain.repository.CameraSettingsRepository]. */
 data class CameraSettings(
     val showGrid: Boolean = false,
     val showHistogram: Boolean = true,
@@ -29,4 +30,15 @@ data class CameraSettings(
      * preference; no interaction/behavior implications.
      */
     val minimalChromeInverted: Boolean = false,
+    /**
+     * Master switch for every haptic effect the app fires — the dial detents, the lever/toggle
+     * presses, the focus holds, the horizon-level tick. Defaults to `true`: the tactile chrome is
+     * central to this app's identity, so silence is the opt-in.
+     *
+     * The app needs its own switch because it deliberately escapes the system one: `hapticTick`
+     * tags its vibration `USAGE_HARDWARE_FEEDBACK`, a category Android's "Touch feedback" setting
+     * doesn't gate (see that function's own doc), so without this a user has no way to turn the
+     * app's haptics off at all.
+     */
+    val hapticFeedbackEnabled: Boolean = true,
 )

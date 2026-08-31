@@ -24,4 +24,7 @@ data class SettingsUiState(
     /** Color-inverted variant of `feature:camera`'s minimal-chrome theme — see
      *  `CameraSettings.minimalChromeInverted`'s own doc. */
     val minimalChromeInverted: Boolean = false,
+    /** Master switch for every haptic the app fires — see `CameraSettings.hapticFeedbackEnabled`'s
+     *  own doc. */
+    val hapticFeedbackEnabled: Boolean = true,
 )

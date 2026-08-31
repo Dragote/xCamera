@@ -58,7 +58,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
@@ -74,6 +73,8 @@ import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import com.dragote.xcamera.shared.common.domain.model.LutPreset
 import com.dragote.xcamera.shared.designsystem.component.control.Toggle
 import com.dragote.xcamera.shared.designsystem.component.state.LoadingIndicator
+import com.dragote.xcamera.shared.designsystem.haptics.Haptics
+import com.dragote.xcamera.shared.designsystem.haptics.hapticPress
 import com.dragote.xcamera.shared.designsystem.theme.MinimalChrome
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 import com.dragote.xcamera.shared.navigation.DiagnosticsRoutes
@@ -162,6 +163,7 @@ fun SettingsScreen(
                     onFocusPeakingSensitivityChanged = viewModel::onFocusPeakingSensitivityChanged,
                     onCaptureRawByDefaultToggled = viewModel::onCaptureRawByDefaultToggled,
                     onMinimalChromeInvertedToggled = viewModel::onMinimalChromeInvertedToggled,
+                    onHapticFeedbackEnabledToggled = viewModel::onHapticFeedbackEnabledToggled,
                     onLutSelected = viewModel::onLutSelected,
                     onLutDeleteRequested = viewModel::onLutDeleteRequested,
                     onLutIntensityChanged = viewModel::onLutIntensityChanged,
@@ -188,6 +190,7 @@ private fun SettingsContent(
     onFocusPeakingSensitivityChanged: (FocusPeakingSensitivity) -> Unit,
     onCaptureRawByDefaultToggled: (Boolean) -> Unit,
     onMinimalChromeInvertedToggled: (Boolean) -> Unit,
+    onHapticFeedbackEnabledToggled: (Boolean) -> Unit,
     onLutSelected: (String?) -> Unit,
     onLutDeleteRequested: (String) -> Unit,
     onLutIntensityChanged: (Int) -> Unit,
@@ -204,6 +207,10 @@ private fun SettingsContent(
     } else {
         MinimalChrome.Palette.Normal
     }
+    // Same one-write-per-recomposition shape, and needed on this screen in its own right: every
+    // control below is itself haptic, so flipping HAPTICS has to silence the very toggle that
+    // flipped it rather than waiting for the next visit to the camera screen.
+    Haptics.enabled = uiState.hapticFeedbackEnabled
 
     Column(
         modifier = modifier
@@ -240,6 +247,11 @@ private fun SettingsContent(
             onToggle = { onMinimalChromeInvertedToggled(!uiState.minimalChromeInverted) },
             label = "INVERT CHROME",
         )
+        LabeledToggle(
+            checked = uiState.hapticFeedbackEnabled,
+            onToggle = { onHapticFeedbackEnabledToggled(!uiState.hapticFeedbackEnabled) },
+            label = "HAPTICS",
+        )
         PeakingSensitivitySelector(
             selected = uiState.focusPeakingSensitivity,
             onSelected = onFocusPeakingSensitivityChanged,
@@ -264,8 +276,9 @@ private fun SettingsContent(
  * `MinimalChrome` call site to actually need an external label alongside a plain boolean [Toggle] (every
  * `feature:camera` use of [Toggle] so far carries its own `knobContent` instead, e.g. an icon or A/M
  * letter, and needs no separate label), so per this repo's duplication convention it stays local to this
- * file rather than being promoted anywhere else yet — five call sites *within this one file* (GRID/
- * HISTOGRAM/HORIZON/RAW CAPTURE/INVERT CHROME below) is what makes it worth factoring out at all.
+ * file rather than being promoted anywhere else yet — six call sites *within this one file* (GRID/
+ * HISTOGRAM/HORIZON/RAW CAPTURE/INVERT CHROME/HAPTICS below) is what makes it worth factoring out at
+ * all.
  */
 @Composable
 private fun LabeledToggle(checked: Boolean, onToggle: () -> Unit, label: String, modifier: Modifier = Modifier) {
@@ -370,7 +383,7 @@ private fun LutSelector(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             LutPill(label = "OFF", isSelected = selectedLutId == null, enabled = !isEditMode) {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.hapticPress()
                 onLutSelected(null)
             }
             luts.forEachIndexed { index, lut ->
@@ -381,7 +394,7 @@ private fun LutSelector(
                     isEditMode = isEditMode,
                     jigglePhaseIndex = index,
                 ) {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    haptic.hapticPress()
                     if (isEditMode) onLutDeleteRequested(lut.id) else onLutSelected(lut.id)
                 }
             }
@@ -403,7 +416,7 @@ private fun LutSelector(
             if (luts.isNotEmpty()) {
                 IconButton(
                     onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        haptic.hapticPress()
                         isEditMode = !isEditMode
                     },
                     modifier = Modifier.size(24.dp),
@@ -618,7 +631,7 @@ private fun PeakingSensitivitySelector(
                         )
                         .semantics { this.selected = isSelected }
                         .clickable(enabled = !isSelected, role = Role.RadioButton) {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            haptic.hapticPress()
                             onSelected(option)
                         }
                         .padding(horizontal = 14.dp, vertical = 8.dp),

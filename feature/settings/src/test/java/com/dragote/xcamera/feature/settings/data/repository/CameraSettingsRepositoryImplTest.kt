@@ -148,6 +148,18 @@ class CameraSettingsRepositoryImplTest {
     }
 
     @Test
+    fun `setHapticFeedbackEnabled persists and is reflected by observeSettings`() = runTest {
+        val repository = buildRepository()
+
+        repository.observeSettings().test {
+            assertEquals(CameraSettings(), awaitItem())
+
+            repository.setHapticFeedbackEnabled(false)
+            assertEquals(CameraSettings(hapticFeedbackEnabled = false), awaitItem())
+        }
+    }
+
+    @Test
     fun `each setter's write is independent of the other two settings`() = runTest {
         val repository = buildRepository()
 

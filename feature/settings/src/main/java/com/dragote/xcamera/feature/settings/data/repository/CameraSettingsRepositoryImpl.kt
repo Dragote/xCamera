@@ -32,4 +32,7 @@ class CameraSettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setMinimalChromeInverted(enabled: Boolean) =
         localDataSource.setMinimalChromeInverted(enabled)
+
+    override suspend fun setHapticFeedbackEnabled(enabled: Boolean) =
+        localDataSource.setHapticFeedbackEnabled(enabled)
 }

@@ -34,4 +34,6 @@ interface CameraSettingsRepository {
     suspend fun setCaptureRawByDefault(enabled: Boolean)
 
     suspend fun setMinimalChromeInverted(enabled: Boolean)
+
+    suspend fun setHapticFeedbackEnabled(enabled: Boolean)
 }
