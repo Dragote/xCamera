@@ -46,10 +46,69 @@ link_memory() {
   fi
 }
 
+# Checks the repo's context files against the rules in CLAUDE.md / the write-memory
+# skill: index and files in sync both ways, wiki-links resolve, slugs match filenames,
+# feature docs inside their word budget. Prints one line per problem, nothing when clean.
+check_context() {
+  local mem="$REPO_ROOT/.claude/memory" idx="$REPO_ROOT/.claude/memory/MEMORY.md"
+  local docs="$REPO_ROOT/.claude/docs/features" problems=0
+  local f base
+
+  for f in "$mem"/*.md; do
+    base="$(basename "$f")"
+    [ "$base" = "MEMORY.md" ] && continue
+    grep -q "($base)" "$idx" || { echo "memory '$base' has no line in MEMORY.md"; problems=$((problems+1)); }
+    grep -q "^name: ${base%.md}$" "$f" || { echo "memory '$base' has a name: that doesn't match its filename"; problems=$((problems+1)); }
+    grep -q "^description: Read " "$f" || { echo "memory '$base' description is not a trigger (must start 'Read when/before')"; problems=$((problems+1)); }
+  done
+
+  for base in $(grep -o '([a-z0-9-]*\.md)' "$idx" | tr -d '()'); do
+    [ -f "$mem/$base" ] || { echo "MEMORY.md lists '$base', which does not exist"; problems=$((problems+1)); }
+  done
+
+  for base in $(grep -oh '\[\[[a-z0-9-]*\]\]' "$mem"/*.md | tr -d '[]' | sort -u); do
+    [ -f "$mem/$base.md" ] || { echo "dangling wiki-link [[$base]] in memory"; problems=$((problems+1)); }
+  done
+
+  # Referential check: a doc naming a `Symbol` that no longer exists in the sources is
+  # stale in a way no structural check sees. ALL-CAPS tokens are platform constants;
+  # EXTERNAL_SYMBOLS are deliberate mentions of APIs this project does not use.
+  local EXTERNAL_SYMBOLS="Camera2Interop Camera2CameraControl Camera2CameraInfo ImageCapture PixelCopy Preview"
+  if [ -d "$docs" ]; then
+    for sym in $(grep -oh '`[A-Z][A-Za-z0-9]*' "$docs"/*.md 2>/dev/null | tr -d '`' | sort -u); do
+      printf '%s' "$sym" | grep -q '^[A-Z0-9_]*$' && continue
+      case " $EXTERNAL_SYMBOLS " in *" $sym "*) continue ;; esac
+      grep -rqw "$sym" --include='*.kt' "$REPO_ROOT/feature" "$REPO_ROOT/shared" "$REPO_ROOT/app" 2>/dev/null && continue
+      # A doc may name a file whose declarations are named differently (DialText.kt holds no
+      # `DialText` function), so a matching filename counts as the symbol existing.
+      find "$REPO_ROOT/feature" "$REPO_ROOT/shared" "$REPO_ROOT/app" -name "$sym.kt" -not -path '*/build/*' 2>/dev/null | grep -q . \
+        || { echo "feature docs name '$sym', which no longer exists in the sources"; problems=$((problems+1)); }
+    done
+  fi
+
+  if [ -d "$docs" ]; then
+    for f in "$docs"/*.md; do
+      base="$(basename "$f")"
+      [ "$base" = "README.md" ] && continue
+      grep -q "($base)" "$docs/README.md" || { echo "feature doc '$base' has no line in its README"; problems=$((problems+1)); }
+      local words; words=$(wc -w < "$f" | tr -d " ")
+      [ "$words" -gt 1500 ] && { echo "feature doc '$base' is $words words — past the point where it is probably describing code, not explaining it"; problems=$((problems+1)); }
+    done
+  fi
+
+  return $problems
+}
+
 if $HOOK_MODE; then
   # Stay silent when already correct; speak up only when something was repaired.
   changed="$(link_memory 2>/dev/null || true)"
-  [ -n "$changed" ] && printf '{"systemMessage":"Claude memory: %s (run scripts/claude-bootstrap.sh for the full check)."}\n' "$changed"
+  issues="$(check_context 2>/dev/null || true)"
+  msg=""
+  [ -n "$changed" ] && msg="Claude memory: $changed."
+  [ -n "$issues" ] && msg="$msg Context files need attention: $(printf '%s' "$issues" | tr '\n' '|' | sed 's/|/; /g; s/; $//')."
+  if [ -n "$msg" ]; then
+    printf '{"systemMessage":"%s"}\n' "$(printf '%s' "${msg# }" | sed 's/"/\\"/g')"
+  fi
   exit 0
 fi
 
@@ -93,4 +152,12 @@ fi
 
 command -v gh >/dev/null 2>&1 \
   && ok "gh installed" \
-  || warn "gh missing (the spec-writer agent needs it): brew install gh && gh auth login"
+  || warn "gh missing (/take-issue, /ship and the spec-writer agent need it): brew install gh && gh auth login"
+
+echo
+echo "Context files:"
+if issues="$(check_context)"; then
+  ok "memory index, wiki-links and feature docs are consistent"
+else
+  printf '%s\n' "$issues" | while IFS= read -r line; do warn "$line"; done
+fi
