@@ -41,6 +41,32 @@ Every issue carries exactly one, and the branch prefix follows it (`<label>/<N>-
 
 The line between the last two is **what the change acts on, not whether users can see it**: `tech` acts on the program, `documentation` acts on the instructions given to whoever works on the program. Reworking agent definitions, memory, or this file is `documentation` however infra-flavored it looks — that pull toward `tech` is the trap, and `tech/57-claude-context-in-repo` on `main` is an instance of falling into it. Don't cite it as precedent.
 
+## When a change becomes a pull request
+
+A request made in conversation — "fix this", "rename that", "try it the other way" — is a request for **the change itself**. Make it in the working tree and stop there. Don't file an issue, don't branch, don't commit unasked: the user reads the result, iterates on it, and often the next instruction changes it again.
+
+The lifecycle starts on a separate, explicit signal — `/task` up front, `/ship` once work is already sitting in the tree, or the user simply saying to file it and push it for review. `/ship` handles the retroactive case: it files the issue when there isn't one and moves work off `main` onto a properly named branch, so nothing has to be planned as a task in advance.
+
+Where the flow ends is decided by the issue's type label, not asked each time:
+
+| Label | Ends at |
+|---|---|
+| `documentation` | **Merged.** Nothing here can be checked on a device, so green tests plus the context validator are the whole verification that exists — carrying it to `main` adds nothing but a round trip |
+| `tech`, `feature`, `bug` | **The open PR**, board on In review, debug build installed, then report and stop. These change code that runs, and the user verifies on-device before merging |
+
+## Commit conventions
+
+Subject is `#<N>: Message` — leading `#`, colon, capitalized imperative. The body explains **why**, never what: the diff already shows what. Trailers may carry `Closes #<N>`.
+
+**One coherent step per commit, not one commit per task.** A large piece of work arriving as a single commit is the failure mode to avoid — it cannot be reviewed, reverted, or bisected in pieces. Two tests for whether a split is right:
+
+- **Atomic.** The commit does one thing. If its subject needs an "and", it is two commits.
+- **Green.** Any commit can be checked out on its own and `./gradlew test` passes. This is a constraint on *ordering*, not a demand to run the suite N times: introduce a function before its call site, land a new component before the screen that uses it, delete a symbol only once nothing references it. When a split's ordering isn't obviously safe, check out the intermediate commit and build it rather than assuming.
+
+Separate mechanical change from meaningful change even when they are part of one task: a rename or a file move goes in its own commit, so git can still see it as a rename and the commit that changes behavior stays small enough to read. Issue #59 moved `docs/` under `.claude/` in one commit and rewrote a doc's content in the next for exactly this reason — bundled, the move would have shown up as a delete plus an add.
+
+If a change genuinely is one step, one commit is right. The rule is against *dumping*, not against small changes.
+
 ## Commands and skills
 
 `.claude/commands/` holds the repo's repeatable procedures as commands rather than as prose someone has to recall and interpret: **`/take-issue <N>`** (assign the issue, move the board to In progress, cut the correctly-prefixed branch) and **`/ship`** (test, rebase, push, open the PR, move the board, and — only when asked — merge with this project's `Merge <branch>` subject). The board/label IDs they depend on live in project memory `reference-github-project`. When a workflow here becomes routine, add a command instead of writing it down in memory.

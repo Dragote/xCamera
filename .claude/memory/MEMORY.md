@@ -11,3 +11,6 @@ Grouped by the moment each memory applies. The trigger is the point of each line
 
 **Finishing a change**
 - [Verification](feedback-verification.md) — code is written: run tests + installDebug, nothing beyond that, and keep the Gradle log out of context
+
+**Running the session**
+- [Session economy](feedback-session-economy.md) — starting a task, weighing a subagent, or a session that has run long: keep it short and shallow, context length dominates cost
