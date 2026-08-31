@@ -3,7 +3,6 @@
 - [Minimal infra preference](feedback-minimal-infra.md) — user prefers smallest working slice over speculative scaffolding
 - [Build+verify workflow](feedback-build-verify.md) — after changes: tests + installDebug only, stop there, user tests the rest himself
 - [GitHub Project reference](reference-github-project.md) — xCamera board IDs/status options + gh CLI workflow for "take issue #N into work"
-- [No Claude attribution](feedback-no-claude-attribution.md) — never add Co-Authored-By: Claude or "Generated with Claude Code" to commits/PRs in this repo
 - [Lean build output](feedback-lean-build-output.md) — pipe ./gradlew through tail/grep for pass/fail, don't dump full log unless it fails
 - [Merge commit format](feedback-merge-commit-format.md) — use `gh pr merge --subject "Merge <branch>"`, not GitHub's default "Merge pull request #N from..."
 - [Shared UI reuse](feedback-shared-ui-reuse.md) — reused Compose components/tokens go in shared:designsystem, not duplicated across feature modules
