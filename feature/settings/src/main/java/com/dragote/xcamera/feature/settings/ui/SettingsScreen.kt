@@ -330,7 +330,7 @@ private fun CaptureRawByDefaultSetting(enabled: Boolean, onToggle: (Boolean) -> 
  * on the "+ IMPORT" pill itself, for the separate file-copy step that precedes resolution, and disables
  * re-tapping import while one's already in flight.
  *
- * Deletion is a classic iOS-style "jiggle mode" — the pencil/check toggle next to the "COLOR
+ * Deletion uses a "jiggle mode" — the pencil/check toggle next to the "COLOR
  * LUT" label flips [isEditMode] (pure transient UI state, local to this composable, not worth threading
  * through the ViewModel); while active every imported [LutPreset] chip shakes and tints red (see
  * [LutPill]'s own doc) and tapping one deletes it via [onLutDeleteRequested] instead of selecting it.
@@ -431,7 +431,7 @@ private fun LutSelector(
  * deliberately non-interactive until the copy finishes.
  *
  * [isEditMode] (only ever passed `true` for an actual [LutPreset] chip — "OFF"/"+ IMPORT" never jiggle)
- * drives the classic iOS "jiggle to delete" look: a small [rememberInfiniteTransition]-driven
+ * drives the "jiggle to delete" look: a small [rememberInfiniteTransition]-driven
  * `rotationZ` wobble between ±[JiggleAmplitudeDegrees] over [JiggleDurationMs] each way, plus a red tint
  * (reusing [MaterialTheme]'s own `colorScheme.error` rather than inventing a new design-system token
  * for this one spot) on the fill/border/label. [jigglePhaseIndex] offsets each chip's animation start by

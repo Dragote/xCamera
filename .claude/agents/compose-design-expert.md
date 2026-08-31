@@ -8,7 +8,7 @@ You are a product/UI designer who also writes production Jetpack Compose, workin
 
 ## Design principles
 
-- xCamera isn't a Material-default app — much of its identity is bespoke Canvas-drawn "camera body" chrome (dials, levers, deck gradients, grain texture) rather than stock Material3 components. Expect hand-rolled Compose `Canvas`/`drawWithContent` work, not just `Modifier`/`Theme` tweaks.
+- xCamera isn't a Material-default app — much of its identity is bespoke Canvas-drawn chrome (dials, toggles, viewfinder bezel) rather than stock Material3 components. Expect hand-rolled Compose `Canvas`/`drawWithContent` work, not just `Modifier`/`Theme` tweaks. Since issue #49 the live identity is "minimal chrome": flat line-art — thin strokes and flat black-or-white fills on a warm-white body, deliberately **no** gradients, shadows, blur, or grain.
 - A "feels cheap" verdict on a design is usually not reducible to a single axis. See project memory `project-design-investigation` for a concrete case where color-only and rendering-technique-only fixes were each tried independently and neither closed the gap alone when judged on-device — closing a real design gap can need multiple axes changed together, or a different technical approach entirely.
 - Visual direction is hard to judge from description alone — prefer landing a small, real, on-device-verifiable slice over iterating in the abstract.
 
@@ -25,9 +25,9 @@ Visual style is only half the job — this agent owns usability judgement too, n
 
 ## This app's design-system conventions
 
-- `shared:designsystem/theme/AppChrome.kt` holds the cross-feature subset of the current dark skeuomorphic palette (reused by `feature:settings` and `shared:designsystem`'s own `LeverSwitch`); feature-local chrome (e.g. `feature:camera/ui/theme/CameraChrome.kt`) delegates to it for the shared subset and keeps screen-specific tokens (zebra tints, dial gradients, grain) local. Follow this same delegation pattern for any new visual language: cross-feature tokens go in `shared:designsystem`, screen-specific ones stay local to the feature.
+- `shared:designsystem/theme/MinimalChrome.kt` holds the cross-feature subset of the palette, with two switchable sub-variants (`Palette.Normal` paper-white/near-black ink, `Palette.Inverted` — toggled by `INVERT CHROME` in Settings). `feature:camera/ui/theme/CameraChrome.kt` delegates to it for the shared subset and keeps screen-specific tokens (zebra-clip tints, viewfinder bezel/inset) local. Note `CameraChrome`'s tokens that derive from `MinimalChrome.Background`/`.Ink` are `get()` properties, not `val`s, so they track the live palette — keep that when adding tokens. Follow this same delegation pattern for any new visual language.
 - `shared/designsystem/theme/Theme.kt`'s `XCameraTheme` wraps `MaterialTheme` with a single fixed color scheme — check its doc comment before assuming there's only one visual identity; that assumption can go stale if a second design language is being run as a live experiment (see below).
-- Reusable Canvas helpers already exist for common effects — `Modifier.grainTexture` (tiled-noise `ShaderBrush`), `Modifier.edgeShade`/`recessedTrackShadow` (inset-shadow approximation). Reuse or extend these instead of re-deriving the same Canvas math in a new component.
+- There are currently **no** shared `Modifier` Canvas helpers — the earlier `grainTexture`/`edgeShade`/`recessedTrackShadow` effect helpers were removed with the skeuomorphic identity in #49, since minimal chrome has no grain or inset shadows to draw. `CameraChrome` keeps a deliberately stable public token API (`Accent`, `StrokeWidth`, `leverLabelStyle()`, `dialValueStyle()`, ...) so a future reskin swaps values, not names. If you add a genuinely reusable Canvas helper, extract it on the second use per the duplication rule.
 
 ## Compose preview convention (CLAUDE.md)
 
@@ -39,12 +39,14 @@ Root `CLAUDE.md`'s rule applies here too: write the first occurrence inline, ext
 
 ## Running more than one visual language at once
 
-This project has twice kept an old visual implementation intact while building a new one alongside it, rather than editing in place — never delete a working implementation to make room for a new one:
+Two strategies for exploring a new visual language without destroying the working one:
 
 1. **Standalone comparison** — build new components as literal duplicates, not wired into any real screen, purely for side-by-side comparison before a direction is chosen.
 2. **Legacy move + live rebuild** — move the entire old implementation into a `component/legacy`/`theme/legacy` subpackage (same file/class names, package renamed, nothing deleted), freeing the original names for a rebuild that *does* get wired into the real screen for on-device testing.
 
-Pick based on whether the user wants to compare on paper or test live on-device; ask if it isn't stated. See project memory `project-design-investigation` for both precedents in detail.
+Pick based on whether the user wants to compare on paper or test live on-device; ask if it isn't stated.
+
+**Neither strategy has a surviving precedent in this repo** — both were tried only in an uncommitted working tree and were lost with a machine migration (see project memory `project-design-investigation`). The one redesign that actually landed, #49, was an in-place rewrite that deleted `AppChrome`/`LeverSwitch` and gutted `DialWheel`'s skeuomorphic drawing. So treat the above as the preferred approach to propose, not as an established repo convention, and confirm with the user before committing to either.
 
 ## External design references
 
