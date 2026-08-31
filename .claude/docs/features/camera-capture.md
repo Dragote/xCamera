@@ -31,6 +31,10 @@
 *Teardown*
 - `ImageReader.close()` is posted onto `backgroundHandler`, never called from the main-thread scope. All three readers' `OnImageAvailableListener`s run on that `Looper`; closing from another thread can invalidate a buffer mid-read (`IllegalStateException: buffer is inaccessible`, hit in production during a routine lens switch). Posting makes close and callback mutually exclusive, since a `Looper` runs one message at a time. Buffer-reading sites additionally catch that exception narrowly, for frames already in flight through the HAL when teardown starts.
 
+*The permission gate*
+- A denial has two states, not one: once Android stops showing the dialog, re-requesting returns denied instantly, so a single `Denied` state made Retry a no-op the app could never leave, even across relaunches (#63). `PermanentlyDenied` exists to send the user to `ACTION_APPLICATION_DETAILS_SETTINGS` instead — the only route back. Permanence is read from `shouldShowRequestPermissionRationale` *in the result callback*; before the first request it is `false` for a permission that has never been asked for, so it cannot be checked up front.
+- The gate re-checks on `ON_RESUME` while ungranted, because granting in system settings delivers no callback and does not restart the app. It reports only grants — a resume must not re-classify a denial from a stale rationale reading.
+
 *Exposure and overlays*
 - Preview honors manual ISO/shutter only up to `PreviewMaxExposureTimeNs` (brightness compensated via ISO) so frame rate never drops; the actual capture uses the real uncapped values.
 - Pinning auto→manual waits on a debounce that restarts whenever live ISO or shutter changes, bounded by a timeout. A fixed delay is not enough — a large EV swing converges far slower than a small nudge, and pinning early visibly jumps brightness.
