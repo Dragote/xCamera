@@ -68,6 +68,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dragote.xcamera.feature.camera.di.CameraRepositoryEntryPoint
@@ -217,7 +219,25 @@ fun CameraScreen(
         }
     }
 
-    when (uiState.permissionStatus) {
+    // Granting the permission from system settings restarts nothing and delivers no result callback,
+    // so without this the app would sit on the gate screen until the user killed and relaunched it.
+    val permissionStatus = uiState.permissionStatus
+    if (permissionStatus != CameraPermissionStatus.Granted) {
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner, permissionStatus) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
+                val granted = requiredPermissions.all {
+                    ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+                }
+                if (granted) viewModel.onPermissionResult(true)
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+    }
+
+    when (permissionStatus) {
         CameraPermissionStatus.Granted -> CameraContent(navigator = navigator, viewModel = viewModel, uiState = uiState)
         CameraPermissionStatus.Denied -> ErrorState(
             message = "Camera permission is required to use xCamera",
