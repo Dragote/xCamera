@@ -1,12 +1,13 @@
-- [Project vision](project-vision.md) — xCamera pairs a pro capture pipeline with a playful, tactile, highly customizable interface
-- [Camera feasibility on Android](camera-feasibility-android.md) — per-feature API mapping (Camera2/CameraX/DngCreator/LUT shaders) and platform risks
-- [Minimal infra preference](feedback-minimal-infra.md) — user prefers smallest working slice over speculative scaffolding
-- [Build+verify workflow](feedback-build-verify.md) — after changes: tests + installDebug only, stop there, user tests the rest himself
-- [GitHub Project reference](reference-github-project.md) — xCamera board IDs/status options + gh CLI workflow for "take issue #N into work"
-- [Lean build output](feedback-lean-build-output.md) — pipe ./gradlew through tail/grep for pass/fail, don't dump full log unless it fails
-- [Merge commit format](feedback-merge-commit-format.md) — use `gh pr merge --subject "Merge <branch>"`, not GitHub's default "Merge pull request #N from..."
-- [Shared UI reuse](feedback-shared-ui-reuse.md) — reused Compose components/tokens go in shared:designsystem, not duplicated across feature modules
-- [Feature module isolation](feedback-feature-module-isolation.md) — cross-feature nav via shared:navigation route constants, cross-feature contracts via shared:common
-- [Camera chrome design investigation](project-design-investigation.md) — falsified redesign hypotheses, the abandoned neo-skeuomorphic direction (its code lost uncommitted), and the minimal-chrome identity that shipped in #49
-- [Multi-device setup](multi-device-setup.md) — user works from several Macs; memory is committed to the repo and symlinked per machine
-- [Toolchain setup](toolchain-setup.md) — per-machine JDK/Android SDK/gh that cloning the repo does not restore
+Grouped by the moment each memory applies. The trigger is the point of each line, not the topic — read the file when its trigger fires.
+
+**Deciding what to build**
+- [Project vision](project-vision.md) — scoping a camera feature: the long-term target list to slice from, never a v1 requirement
+- [Minimal infra](feedback-minimal-infra.md) — tempted to add a module, abstraction, or config "for later": don't, ship the smallest working slice
+- [GitHub board reference](reference-github-project.md) — creating, labelling, or tracking an issue: board IDs, and the workflow behind /take-issue and /ship
+
+**Writing the code**
+- [Camera feasibility on Android](camera-feasibility-android.md) — touching capture, sensor control, or the image pipeline: which Android API can actually do it and what it demands of the device
+- [Design direction](project-design-direction.md) — changing how anything looks: flat "minimal chrome" is the shipped identity, and these directions are already ruled out
+
+**Finishing a change**
+- [Verification](feedback-verification.md) — code is written: run tests + installDebug, nothing beyond that, and keep the Gradle log out of context
