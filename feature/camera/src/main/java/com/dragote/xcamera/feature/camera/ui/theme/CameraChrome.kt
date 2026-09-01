@@ -13,7 +13,7 @@ import com.dragote.xcamera.shared.designsystem.theme.MinimalChrome
  * and is re-exported here; everything below that has no counterpart there is specific to this one
  * screen (the zebra-clip semantic tints, the viewfinder bezel/inset treatment) and stays local.
  *
- * Deliberately keeps a stable public shape (`Accent`, `EaseStandard`, `leverLabelStyle()`,
+ * Deliberately keeps a stable public shape (`DialInk`, `EaseStandard`, `leverLabelStyle()`,
  * `dialValueStyle()`, ...) even where a token is now just a flat pass-through with no gradient/hue
  * behind it — every component under `ui/component/` references `CameraChrome.<member>` by these same
  * names regardless of which visual identity is live, so a future reskin only needs to swap *values*
@@ -27,15 +27,21 @@ import com.dragote.xcamera.shared.designsystem.theme.MinimalChrome
  */
 object CameraChrome {
 
-    /** No hue-based accent in this identity — every stroke/fill/text is [Ink] or [Background] (see
-     *  [MinimalChrome]'s own doc for why). Kept as a named token (rather than switching every call
-     *  site to `MinimalChrome.Ink` directly) so dial/lever components that take an `accent: Color`
-     *  parameter don't couple that parameter's *meaning* to whichever identity is currently live. */
-    val Accent: Color get() = MinimalChrome.Ink
+    /** What the dials' barrels and center carets draw with — flat [Ink], no hue. Kept as a named
+     *  token (rather than switching every call site to `MinimalChrome.Ink` directly) so the
+     *  dial/lever components that take an `accent: Color` parameter don't couple that parameter's
+     *  *meaning* to whichever identity is currently live. */
+    val DialInk: Color get() = MinimalChrome.Ink
 
-    /** Local alias for [MinimalChrome.Ink] — see [Accent]'s own doc for why call sites keep a
+    /** Local alias for [MinimalChrome.Ink] — see [DialInk]'s own doc for why call sites keep a
      *  feature-local name rather than reaching into [MinimalChrome] directly everywhere. */
     val Ink: Color get() = MinimalChrome.Ink
+
+    /** The user's chosen accent hue, `null` meaning "no accent" — see [MinimalChrome.accent]. Stays
+     *  nullable rather than collapsing to [Ink] here because a control painting with it generally
+     *  needs a different treatment for the two cases, not just a different color (see
+     *  [com.dragote.xcamera.feature.camera.ui.component.control.ShutterButton]'s pressed fill). */
+    val Accent: Color? get() = MinimalChrome.accent
 
     /** [com.dragote.xcamera.feature.camera.domain.model.ZebraClipping.SHADOW] stripe tint — kept as a
      *  real hue (not flattened to [Ink]) because it's carrying live-viewfinder semantic information

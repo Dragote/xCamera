@@ -9,7 +9,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
@@ -35,13 +37,18 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
+import com.dragote.xcamera.shared.common.domain.model.AccentColor
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
  * Shutter release button — 128dp well, 102dp button. The well is a thin-stroke outline, the button a
  * flat filled circle with no gradient/gloss/shadow. A press reads as a distinct, visible state change
- * from the fill itself darkening a step (`lerp` toward a mid warm-gray) plus a shift/scale, since
- * there's no shadow to collapse for that feedback instead.
+ * from the fill itself stepping to a different color plus a shift/scale, since there's no shadow to
+ * collapse for that feedback instead.
+ *
+ * The one control in the app that carries the user's [accent] hue: it takes both the face and the
+ * well outline, so the whole release reads as one colored unit against the monochrome deck. `null`
+ * (the default preference) is the plain ink button, unchanged.
  */
 @Composable
 fun ShutterButton(
@@ -49,6 +56,7 @@ fun ShutterButton(
     onHalfPress: () -> Unit = {},
     onCapture: () -> Unit = {},
     enabled: Boolean,
+    accent: Color? = CameraChrome.Accent,
 ) {
     var pressed by remember { mutableStateOf(false) }
 
@@ -72,7 +80,7 @@ fun ShutterButton(
         Canvas(Modifier.size(WELL_SIZE)) {
             val r = size.minDimension / 2f
             drawCircle(
-                color = CameraChrome.StrokeColor,
+                color = accent ?: CameraChrome.StrokeColor,
                 radius = r - CameraChrome.StrokeWidth.toPx() / 2f,
                 center = center,
                 style = Stroke(width = CameraChrome.StrokeWidth.toPx()),
@@ -103,7 +111,8 @@ fun ShutterButton(
             translate(top = dy) {
                 scale(s, pivot = center) {
                     val r = size.minDimension / 2f
-                    val fill = lerp(CameraChrome.Ink, PressedFill, p)
+                    val face = accent ?: CameraChrome.Ink
+                    val fill = lerp(face, pressedFace(accent), p)
                     drawCircle(color = fill, radius = r, center = center)
                     // Inner ring, inset 9dp — a flat contrast line separating the face from its own
                     // rim, not a gloss/gradient.
@@ -119,9 +128,19 @@ fun ShutterButton(
     }
 }
 
-/** Flat mid warm-gray the fill darkens toward on press — a plain solid color swap (not a shadow), just
- *  enough of a step to read as a distinct pressed state alongside the shift/scale. */
-private val PressedFill = Color(0xFF4A463D)
+/**
+ * What the face steps to on press — a plain solid color swap (not a shadow), just enough of a change
+ * to read as a distinct pressed state alongside the shift/scale.
+ *
+ * An accent darkens toward black by a fraction of itself rather than stepping to [InkPressedFill]:
+ * that flat warm-gray is a *lighter* step against near-black ink, but against a mid-luminance hue it
+ * would drain the color the user picked for exactly the moment they're looking at the button.
+ */
+private fun pressedFace(accent: Color?): Color =
+    if (accent == null) InkPressedFill else lerp(accent, Color.Black, 0.3f)
+
+/** The ink face's pressed step — a flat mid warm-gray. */
+private val InkPressedFill = Color(0xFF4A463D)
 
 private val WELL_SIZE: Dp = 128.dp
 private val BUTTON_SIZE: Dp = 102.dp
@@ -130,8 +149,14 @@ private val BUTTON_SIZE: Dp = 102.dp
 @Composable
 private fun ShutterButtonPreview() {
     XCameraTheme {
-        Box(modifier = Modifier.padding(24.dp)) {
-            ShutterButton(enabled = true, onCapture = {})
+        Row(modifier = Modifier.padding(24.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AccentColor.entries.forEach { option ->
+                ShutterButton(
+                    enabled = true,
+                    onCapture = {},
+                    accent = option.argb?.let { Color(it) },
+                )
+            }
         }
     }
 }

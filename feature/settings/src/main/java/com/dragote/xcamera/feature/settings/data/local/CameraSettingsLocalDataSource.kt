@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import com.dragote.xcamera.shared.common.domain.model.AccentColor
 import com.dragote.xcamera.shared.common.domain.model.CameraSettings
 import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import kotlinx.coroutines.flow.Flow
@@ -29,6 +30,7 @@ class CameraSettingsLocalDataSource @Inject constructor(
     private val captureRawByDefaultKey = booleanPreferencesKey("capture_raw_by_default")
     private val minimalChromeInvertedKey = booleanPreferencesKey("minimal_chrome_inverted")
     private val hapticFeedbackEnabledKey = booleanPreferencesKey("haptic_feedback_enabled")
+    private val accentColorKey = stringPreferencesKey("accent_color")
 
     /** Falls back to an empty [Preferences] on a corrupt preferences file rather than propagating
      *  the read failure — a settings read has no meaningful failure mode a caller could act on, it
@@ -59,6 +61,10 @@ class CameraSettingsLocalDataSource @Inject constructor(
                     ?: CameraSettings().minimalChromeInverted,
                 hapticFeedbackEnabled = preferences[hapticFeedbackEnabledKey]
                     ?: CameraSettings().hapticFeedbackEnabled,
+                // Same stored-name-no-longer-a-constant fallback as focusPeakingSensitivity above.
+                accentColor = preferences[accentColorKey]
+                    ?.let { stored -> runCatching { AccentColor.valueOf(stored) }.getOrNull() }
+                    ?: CameraSettings().accentColor,
             )
         }
 
@@ -100,5 +106,9 @@ class CameraSettingsLocalDataSource @Inject constructor(
 
     suspend fun setHapticFeedbackEnabled(enabled: Boolean) {
         dataStore.edit { it[hapticFeedbackEnabledKey] = enabled }
+    }
+
+    suspend fun setAccentColor(color: AccentColor) {
+        dataStore.edit { it[accentColorKey] = color.name }
     }
 }

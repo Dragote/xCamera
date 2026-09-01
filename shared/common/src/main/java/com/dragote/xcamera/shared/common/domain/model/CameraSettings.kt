@@ -41,4 +41,10 @@ data class CameraSettings(
      * app's haptics off at all.
      */
     val hapticFeedbackEnabled: Boolean = true,
+    /**
+     * The accent hue the shutter release is painted with — see [AccentColor] for why it holds its own
+     * color values and why it ignores [minimalChromeInverted]. Defaults to [AccentColor.OFF], leaving
+     * the chrome fully monochrome until the user asks for a color.
+     */
+    val accentColor: AccentColor = AccentColor.OFF,
 )
