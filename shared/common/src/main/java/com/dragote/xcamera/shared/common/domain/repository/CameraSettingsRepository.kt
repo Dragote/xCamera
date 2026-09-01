@@ -1,5 +1,6 @@
 package com.dragote.xcamera.shared.common.domain.repository
 
+import com.dragote.xcamera.shared.common.domain.model.AccentColor
 import com.dragote.xcamera.shared.common.domain.model.CameraSettings
 import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import kotlinx.coroutines.flow.Flow
@@ -36,4 +37,6 @@ interface CameraSettingsRepository {
     suspend fun setMinimalChromeInverted(enabled: Boolean)
 
     suspend fun setHapticFeedbackEnabled(enabled: Boolean)
+
+    suspend fun setAccentColor(color: AccentColor)
 }

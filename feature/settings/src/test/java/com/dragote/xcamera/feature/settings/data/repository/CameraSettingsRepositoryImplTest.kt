@@ -3,6 +3,7 @@ package com.dragote.xcamera.feature.settings.data.repository
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import app.cash.turbine.test
 import com.dragote.xcamera.feature.settings.data.local.CameraSettingsLocalDataSource
+import com.dragote.xcamera.shared.common.domain.model.AccentColor
 import com.dragote.xcamera.shared.common.domain.model.CameraSettings
 import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import kotlinx.coroutines.test.runTest
@@ -156,6 +157,18 @@ class CameraSettingsRepositoryImplTest {
 
             repository.setHapticFeedbackEnabled(false)
             assertEquals(CameraSettings(hapticFeedbackEnabled = false), awaitItem())
+        }
+    }
+
+    @Test
+    fun `setAccentColor persists and is reflected by observeSettings`() = runTest {
+        val repository = buildRepository()
+
+        repository.observeSettings().test {
+            assertEquals(CameraSettings(), awaitItem())
+
+            repository.setAccentColor(AccentColor.BLUE)
+            assertEquals(CameraSettings(accentColor = AccentColor.BLUE), awaitItem())
         }
     }
 

@@ -1,6 +1,7 @@
 package com.dragote.xcamera.feature.settings.data.repository
 
 import com.dragote.xcamera.feature.settings.data.local.CameraSettingsLocalDataSource
+import com.dragote.xcamera.shared.common.domain.model.AccentColor
 import com.dragote.xcamera.shared.common.domain.model.CameraSettings
 import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import com.dragote.xcamera.shared.common.domain.repository.CameraSettingsRepository
@@ -35,4 +36,6 @@ class CameraSettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setHapticFeedbackEnabled(enabled: Boolean) =
         localDataSource.setHapticFeedbackEnabled(enabled)
+
+    override suspend fun setAccentColor(color: AccentColor) = localDataSource.setAccentColor(color)
 }
