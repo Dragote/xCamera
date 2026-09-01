@@ -2,6 +2,7 @@ package com.dragote.xcamera.feature.settings.presentation
 
 import android.net.Uri
 import app.cash.turbine.test
+import com.dragote.xcamera.shared.common.domain.model.AccentColor
 import com.dragote.xcamera.shared.common.domain.model.CameraSettings
 import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import com.dragote.xcamera.shared.common.domain.model.LutPreset
@@ -78,6 +79,7 @@ class SettingsViewModelTest {
                 captureRawByDefault = true,
                 minimalChromeInverted = true,
                 hapticFeedbackEnabled = false,
+                accentColor = AccentColor.GREEN,
             )
             assertEquals(
                 SettingsUiState(
@@ -90,6 +92,7 @@ class SettingsViewModelTest {
                     captureRawByDefault = true,
                     minimalChromeInverted = true,
                     hapticFeedbackEnabled = false,
+                    accentColor = AccentColor.GREEN,
                 ),
                 awaitItem(),
             )
@@ -167,6 +170,13 @@ class SettingsViewModelTest {
         viewModel.onHapticFeedbackEnabledToggled(false)
 
         coVerify { cameraSettingsRepository.setHapticFeedbackEnabled(false) }
+    }
+
+    @Test
+    fun `onAccentColorSelected delegates to the repository`() = runTest {
+        viewModel.onAccentColorSelected(AccentColor.ORANGE)
+
+        coVerify { cameraSettingsRepository.setAccentColor(AccentColor.ORANGE) }
     }
 
     @Test

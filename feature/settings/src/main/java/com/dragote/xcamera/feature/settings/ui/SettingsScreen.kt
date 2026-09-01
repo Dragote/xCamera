@@ -69,6 +69,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dragote.xcamera.feature.settings.presentation.SettingsUiState
 import com.dragote.xcamera.feature.settings.presentation.SettingsViewModel
+import com.dragote.xcamera.shared.common.domain.model.AccentColor
 import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import com.dragote.xcamera.shared.common.domain.model.LutPreset
 import com.dragote.xcamera.shared.designsystem.component.control.Toggle
@@ -164,6 +165,7 @@ fun SettingsScreen(
                     onCaptureRawByDefaultToggled = viewModel::onCaptureRawByDefaultToggled,
                     onMinimalChromeInvertedToggled = viewModel::onMinimalChromeInvertedToggled,
                     onHapticFeedbackEnabledToggled = viewModel::onHapticFeedbackEnabledToggled,
+                    onAccentColorSelected = viewModel::onAccentColorSelected,
                     onLutSelected = viewModel::onLutSelected,
                     onLutDeleteRequested = viewModel::onLutDeleteRequested,
                     onLutIntensityChanged = viewModel::onLutIntensityChanged,
@@ -191,6 +193,7 @@ private fun SettingsContent(
     onCaptureRawByDefaultToggled: (Boolean) -> Unit,
     onMinimalChromeInvertedToggled: (Boolean) -> Unit,
     onHapticFeedbackEnabledToggled: (Boolean) -> Unit,
+    onAccentColorSelected: (AccentColor) -> Unit,
     onLutSelected: (String?) -> Unit,
     onLutDeleteRequested: (String) -> Unit,
     onLutIntensityChanged: (Int) -> Unit,
@@ -251,6 +254,10 @@ private fun SettingsContent(
             checked = uiState.hapticFeedbackEnabled,
             onToggle = { onHapticFeedbackEnabledToggled(!uiState.hapticFeedbackEnabled) },
             label = "HAPTICS",
+        )
+        AccentSelector(
+            selected = uiState.accentColor,
+            onSelected = onAccentColorSelected,
         )
         PeakingSensitivitySelector(
             selected = uiState.focusPeakingSensitivity,
@@ -658,6 +665,28 @@ private fun <T> PillSelector(
     }
 }
 
+/**
+ * The one place in the app that shows all four accent choices at once, so each pill is drawn in the
+ * hue it selects rather than in ink — the row is its own swatch set, and needs no separate preview of
+ * the shutter button to be readable. `OFF` has no hue of its own and keeps the ink treatment.
+ */
+@Composable
+private fun AccentSelector(
+    selected: AccentColor,
+    onSelected: (AccentColor) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    PillSelector(
+        options = AccentColor.entries,
+        selected = selected,
+        label = "ACCENT",
+        onSelected = onSelected,
+        modifier = modifier,
+        labelOf = { it.name },
+        tintOf = { option -> option.argb?.let { Color(it) } ?: MinimalChrome.Ink },
+    )
+}
+
 @Composable
 private fun PeakingSensitivitySelector(
     selected: FocusPeakingSensitivity,
@@ -696,6 +725,18 @@ private fun CaptureRawByDefaultSettingPreview() {
         Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             CaptureRawByDefaultSetting(enabled = false, onToggle = {})
             CaptureRawByDefaultSetting(enabled = true, onToggle = {})
+        }
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFFFAF6EC)
+@Composable
+private fun AccentSelectorPreview() {
+    XCameraTheme {
+        Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            AccentSelector(selected = AccentColor.OFF, onSelected = {})
+            AccentSelector(selected = AccentColor.ORANGE, onSelected = {})
+            AccentSelector(selected = AccentColor.GREEN, onSelected = {})
         }
     }
 }

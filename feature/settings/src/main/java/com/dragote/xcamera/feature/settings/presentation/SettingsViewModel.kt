@@ -3,6 +3,7 @@ package com.dragote.xcamera.feature.settings.presentation
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.dragote.xcamera.shared.common.domain.model.AccentColor
 import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import com.dragote.xcamera.shared.common.domain.repository.CameraSettingsRepository
 import com.dragote.xcamera.shared.common.domain.repository.LutRepository
@@ -43,6 +44,7 @@ class SettingsViewModel @Inject constructor(
             captureRawByDefault = settings.captureRawByDefault,
             minimalChromeInverted = settings.minimalChromeInverted,
             hapticFeedbackEnabled = settings.hapticFeedbackEnabled,
+            accentColor = settings.accentColor,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -116,6 +118,10 @@ class SettingsViewModel @Inject constructor(
 
     fun onHapticFeedbackEnabledToggled(enabled: Boolean) {
         viewModelScope.launch { cameraSettingsRepository.setHapticFeedbackEnabled(enabled) }
+    }
+
+    fun onAccentColorSelected(color: AccentColor) {
+        viewModelScope.launch { cameraSettingsRepository.setAccentColor(color) }
     }
 
     /** `null` selects "OFF" — disables LUT grading entirely (see `CameraSettings.selectedLutId`'s own

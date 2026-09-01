@@ -1,5 +1,6 @@
 package com.dragote.xcamera.feature.settings.presentation
 
+import com.dragote.xcamera.shared.common.domain.model.AccentColor
 import com.dragote.xcamera.shared.common.domain.model.FocusPeakingSensitivity
 import com.dragote.xcamera.shared.common.domain.model.LutPreset
 
@@ -27,4 +28,6 @@ data class SettingsUiState(
     /** Master switch for every haptic the app fires — see `CameraSettings.hapticFeedbackEnabled`'s
      *  own doc. */
     val hapticFeedbackEnabled: Boolean = true,
+    /** The hue the shutter release is painted with — see `CameraSettings.accentColor`'s own doc. */
+    val accentColor: AccentColor = AccentColor.OFF,
 )
