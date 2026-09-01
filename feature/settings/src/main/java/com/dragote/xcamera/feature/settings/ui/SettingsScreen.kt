@@ -591,12 +591,14 @@ private fun displayNameFor(context: android.content.Context, uri: Uri): String {
 }
 
 /**
- * LOW/MEDIUM/HIGH segmented picker for [FocusPeakingSensitivity] — the settings screen's first
- * non-boolean control, so (per this repo's duplication convention) built local to this file rather
- * than promoted to `shared:designsystem` until a second multi-option setting needs the same shape.
- * Segments styled as filled pills (selected) vs. outlined text (unselected) using the same
- * [MinimalChrome] mono type/ink tokens [LabeledToggle] uses, so it reads as part of the same control
- * family even though the interaction shape (radio group, not a two-position toggle) is different.
+ * The settings screen's segmented picker for any small fixed set of options — a radio group of
+ * pills, filled (selected) vs. outlined text (unselected), using the same [MinimalChrome] mono
+ * type/ink tokens [LabeledToggle] uses so it reads as part of the same control family even though
+ * the interaction shape is different.
+ *
+ * [tintOf] lets an option carry its own color (the ACCENT row paints each pill in the hue it
+ * selects); left at its default every pill is plain [MinimalChrome.Ink], which is what a picker of
+ * plain words wants.
  *
  * Deliberately not built on `shared:designsystem`'s `SteppedToggle` — `SteppedToggle` is a 3-fixed-
  * detent, value-rides-in-the-knob control, and on the surface LOW/MEDIUM/HIGH looks like exactly what
@@ -605,28 +607,36 @@ private fun displayNameFor(context: android.content.Context, uri: Uri): String {
  * lets it drop `DialWheel`'s separate value/label text), so there's nowhere for "LOW"/"MEDIUM"/"HIGH"
  * themselves to render — only a single short token fits inside the knob, and `LensDial`'s own UW/W/T is
  * exactly that: 1-2 characters, not a whole word. Forcing these three words to fit there (abbreviating
- * to L/M/H, say) would trade away the one thing this control is actually for — reading which
- * sensitivity is picked at a glance — to reuse a shape that doesn't carry it. A hand-rolled pill row,
- * styled to [MinimalChrome]'s ink-stroke-outline/ink-filled language below, carries it instead.
+ * to L/M/H, say) would trade away the one thing this control is actually for — reading which option is
+ * picked at a glance — to reuse a shape that doesn't carry it. A hand-rolled pill row, styled to
+ * [MinimalChrome]'s ink-stroke-outline/ink-filled language below, carries it instead.
+ *
+ * Stays private to this file rather than moving to `shared:designsystem`: two settings rows share it,
+ * and both are here — no second module wants this shape yet.
  */
 @Composable
-private fun PeakingSensitivitySelector(
-    selected: FocusPeakingSensitivity,
-    onSelected: (FocusPeakingSensitivity) -> Unit,
+private fun <T> PillSelector(
+    options: List<T>,
+    selected: T,
+    label: String,
+    onSelected: (T) -> Unit,
     modifier: Modifier = Modifier,
+    labelOf: (T) -> String = { it.toString() },
+    tintOf: (T) -> Color = { MinimalChrome.Ink },
 ) {
     val haptic = LocalHapticFeedback.current
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FocusPeakingSensitivity.entries.forEach { option ->
+            options.forEach { option ->
                 val isSelected = option == selected
+                val tint = tintOf(option)
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .background(if (isSelected) MinimalChrome.Ink else Color.Transparent)
+                        .background(if (isSelected) tint else Color.Transparent)
                         .border(
                             width = MinimalChrome.StrokeWidth,
-                            color = if (isSelected) Color.Transparent else MinimalChrome.Ink,
+                            color = if (isSelected) Color.Transparent else tint,
                             shape = RoundedCornerShape(8.dp),
                         )
                         .semantics { this.selected = isSelected }
@@ -638,14 +648,30 @@ private fun PeakingSensitivitySelector(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = option.name,
-                        style = MinimalChrome.valueStyle(if (isSelected) MinimalChrome.Background else MinimalChrome.Ink),
+                        text = labelOf(option),
+                        style = MinimalChrome.valueStyle(if (isSelected) MinimalChrome.Background else tint),
                     )
                 }
             }
         }
-        Text(text = "PEAKING SENSITIVITY", style = MinimalChrome.labelStyle())
+        Text(text = label, style = MinimalChrome.labelStyle())
     }
+}
+
+@Composable
+private fun PeakingSensitivitySelector(
+    selected: FocusPeakingSensitivity,
+    onSelected: (FocusPeakingSensitivity) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    PillSelector(
+        options = FocusPeakingSensitivity.entries,
+        selected = selected,
+        label = "PEAKING SENSITIVITY",
+        onSelected = onSelected,
+        modifier = modifier,
+        labelOf = { it.name },
+    )
 }
 
 @Preview(showBackground = true, backgroundColor = 0xFFFAF6EC)
