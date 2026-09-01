@@ -7,6 +7,8 @@ metadata:
 
 The app's visual identity is **minimal chrome**, shipped in #49: flat OP-1-Field-style line art — thin strokes and flat black-or-white fills on a warm-white body, with a `Palette.Normal`/`Palette.Inverted` switch and deliberately no gradients, shadows, blur, or grain. `shared:designsystem`'s `MinimalChrome` is the source of truth. Treat any reference material showing dials with gradients, wells, or texture as obsolete.
 
+The one sanctioned exception to the monochrome rule is `MinimalChrome.accent` — a hue the *user* picks, fixed under either palette, currently carried by the shutter release alone. Color is the user's to spend, not the design's: don't introduce a hue anywhere on your own initiative, and don't fold the accent into `Palette`.
+
 **Ruled out — don't re-propose unless the user raises it:**
 - The original dark "matte black plastic" skeuomorphic body: judged "cheap" against the user's own references.
 - Fixing that body by **palette alone**: rejected pre-emptively, before any code was written.
