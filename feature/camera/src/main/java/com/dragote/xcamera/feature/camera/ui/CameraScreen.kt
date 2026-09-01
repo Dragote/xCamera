@@ -344,6 +344,10 @@ private fun CameraContent(navigator: DestinationsNavigator, viewModel: CameraVie
     } else {
         MinimalChrome.Palette.Normal
     }
+    // Same one-write-per-recomposition shape, for the same DrawScope reason as MinimalChrome.current
+    // above. Deliberately not folded into Palette: the accent is fixed by the user's choice and does
+    // not follow the INVERT CHROME flip.
+    MinimalChrome.accent = cameraSettings.accentColor.argb?.let { Color(it) }
     // Written the same way, once per recomposition, for the same reason (see Haptics' own doc). This
     // screen is the app's start destination, so it also seeds the switch for every screen reached
     // from here that observes no settings of its own.

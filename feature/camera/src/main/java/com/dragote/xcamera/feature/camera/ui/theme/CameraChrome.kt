@@ -37,6 +37,12 @@ object CameraChrome {
      *  feature-local name rather than reaching into [MinimalChrome] directly everywhere. */
     val Ink: Color get() = MinimalChrome.Ink
 
+    /** The user's chosen accent hue, `null` meaning "no accent" — see [MinimalChrome.accent]. Stays
+     *  nullable rather than collapsing to [Ink] here because a control painting with it generally
+     *  needs a different treatment for the two cases, not just a different color (see
+     *  [com.dragote.xcamera.feature.camera.ui.component.control.ShutterButton]'s pressed fill). */
+    val Accent: Color? get() = MinimalChrome.accent
+
     /** [com.dragote.xcamera.feature.camera.domain.model.ZebraClipping.SHADOW] stripe tint — kept as a
      *  real hue (not flattened to [Ink]) because it's carrying live-viewfinder semantic information
      *  (crushed blacks), not decorative chrome; see this module's own design-agent brief on when color

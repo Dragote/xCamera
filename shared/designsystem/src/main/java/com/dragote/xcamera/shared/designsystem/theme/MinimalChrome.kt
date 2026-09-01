@@ -21,7 +21,8 @@ import androidx.compose.ui.unit.sp
  * This identity has two switchable sub-variants (`INVERT CHROME` in Settings) — [Palette.Normal]
  * (paper-white body / near-black ink) and [Palette.Inverted] (near-black body / warm-white ink, same
  * "confident hairline on paper" character with the two roles swapped, not a literal RGB invert).
- * [current] holds which one is live; see its own doc for the mechanism.
+ * [current] holds which one is live; see its own doc for the mechanism. [accent] sits deliberately
+ * outside that switch — it's the one color in here the user picks outright.
  *
  * Only the handful of tokens genuinely reusable across feature modules live here (currently
  * `feature:camera` and `feature:settings`); screen-specific tokens (zebra-clip tints, dial
@@ -67,9 +68,21 @@ object MinimalChrome {
     val Background: Color get() = current.background
 
     /** The one ink color every stroke, flat fill, and label in this identity is drawn with (or
-     *  [Background]); there is no separate hue-based "accent," per the flat/monochrome direction.
-     *  Tracks [current]. */
+     *  [Background]) — everything except whatever [accent] is allowed to claim. Tracks [current]. */
     val Ink: Color get() = current.ink
+
+    /**
+     * The user's chosen accent hue, or `null` for "no accent" — the default, and what every control
+     * that hasn't opted into the accent keeps using regardless. Only the shutter release reads it
+     * today; a control that wants the accent falls back to [Ink] when this is `null`, so `null` is a
+     * fully monochrome chrome, not a missing value to guard against.
+     *
+     * Held here (rather than as a [Palette] field) precisely because it must *not* move with
+     * [current]: the whole point of picking a color is that it stays that color under either body.
+     * Written by whichever screen observes the persisted preference, once per recomposition, and read
+     * from `DrawScope` lambdas — same object-level snapshot-state mechanism as [current], see its doc.
+     */
+    var accent: Color? by mutableStateOf(null)
 
     /** 1.5dp reads as a confident hairline at phone-screen density without looking like a hand-drawn
      *  sketch — thinner (1dp) started disappearing on lower-density test renders. */
