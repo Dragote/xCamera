@@ -29,7 +29,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.dragote.xcamera.feature.camera.domain.model.formatFocusDistance
-import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome.Accent
+import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome.DialInk
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 import kotlin.math.PI
 
@@ -46,7 +46,7 @@ fun FocusDial(
     onRotate: (totalRotationRadians: Float) -> Unit,
     onHoldEnd: () -> Unit,
     modifier: Modifier = Modifier,
-    accent: Color = Accent,
+    accent: Color = DialInk,
 ) {
     val density = LocalDensity.current
     val stepPx = with(density) { VisualStepDp.dp.toPx() }

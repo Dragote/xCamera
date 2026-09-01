@@ -46,7 +46,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome
-import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome.Accent
+import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome.DialInk
 import com.dragote.xcamera.shared.designsystem.haptics.hapticTick
 import com.dragote.xcamera.shared.designsystem.haptics.rememberHapticTickVibrator
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
@@ -77,7 +77,7 @@ fun DialWheel(
     index: Int,
     onIndexChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
-    accent: Color = Accent,
+    accent: Color = DialInk,
     onDragActiveChanged: (Boolean) -> Unit = {},
     /** 0 = fully open (normal interactive dial), 1 = fully sealed shut. */
     closedFraction: Float = 0f,
@@ -380,7 +380,7 @@ private fun DialWheelPreview() {
     var i by remember { mutableStateOf(1) }
     XCameraTheme {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            DialWheel("ISO", listOf("100", "200", "400", "800"), i, { i = it }, accent = Accent)
+            DialWheel("ISO", listOf("100", "200", "400", "800"), i, { i = it }, accent = DialInk)
         }
     }
 }
@@ -391,7 +391,7 @@ private fun DialWheelSealedPreview() {
     XCameraTheme {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             DialWheel(
-                "ISO", listOf("100", "200", "400", "800"), 1, {}, accent = Accent,
+                "ISO", listOf("100", "200", "400", "800"), 1, {}, accent = DialInk,
                 closedFraction = 1f, closing = true,
             )
         }

@@ -6,7 +6,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.dragote.xcamera.feature.camera.domain.model.formatEvCompensation
-import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome.Accent
+import com.dragote.xcamera.feature.camera.ui.theme.CameraChrome.DialInk
 import com.dragote.xcamera.shared.designsystem.theme.XCameraTheme
 
 /**
@@ -36,7 +36,7 @@ fun ExposureDial(
         index = index,
         onIndexChange = if (supported) onIndexChange else { _ -> },
         modifier = modifier,
-        accent = Accent,
+        accent = DialInk,
         onDragActiveChanged = onDragActiveChanged,
         closedFraction = closedFraction,
         closing = closing,
