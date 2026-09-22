@@ -8,7 +8,7 @@ Take whatever is currently done — uncommitted edits, commits on a branch, or b
 
 **Catch up on whatever is missing**
 
-1. **Issue.** Use `$ARGUMENTS` if given, else the number in the branch name. If there is neither, read `git status`/`git diff` to see what the work actually is and file it now: pick the one type label (root `CLAUDE.md`, "Issue type labels" — harness, docs and agent-config work is `documentation`, not `tech`), write Problem / Requirements / Non-goals, `gh issue create --repo Dragote/xCamera --label <type> ...`, then `gh issue edit <N> --add-assignee @me`.
+1. **Issue.** Use `$ARGUMENTS` if given, else the number in the branch name. If there is neither, read `git status`/`git diff` to see what the work actually is and file it now: pick the one type label (`.claude/CLAUDE.md`, "Issue type labels" — harness, docs and agent-config work is `documentation`, not `tech`), write Problem / Requirements / Non-goals, `gh issue create --repo Dragote/xCamera --label <type> ...`, then `gh issue edit <N> --add-assignee @me`.
 2. **Branch.** If `git branch --show-current` is `main`, move the work off it. `git fetch origin && git checkout -b <label>/<N>-<slug> origin/main` carries uncommitted changes across. If commits have already landed on local `main`, keep them with `git branch <label>/<N>-<slug> && git reset --hard origin/main && git checkout <label>/<N>-<slug>`.
 3. **Board → In progress**, if it was never moved:
    ```bash

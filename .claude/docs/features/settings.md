@@ -9,7 +9,7 @@
 - See `camera-capture.md` (RAW capture preference) and `lut-color-grading.md` (LUT import/selection/grading) for how `feature:camera` consumes what this module persists.
 
 **Key decisions:**
-- `feature:camera` reads/writes these settings only through `shared:common`'s `CameraSettings`/`CameraSettingsRepository`/`LutRepository` contracts, never a direct `feature:settings` dependency — feature modules never depend on each other directly (root `CLAUDE.md`).
+- `feature:camera` reads/writes these settings only through `shared:common`'s `CameraSettings`/`CameraSettingsRepository`/`LutRepository` contracts, never a direct `feature:settings` dependency — feature modules never depend on each other directly (`.claude/CLAUDE.md`).
 - LUT library storage is a plain scanned directory, not Room — per this project's minimal-infra preference, the smallest working slice for a first import/list/delete store, not a placeholder for a "real" database.
 - `CubeLut` parse/resample/binary-format logic lives in `shared:common`, not duplicated here, so this module's import-time validation and `feature:camera`'s runtime read share one implementation.
 - `hapticFeedbackEnabled` exists because the app deliberately escapes the system one: `hapticTick` tags its vibration `USAGE_HARDWARE_FEEDBACK`, a category Android's "Touch feedback" setting doesn't gate, so without an in-app switch a user has no way to silence the app's haptics at all (#65). Don't "simplify" it away by re-coupling the tick to `USAGE_TOUCH` — that trade was made for a reason, see `HapticTick.kt`'s own doc.

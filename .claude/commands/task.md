@@ -6,7 +6,7 @@ allowed-tools: Bash(./gradlew *), Bash(gh *), Bash(git *), Read, Write, Edit, Gl
 
 Take `$ARGUMENTS` from a sentence to an open pull request, without checking back at each step. Use this when the work is known to be a task up front; when a change is already sitting in the tree from ordinary conversation, `/ship` picks it up from there instead.
 
-1. **File and start it** — everything `/take-issue` describes, given this description rather than a number: pick the one type label (root `CLAUDE.md`, "Issue type labels"), write the issue as Problem / Requirements / Non-goals, create it, assign it, move the board to In progress, and cut `<label>/<N>-<slug>` from current `origin/main`.
+1. **File and start it** — everything `/take-issue` describes, given this description rather than a number: pick the one type label (`.claude/CLAUDE.md`, "Issue type labels"), write the issue as Problem / Requirements / Non-goals, create it, assign it, move the board to In progress, and cut `<label>/<N>-<slug>` from current `origin/main`.
 2. **Implement it.** Commit as you go, following `CLAUDE.md`'s "Commit conventions": one coherent step each, ordered so every commit builds and tests green on its own, with mechanical moves kept apart from meaningful change. Don't let a whole task land as a single commit.
 3. **Ship it** — everything `/ship` describes: full suite green, debug build, rebase onto `origin/main`, push, PR body saying what changed and why, board to In review. Then merge if and only if the issue is `documentation`; anything that changes code that runs stops at the open PR for on-device verification.
 
