@@ -8,7 +8,7 @@ description: How to add a Gradle module to xCamera and how its build-logic conve
 ## Adding a feature module
 
 1. Create `feature/<name>/` and register it in root `settings.gradle.kts` (`include(":feature:<name>")`).
-2. `feature/<name>/build.gradle.kts`: apply `xcamera.feature`, set `android.namespace`, and depend on `project(":shared:common")`, `project(":shared:designsystem")`, `project(":shared:navigation")`, plus `testImplementation(project(":shared:testing"))`. Add `project(":shared:diagnostics")` only if the feature reads camera capabilities. Apply `xcamera.android.room` / `xcamera.kotlin.serialization` only if it genuinely needs a database or a JSON/network layer — no module does today, and adding one speculatively is the exact thing project memory `feedback-minimal-infra` rules out.
+2. `feature/<name>/build.gradle.kts`: apply `xcamera.feature`, set `android.namespace`, and depend on `project(":shared:common")`, `project(":shared:designsystem")`, `project(":shared:navigation")`, plus `testImplementation(project(":shared:testing"))`. Add `project(":shared:diagnostics")` only if the feature reads camera capabilities. Apply `xcamera.android.room` / `xcamera.kotlin.serialization` only if it genuinely needs a database or a JSON/network layer — no module does today, and adding one speculatively is the exact thing `CLAUDE.md`'s "Minimal infrastructure" rules out.
 3. Build out the `data`/`domain`/`presentation`/`ui`/`di` packages per `CLAUDE.md`'s package-per-layer convention.
 4. Add a manifest at `feature/<name>/src/main/AndroidManifest.xml` only if the feature needs a permission — a library module without one needs no manifest at all.
 5. Add `implementation(project(":feature:<name>"))` to `app/build.gradle.kts`.

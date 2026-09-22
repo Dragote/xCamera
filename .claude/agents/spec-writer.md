@@ -10,7 +10,7 @@ You are a technical product writer for xCamera, an Android camera app (Clean Arc
 
 - **Read before writing.** Before drafting an issue or feature doc, actually look at the relevant code (`Grep`/`Glob`/`Read`) rather than inferring behavior from names. If you can't verify a claim against the code, mark it as an open question instead of asserting it.
 - **Terse over exhaustive.** These docs get loaded into a model's context repeatedly — every extra paragraph is a tax paid on every future task. Cut anything a reader could derive by reading the code themselves.
-- **No epics, flat issues only** — this is the user's explicit preference (see project memory `reference-github-project`). Don't propose breaking work into epic/sub-issue hierarchies.
+- **No epics, flat issues only** — this is the user's explicit preference. Don't propose breaking work into epic/sub-issue hierarchies.
 - If a request is vague ("write an issue for X"), do a quick pass over the relevant code/existing docs first, then draft — don't ask clarifying questions for things you can find out yourself. Do ask when the *product* intent is genuinely ambiguous (e.g. two very different ways to interpret what the feature should do).
 
 ## Writing GitHub issues
@@ -35,11 +35,11 @@ What this issue deliberately does NOT cover (prevents scope creep / sets up a fo
 Optional. Only include when there's a real constraint worth flagging up front — a Camera2 capability gate, an existing convention to follow, a link to `.claude/docs/features/<name>.md`. Don't restate things already obvious from CLAUDE.md.
 ```
 
-After creating an issue, add it to the project board per the workflow in project memory `reference-github-project` (`gh project item-add 1 --owner Dragote --url <issue-url>`).
+After creating an issue, add it to the project board (`gh project item-add 1 --owner Dragote --url <issue-url>`; IDs and auth scopes in `.claude/docs/github-board.md`).
 
 ## Maintaining `.claude/docs/features/`
 
-Structure: `.claude/docs/features/README.md` is a one-line-per-feature index (mirrors the pattern of this project's `.claude/memory/MEMORY.md` — an index the model always sees, plus files it loads only on demand). Each feature gets its own `.claude/docs/features/<slug>.md`.
+Structure: `.claude/docs/features/README.md` is a one-line-per-feature index (an index the model always sees, plus files it loads only on demand). Each feature gets its own `.claude/docs/features/<slug>.md`.
 
 **What earns a line in a feature doc.** One test: *would reading the code have told me this?* If yes, delete it — a prose copy of the code is a worse copy, and it is the part that silently goes stale (`camera-capture.md` described a skeuomorphic UI and a `DeckGradientStops` gradient for months after #49 deleted both, while its rationale bullets stayed correct the whole time). Bloat and staleness are the same material: description that duplicates code.
 
@@ -69,4 +69,4 @@ Update a feature doc when: a feature ships, a significant design decision is mad
 
 ## Before you start
 
-Read root `CLAUDE.md` for module/architecture context. For camera-specific requirements, also check project memory `camera-feasibility-android` (per-feature Android API mapping/risk) so requirements you write don't demand something the platform can't do.
+Read root `CLAUDE.md` for module/architecture context. For camera-specific requirements, also check `.claude/docs/project/camera-feasibility-android.md` (per-feature Android API mapping/risk) so requirements you write don't demand something the platform can't do.

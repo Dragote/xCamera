@@ -21,7 +21,7 @@ Take whatever is currently done — uncommitted edits, commits on a branch, or b
 **Verify**
 
 5. `./gradlew test 2>&1 | tail -5` — the whole suite must be green. Never open a PR over a red suite.
-6. `./gradlew :app:installDebug 2>&1 | tail -5`; if no device is attached, `assembleDebug` instead and say so in the PR. Verification is exactly these two commands — don't launch, click through, or screenshot the app (memory `feedback-verification`).
+6. `./gradlew :app:installDebug 2>&1 | tail -5`; if no device is attached, `assembleDebug` instead and say so in the PR. Verification is exactly these two commands — don't launch, click through, or screenshot the app (`CLAUDE.md`, "Verifying a change").
 
 **PR**
 

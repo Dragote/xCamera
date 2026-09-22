@@ -27,6 +27,6 @@ Body follows Problem / Requirements / Non-goals, with Technical notes only when 
    `item-add` is idempotent — it returns the existing item id if the issue is already on the board.
 4. Branch from current `origin/main`: `git fetch origin && git checkout -b <label>/<N>-<slug> origin/main`, e.g. `tech/12-camera-repository-di`.
 
-Settle the branch name now: renaming a branch that already has an open PR breaks the PR (memory `reference-github-project`).
+Settle the branch name now: renaming a branch that already has an open PR breaks the PR (`.claude/docs/github-board.md`).
 
 Then implement, committing as you go per `CLAUDE.md`'s "Commit conventions" — one coherent step per commit, each building and testing green on its own. `/ship` finishes.
