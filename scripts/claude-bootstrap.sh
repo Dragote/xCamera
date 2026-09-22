@@ -1,81 +1,54 @@
 #!/usr/bin/env bash
-# Wires a checkout into Claude Code on this machine, and keeps it wired.
+# Checks that a checkout is ready to work in: the local toolchain, and the repo's
+# context files.
 #
-# Claude's persistent memory lives outside the repo, under
-# ~/.claude/projects/<slug>/memory, where <slug> is the checkout's absolute path
-# with "/" replaced by "-". That slug differs on every machine whose username or
-# checkout location differs, so the memory directory cannot be committed at a
-# fixed location — instead the repo owns .claude/memory/ and this script points
-# the machine-local slug path at it via a symlink.
-#
-# Without that symlink the harness silently creates a plain directory there and
-# every memory written to it is invisible to git — so this runs from a
-# SessionStart hook (--hook) as well as by hand, to guarantee the link exists
-# before anything is written. Safe to re-run: it converts an existing directory
-# rather than clobbering it.
+# The context check runs from a SessionStart hook (--hook) as well as by hand. It
+# catches the kind of rot no compiler sees — a doc listed in an index that no longer
+# exists, or a doc naming a `Symbol` that was renamed out of the sources. It prints
+# nothing when clean.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SLUG="$(printf '%s' "$REPO_ROOT" | tr '/' '-')"
-LINK="$HOME/.claude/projects/$SLUG/memory"
-TARGET="$REPO_ROOT/.claude/memory"
 
 HOOK_MODE=false
 [ "${1:-}" = "--hook" ] && HOOK_MODE=true
 
-# Points $LINK at $TARGET. Echoes a description iff it had to change something.
-link_memory() {
-  mkdir -p "$TARGET" "$(dirname "$LINK")"
-  if [ -L "$LINK" ]; then
-    [ "$(readlink "$LINK")" = "$TARGET" ] && return 0
-    rm "$LINK" && ln -s "$TARGET" "$LINK"
-    echo "repointed the memory symlink at the repo"
-  elif [ -d "$LINK" ]; then
-    # A real directory: rescue anything already written into it, then replace it.
-    if [ -n "$(ls -A "$LINK")" ]; then
-      cp -Rn "$LINK"/. "$TARGET"/ 2>/dev/null || true
-      rm -rf "$LINK" && ln -s "$TARGET" "$LINK"
-      echo "found memory files in an unlinked directory, moved them into .claude/memory/ and linked it"
-    else
-      rm -rf "$LINK" && ln -s "$TARGET" "$LINK"
-      echo "created the memory symlink"
-    fi
-  else
-    ln -s "$TARGET" "$LINK"
-    echo "created the memory symlink"
-  fi
-}
-
-# Checks the repo's context files against the rules in CLAUDE.md / the write-memory
-# skill: index and files in sync both ways, wiki-links resolve, slugs match filenames,
-# feature docs inside their word budget. Prints one line per problem, nothing when clean.
+# Checks the repo's docs against the rules in CLAUDE.md: every doc indexed and every
+# index line backed by a file, feature docs inside their word budget, and no doc naming
+# a symbol the sources no longer have. Prints one line per problem, nothing when clean.
 check_context() {
-  local mem="$REPO_ROOT/.claude/memory" idx="$REPO_ROOT/.claude/memory/MEMORY.md"
-  local docs="$REPO_ROOT/.claude/docs/features" problems=0
-  local f base
+  local docs="$REPO_ROOT/.claude/docs" idx="$REPO_ROOT/.claude/docs/README.md"
+  local features="$REPO_ROOT/.claude/docs/features" problems=0
+  local f base rel
 
-  for f in "$mem"/*.md; do
+  # Top-level index <-> the docs it covers, both directions.
+  for f in "$docs"/*.md "$docs"/project/*.md; do
+    [ -e "$f" ] || continue
     base="$(basename "$f")"
-    [ "$base" = "MEMORY.md" ] && continue
-    grep -q "($base)" "$idx" || { echo "memory '$base' has no line in MEMORY.md"; problems=$((problems+1)); }
-    grep -q "^name: ${base%.md}$" "$f" || { echo "memory '$base' has a name: that doesn't match its filename"; problems=$((problems+1)); }
-    grep -q "^description: Read " "$f" || { echo "memory '$base' description is not a trigger (must start 'Read when/before')"; problems=$((problems+1)); }
+    [ "$base" = "README.md" ] && continue
+    rel="${f#$docs/}"
+    grep -q "($rel)" "$idx" || { echo "doc '$rel' has no line in docs/README.md"; problems=$((problems+1)); }
+  done
+  for rel in $(grep -o '(\(project/\)\?[a-z0-9-]*\.md)' "$idx" | tr -d '()'); do
+    [ -f "$docs/$rel" ] || { echo "docs/README.md lists '$rel', which does not exist"; problems=$((problems+1)); }
   done
 
-  for base in $(grep -o '([a-z0-9-]*\.md)' "$idx" | tr -d '()'); do
-    [ -f "$mem/$base" ] || { echo "MEMORY.md lists '$base', which does not exist"; problems=$((problems+1)); }
-  done
-
-  for base in $(grep -oh '\[\[[a-z0-9-]*\]\]' "$mem"/*.md | tr -d '[]' | sort -u); do
-    [ -f "$mem/$base.md" ] || { echo "dangling wiki-link [[$base]] in memory"; problems=$((problems+1)); }
+  # Feature docs: indexed in their own README, and short enough to still be rationale.
+  for f in "$features"/*.md; do
+    [ -e "$f" ] || continue
+    base="$(basename "$f")"
+    [ "$base" = "README.md" ] && continue
+    grep -q "($base)" "$features/README.md" || { echo "feature doc '$base' has no line in its README"; problems=$((problems+1)); }
+    local words; words=$(wc -w < "$f" | tr -d " ")
+    [ "$words" -gt 1500 ] && { echo "feature doc '$base' is $words words — past the point where it is probably describing code, not explaining it"; problems=$((problems+1)); }
   done
 
   # Referential check: a doc naming a `Symbol` that no longer exists in the sources is
   # stale in a way no structural check sees. ALL-CAPS tokens are platform constants;
   # EXTERNAL_SYMBOLS are deliberate mentions of APIs this project does not use.
   local EXTERNAL_SYMBOLS="Camera2Interop Camera2CameraControl Camera2CameraInfo ImageCapture PixelCopy Preview"
-  if [ -d "$docs" ]; then
-    for sym in $(grep -oh '`[A-Z][A-Za-z0-9]*' "$docs"/*.md 2>/dev/null | tr -d '`' | sort -u); do
+  if [ -d "$features" ]; then
+    for sym in $(grep -oh '`[A-Z][A-Za-z0-9]*' "$features"/*.md 2>/dev/null | tr -d '`' | sort -u); do
       printf '%s' "$sym" | grep -q '^[A-Z0-9_]*$' && continue
       case " $EXTERNAL_SYMBOLS " in *" $sym "*) continue ;; esac
       grep -rqw "$sym" --include='*.kt' "$REPO_ROOT/feature" "$REPO_ROOT/shared" "$REPO_ROOT/app" 2>/dev/null && continue
@@ -86,28 +59,15 @@ check_context() {
     done
   fi
 
-  if [ -d "$docs" ]; then
-    for f in "$docs"/*.md; do
-      base="$(basename "$f")"
-      [ "$base" = "README.md" ] && continue
-      grep -q "($base)" "$docs/README.md" || { echo "feature doc '$base' has no line in its README"; problems=$((problems+1)); }
-      local words; words=$(wc -w < "$f" | tr -d " ")
-      [ "$words" -gt 1500 ] && { echo "feature doc '$base' is $words words — past the point where it is probably describing code, not explaining it"; problems=$((problems+1)); }
-    done
-  fi
-
   return $problems
 }
 
 if $HOOK_MODE; then
-  # Stay silent when already correct; speak up only when something was repaired.
-  changed="$(link_memory 2>/dev/null || true)"
+  # Stay silent when everything is consistent; speak up only when something is off.
   issues="$(check_context 2>/dev/null || true)"
-  msg=""
-  [ -n "$changed" ] && msg="Claude memory: $changed."
-  [ -n "$issues" ] && msg="$msg Context files need attention: $(printf '%s' "$issues" | tr '\n' '|' | sed 's/|/; /g; s/; $//')."
-  if [ -n "$msg" ]; then
-    printf '{"systemMessage":"%s"}\n' "$(printf '%s' "${msg# }" | sed 's/"/\\"/g')"
+  if [ -n "$issues" ]; then
+    msg="Context files need attention: $(printf '%s' "$issues" | tr '\n' '|' | sed 's/|/; /g; s/; $//')."
+    printf '{"systemMessage":"%s"}\n' "$(printf '%s' "$msg" | sed 's/"/\\"/g')"
   fi
   exit 0
 fi
@@ -116,12 +76,6 @@ ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
 warn() { printf '  \033[33mwarn\033[0m  %s\n' "$1"; }
 
 echo "Repo:   $REPO_ROOT"
-echo "Slug:   $SLUG"
-echo
-echo "Memory:"
-changed="$(link_memory)"
-[ -n "$changed" ] && ok "$changed" || ok "already linked -> $TARGET"
-
 echo
 echo "Toolchain:"
 
@@ -157,7 +111,7 @@ command -v gh >/dev/null 2>&1 \
 echo
 echo "Context files:"
 if issues="$(check_context)"; then
-  ok "memory index, wiki-links and feature docs are consistent"
+  ok "docs indexes are in sync and feature docs are current"
 else
   printf '%s\n' "$issues" | while IFS= read -r line; do warn "$line"; done
 fi

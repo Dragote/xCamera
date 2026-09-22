@@ -1,11 +1,8 @@
----
-name: camera-feasibility-android
-description: Read before implementing capture, sensor control, or image-pipeline work — which Android API can do it, and what it needs from the device
-metadata:
-  type: project
----
+# Camera feasibility on Android
 
-How [[project-vision]]'s target feature set maps onto Android APIs, and where the platform pushes back.
+Read before implementing capture, sensor control, or image-pipeline work — which Android API can do it, and what it needs from the device.
+
+How [vision.md](vision.md)'s target feature set maps onto Android APIs, and where the platform pushes back.
 
 **Why:** picking the wrong low-level API — RAW capture through CameraX alone, or assuming Android has lock-screen widgets — forces a rewrite of the capture layer later, so the choices were settled by research before the first camera feature landed.
 

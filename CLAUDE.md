@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-xCamera is a multi-module native Android app (Kotlin + Jetpack Compose) built on Clean Architecture: `feature/` and `shared/` Gradle modules, MVVM screens, Kotlin Coroutines/Flow, Hilt DI, and compose-destinations navigation. Product direction: a camera app pairing a genuinely pro capture pipeline with a playful, tactile, highly customizable interface — see project memory `project-vision` / `camera-feasibility-android` for the target feature set and Android API mapping. `feature:camera` is the flagship product feature. Each feature module follows the package-per-layer Clean Architecture split described below (`data`/`domain`/`presentation`/`ui`/`di`) with an MVVM `presentation/` layer — when in doubt about a convention, follow that layering rather than inventing something new. The app is fully local: there is no network layer, and persistence is DataStore, not Room (see "Data layer conventions").
+xCamera is a multi-module native Android app (Kotlin + Jetpack Compose) built on Clean Architecture: `feature/` and `shared/` Gradle modules, MVVM screens, Kotlin Coroutines/Flow, Hilt DI, and compose-destinations navigation. Product direction: a camera app pairing a genuinely pro capture pipeline with a playful, tactile, highly customizable interface — see `.claude/docs/project/vision.md` and `camera-feasibility-android.md` for the target feature set and Android API mapping. `feature:camera` is the flagship product feature. Each feature module follows the package-per-layer Clean Architecture split described below (`data`/`domain`/`presentation`/`ui`/`di`) with an MVVM `presentation/` layer — when in doubt about a convention, follow that layering rather than inventing something new. The app is fully local: there is no network layer, and persistence is DataStore, not Room (see "Data layer conventions").
 
 ## Module map
 
@@ -26,7 +26,7 @@ Feature modules never depend on each other directly. Cross-feature *domain* cont
 
 ## Feature docs & issue writing
 
-`.claude/docs/features/` holds one short file per feature (`.claude/docs/features/README.md` is the one-line-per-feature index, mirroring the pattern of this repo's memory `MEMORY.md`) — kept lean so it's cheap to load into context, not a full spec dump. A doc holds only **what reading the code would not have told you** — why this approach and not the obvious alternative, what breaks if you change it, what was tried and failed — plus a one-line-per-capability inventory of what the feature contains. Description that duplicates code is both the bulk and the rot: it is what silently goes stale while rationale stays true. The validator warns past ~1500 words (`wc -w`) — not a budget, a smell threshold: genuine rationale for even the flagship capture pipeline fits in ~1200, so more than that usually means description crept back in. A line count is no use at all, since 600-character bullets satisfy it trivially. GitHub issues follow a Problem/Requirements/Non-goals/Technical-notes template, flat (no epics). Both are maintained by the `spec-writer` agent (`.claude/agents/spec-writer.md`) — use it instead of hand-writing issues or feature docs.
+`.claude/docs/features/` holds one short file per feature (`.claude/docs/features/README.md` is the one-line-per-feature index) — kept lean so it's cheap to load into context, not a full spec dump. A doc holds only **what reading the code would not have told you** — why this approach and not the obvious alternative, what breaks if you change it, what was tried and failed — plus a one-line-per-capability inventory of what the feature contains. Description that duplicates code is both the bulk and the rot: it is what silently goes stale while rationale stays true. The validator warns past ~1500 words (`wc -w`) — not a budget, a smell threshold: genuine rationale for even the flagship capture pipeline fits in ~1200, so more than that usually means description crept back in. A line count is no use at all, since 600-character bullets satisfy it trivially. GitHub issues follow a Problem/Requirements/Non-goals/Technical-notes template, flat (no epics). Both are maintained by the `spec-writer` agent (`.claude/agents/spec-writer.md`) — use it instead of hand-writing issues or feature docs.
 
 ## Issue type labels
 
@@ -37,9 +37,9 @@ Every issue carries exactly one, and the branch prefix follows it (`<label>/<N>-
 | `feature` | New or changed user-visible behavior |
 | `bug` | Something in the app behaves wrong |
 | `tech` | Changes to code that runs — refactors, architecture, dependency and build migrations, Gradle/`build-logic`. No user-visible behavior change, but the app is built or executed differently afterwards |
-| `documentation` | Changes to text that instructs a reader — `CLAUDE.md`, `.claude/` (memory, agents, commands, skills, docs), READMEs, code comments. Nothing the app compiles or runs changes |
+| `documentation` | Changes to text that instructs a reader — `CLAUDE.md`, `.claude/` (docs, agents, commands, skills), READMEs, code comments. Nothing the app compiles or runs changes |
 
-The line between the last two is **what the change acts on, not whether users can see it**: `tech` acts on the program, `documentation` acts on the instructions given to whoever works on the program. Reworking agent definitions, memory, or this file is `documentation` however infra-flavored it looks — that pull toward `tech` is the trap, and `tech/57-claude-context-in-repo` on `main` is an instance of falling into it. Don't cite it as precedent.
+The line between the last two is **what the change acts on, not whether users can see it**: `tech` acts on the program, `documentation` acts on the instructions given to whoever works on the program. Reworking agent definitions, docs, or this file is `documentation` however infra-flavored it looks — that pull toward `tech` is the trap, and `tech/57-claude-context-in-repo` on `main` is an instance of falling into it. Don't cite it as precedent.
 
 ## When a change becomes a pull request
 
@@ -69,13 +69,15 @@ If a change genuinely is one step, one commit is right. The rule is against *dum
 
 ## Commands and skills
 
-`.claude/commands/` holds the repo's repeatable procedures as commands rather than as prose someone has to recall and interpret: **`/take-issue <N>`** (assign the issue, move the board to In progress, cut the correctly-prefixed branch) and **`/ship`** (test, rebase, push, open the PR, move the board, and — only when asked — merge with this project's `Merge <branch>` subject). The board/label IDs they depend on live in project memory `reference-github-project`. When a workflow here becomes routine, add a command instead of writing it down in memory.
+`.claude/commands/` holds the repo's repeatable procedures as commands rather than as prose someone has to recall and interpret: **`/take-issue <N>`** (assign the issue, move the board to In progress, cut the correctly-prefixed branch) and **`/ship`** (test, rebase, push, open the PR, move the board, and — only when asked — merge with this project's `Merge <branch>` subject). Both carry the board IDs they need inline; `.claude/docs/github-board.md` holds the rest — auth scopes, the full status-option table, the branch-rename trap. When a workflow here becomes routine, add a command rather than describing it in prose.
 
-`.claude/skills/` holds the same idea for procedures *I* trigger rather than the user: `write-memory` and `add-feature-module`, both deep but rarely needed, so they load on demand instead of taxing this file every session. The test for whether something may move out of `CLAUDE.md` into a skill is **what a failure to load costs**: a missed formatting rule is visible and cheap to fix, so it can move; a missed prohibition fails silently and must stay here or in the memory index.
+`.claude/skills/` holds the same idea for procedures *I* trigger rather than the user: `add-feature-module`, deep but rarely needed, so it loads on demand instead of taxing this file every session. The test for whether something may move out of `CLAUDE.md` into a skill is **what a failure to load costs**: a missed formatting rule is visible and cheap to fix, so it can move; a missed prohibition fails silently and must stay here.
 
-## Project memory
+## Project docs
 
-Claude Code's persistent memory for this project is **committed to the repo** at `.claude/memory/` — `MEMORY.md` is the always-loaded index, one file per memory beside it. It lives in the repo because `~/.claude/` does not survive moving between the user's machines; a `SessionStart` hook keeps the machine-local symlink pointing here. **Load the `write-memory` skill before saving, editing, or deleting a memory** — it carries the format, the index rules, and the test for what earns a memory at all.
+`.claude/docs/` is the repo's on-demand reference, indexed by `.claude/docs/README.md`: `project/` holds the product vision, the Android camera-API feasibility map and the settled design direction; `features/` holds one doc per feature; `github-board.md` holds the board IDs and `gh` gotchas. A doc records only what reading the code would not have told you, and every new file needs its line in the index in the same change.
+
+Claude Code's own machine-local memory under `~/.claude/` is scratch — nothing durable goes there, because it is invisible to git and does not survive moving between machines. When something is worth keeping, write it into `.claude/docs/` (project knowledge) or this file (a rule that applies every session).
 
 ## Build system: build-logic convention plugins
 
@@ -111,6 +113,12 @@ feature/<name>/src/main/java/.../feature/<name>/
 ## Compose preview convention
 
 Every reusable Compose UI element — `feature/*/ui/component/*` composables and `shared:designsystem`'s components alike — gets a `@Preview` composable in the same file, wrapped in `XCameraTheme { ... }`. When a component has meaningful states (checked/unchecked, on/off, enabled/disabled), preview more than one side by side (e.g. in a `Row`) rather than just the default state. This applies going forward: adding a new reusable composable means adding its preview in the same change, and editing a composable's public parameters means checking its preview still compiles and still represents the component honestly — a stale preview is a bug the same way a stale test is.
+
+## Minimal infrastructure
+
+Add shared modules, abstractions, config, or scaffolding only when a real, current feature needs them. Never "for later." Catching yourself creating an empty or unused class, module, or config is the signal to stop and either implement it for real or drop it — the app has no Room database today for exactly this reason.
+
+This is a standing preference, chosen twice during the initial architecture setup: the minimal `shared:common` + `shared:designsystem` pair over a full network/database/navigation/testing set, and deleting a placeholder empty `@Database` outright rather than working around it. It governs camera work too — ship a narrow vertical slice, not the full target list in `.claude/docs/project/vision.md`. The counterweight is the rule below: once a second consumer genuinely exists, extract without waiting.
 
 ## Duplication vs. abstraction
 
@@ -171,6 +179,20 @@ Applies to every comment, long or short, in every module — not just KDoc class
 ```
 
 Changes to anything under `build-logic/` require a fresh Gradle sync (Android Studio: File → Sync Project with Gradle Files) — precompiled plugin classes are cached per `build-logic` build.
+
+## Verifying a change
+
+The finish line after any change is exactly two commands, then stop: `./gradlew test` and `./gradlew :app:installDebug`. Report both results and hand over.
+
+Do not relaunch the app, click through it, exercise the new behavior, capture the device screen, or compare anything against a design reference. Screenshot/snapshot testing (Roborazzi, Paparazzi) is out of scope — don't introduce it and don't offer it as a way around this rule. Visual correctness is judged by the user, on a real device, and by nobody else.
+
+Run Gradle so the log stays out of context: pipe to `tail -5` or grep for `BUILD SUCCESSFUL`/`BUILD FAILED`, and pull the full output only when a build actually fails and the compiler error is needed. A subagent once burned ~134k tokens on a task that was mostly "does it build", nearly all of it task-graph and KSP/Hilt noise. This binds subagents too — give the lean-output instruction to any new agent that runs Gradle rather than assuming it is obvious.
+
+## Session economy
+
+Context length dominates cost. Measured on a real session: average context reached ~163k tokens per request, 72% of the cost was incurred above 150k, and the always-loaded files accounted for about 1% — every turn pays for the whole conversation preceding it.
+
+So: one task per session — `/take-issue`, implement, `/ship`, then clear before moving to something unrelated. Prefer inline work to a subagent, since each one loads `CLAUDE.md` plus its own definition (~8k tokens) before reading a line of code, making a three-file edit cheaper done directly. Offer Sonnet for routine implementation against an already-specced issue and keep Opus for architecture and design calls where the judgement is the product. Keep output tight — write a file once rather than iterating in it out loud. Deep exploratory sessions are legitimate, but they are a deliberate investment, not the default shape of feature work.
 
 ## Known gotchas
 

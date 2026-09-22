@@ -1,9 +1,6 @@
----
-name: project-design-direction
-description: Read before changing how anything looks — the shipped visual identity and the directions already ruled out
-metadata:
-  type: project
----
+# Design direction
+
+Read before changing how anything looks — the shipped visual identity and the directions already ruled out.
 
 The app's visual identity is **minimal chrome**, shipped in #49: flat OP-1-Field-style line art — thin strokes and flat black-or-white fills on a warm-white body, with a `Palette.Normal`/`Palette.Inverted` switch and deliberately no gradients, shadows, blur, or grain. `shared:designsystem`'s `MinimalChrome` is the source of truth. Treat any reference material showing dials with gradients, wells, or texture as obsolete.
 
@@ -17,4 +14,4 @@ The one sanctioned exception to the monochrome rule is `MinimalChrome.accent` �
 
 **Why:** the two isolated fixes were tested independently and neither closed the gap — which is the durable lesson. A "feels cheap" verdict is not reducible to a single axis; closing a real design gap can need several changed together, or a different technique entirely (pre-rendered image assets instead of procedural Canvas drawing was discussed but never attempted, since it needs an asset pipeline outside the repo).
 
-**How to apply:** when a look is rejected, don't answer with another single-axis variation of the same body — propose a coherent whole, or say plainly that the gap needs a different technique. Any design verdict comes from the user on-device ([[feedback-verification]]); nothing here can be settled by reasoning about the code.
+**How to apply:** when a look is rejected, don't answer with another single-axis variation of the same body — propose a coherent whole, or say plainly that the gap needs a different technique. Any design verdict comes from the user on-device (`CLAUDE.md`, "Verifying a change"); nothing here can be settled by reasoning about the code.
