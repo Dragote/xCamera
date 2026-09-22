@@ -6,7 +6,7 @@ allowed-tools: Bash(gh *), Bash(git *), Read, Grep, Glob
 
 Start work on `$ARGUMENTS` in `Dragote/xCamera`. The argument is either an issue number or a description of work that has no issue yet.
 
-**If it's a description, file the issue first.** Pick the one type label that fits (root `CLAUDE.md`, "Issue type labels" — harness, docs and agent-config work is `documentation`, not `tech`), then:
+**If it's a description, file the issue first.** Pick the one type label that fits (`.claude/CLAUDE.md`, "Issue type labels" — harness, docs and agent-config work is `documentation`, not `tech`), then:
 
 ```bash
 gh issue create --repo Dragote/xCamera --label <type> --title "..." --body "..."
